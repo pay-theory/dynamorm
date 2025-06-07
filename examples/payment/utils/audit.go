@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/example/dynamorm"
+	"github.com/dynamorm/dynamorm"
 	"github.com/google/uuid"
 )
 
