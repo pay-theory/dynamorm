@@ -8,6 +8,7 @@ import (
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/schema"
 	"github.com/pay-theory/dynamorm/pkg/transaction"
+	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,9 +36,7 @@ type Product struct {
 }
 
 func TestCompleteWorkflow(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
+	tests.RequireDynamoDBLocal(t)
 
 	// Initialize DB
 	db, err := dynamorm.New(dynamorm.Config{
@@ -264,9 +263,7 @@ func TestCompleteWorkflow(t *testing.T) {
 }
 
 func TestEnsureTable(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
+	tests.RequireDynamoDBLocal(t)
 
 	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",
@@ -295,9 +292,7 @@ func TestEnsureTable(t *testing.T) {
 }
 
 func TestBatchOperationsWithTransaction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
+	tests.RequireDynamoDBLocal(t)
 
 	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",

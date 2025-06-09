@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,13 +13,16 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/google/uuid"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/blog/models"
+	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/examples/blog/models"
+	"github.com/pay-theory/dynamorm/examples/blog/services"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // CommentHandler handles blog comment operations
 type CommentHandler struct {
-	db *dynamorm.DB
+	db                  *dynamorm.DB
+	notificationService *services.NotificationService
 }
 
 // commentNode represents a comment with its children
@@ -29,11 +33,9 @@ type commentNode struct {
 
 // NewCommentHandler creates a new comment handler
 func NewCommentHandler() (*CommentHandler, error) {
-	db, err := dynamorm.New(
-		dynamorm.WithLambdaOptimization(),
-		dynamorm.WithConnectionPool(10),
-		dynamorm.WithRegion("us-east-1"),
-	)
+	db, err := dynamorm.New(dynamorm.Config{
+		Region: "us-east-1",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize DynamoDB: %w", err)
 	}
@@ -42,7 +44,39 @@ func NewCommentHandler() (*CommentHandler, error) {
 	db.Model(&models.Comment{})
 	db.Model(&models.Post{})
 
-	return &CommentHandler{db: db}, nil
+	// Initialize notification service
+	notificationService := services.NewNotificationService(5)
+
+	// Configure email provider
+	emailConfig := services.EmailConfig{
+		SMTPHost:     os.Getenv("SMTP_HOST"),
+		SMTPPort:     os.Getenv("SMTP_PORT"),
+		SMTPUsername: os.Getenv("SMTP_USERNAME"),
+		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
+		FromEmail:    os.Getenv("FROM_EMAIL"),
+		FromName:     "Blog Notifications",
+		TestMode:     os.Getenv("NOTIFICATION_TEST_MODE") == "true",
+	}
+	if emailConfig.SMTPHost == "" {
+		// Use test mode if SMTP is not configured
+		emailConfig.TestMode = true
+	}
+	emailProvider := services.NewEmailProvider(emailConfig)
+	notificationService.RegisterProvider(emailProvider)
+
+	// Configure webhook provider
+	webhookConfig := services.WebhookConfig{
+		DefaultWebhookURL: os.Getenv("WEBHOOK_URL"),
+		SigningSecret:     os.Getenv("WEBHOOK_SECRET"),
+		TestMode:          os.Getenv("NOTIFICATION_TEST_MODE") == "true",
+	}
+	webhookProvider := services.NewWebhookProvider(webhookConfig)
+	notificationService.RegisterProvider(webhookProvider)
+
+	return &CommentHandler{
+		db:                  db,
+		notificationService: notificationService,
+	}, nil
 }
 
 // HandleRequest routes requests to appropriate handlers
@@ -76,7 +110,6 @@ func (h *CommentHandler) listComments(ctx context.Context, postID string, reques
 		limit = 50
 	}
 
-	cursor := request.QueryStringParameters["cursor"]
 	status := request.QueryStringParameters["status"]
 	if status == "" {
 		status = models.CommentStatusApproved // Only show approved by default
@@ -89,20 +122,16 @@ func (h *CommentHandler) listComments(ctx context.Context, postID string, reques
 		OrderBy("CreatedAt", "ASC").
 		Limit(limit)
 
-	if cursor != "" {
-		query = query.Cursor(cursor)
-	}
-
 	// Apply status filter for non-admins
 	if !isAdmin(request) {
-		query = query.Filter("Status = :status", dynamorm.Param("status", models.CommentStatusApproved))
+		query = query.Filter("Status", "=", models.CommentStatusApproved)
 	} else if status != "all" {
-		query = query.Filter("Status = :status", dynamorm.Param("status", status))
+		query = query.Filter("Status", "=", status)
 	}
 
 	// Execute query
 	var comments []*models.Comment
-	nextCursor, err := query.All(&comments)
+	err := query.All(&comments)
 	if err != nil {
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch comments"), nil
 	}
@@ -150,10 +179,10 @@ func (h *CommentHandler) listComments(ctx context.Context, postID string, reques
 		Where("ID", "=", postID).
 		First(&post)
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"comments":      tree,
-		"next_cursor":   nextCursor,
-		"has_more":      nextCursor != "",
+		"next_cursor":   "", // Cursor not supported in current implementation
+		"has_more":      false,
 		"total_count":   len(comments),
 		"comment_count": countCommentsInTree(tree),
 	}
@@ -195,7 +224,7 @@ func (h *CommentHandler) createComment(ctx context.Context, postID string, reque
 		First(&post)
 
 	if err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == customerrors.ErrItemNotFound {
 			return errorResponse(http.StatusNotFound, "Post not found"), nil
 		}
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch post"), nil
@@ -259,10 +288,23 @@ func (h *CommentHandler) createComment(ctx context.Context, postID string, reque
 
 	// Send moderation notification if pending
 	if comment.Status == models.CommentStatusPending {
-		// TODO: Send notification to moderators
+		// Get the post details for the notification
+		var post models.Post
+		err := h.db.Model(&models.Post{}).
+			Where("ID", "=", postID).
+			First(&post)
+		if err == nil {
+			// Send notification asynchronously
+			go func() {
+				if err := h.notificationService.SendCommentModerationNotification(comment, &post); err != nil {
+					// Log error but don't fail the request
+					fmt.Printf("Failed to send moderation notification: %v\n", err)
+				}
+			}()
+		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"comment": comment,
 		"message": "Comment submitted successfully",
 	}
@@ -322,19 +364,17 @@ func (h *CommentHandler) moderateComment(ctx context.Context, request events.API
 		First(&comment)
 
 	if err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == customerrors.ErrItemNotFound {
 			return errorResponse(http.StatusNotFound, "Comment not found"), nil
 		}
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch comment"), nil
 	}
 
 	// Update status
-	err = h.db.Model(&models.Comment{}).
-		Where("ID", "=", commentID).
-		Update(map[string]interface{}{
-			"Status":    req.Status,
-			"UpdatedAt": time.Now(),
-		})
+	comment.Status = req.Status
+	comment.UpdatedAt = time.Now()
+
+	err = h.db.Model(&comment).Update("Status", "UpdatedAt")
 
 	if err != nil {
 		return errorResponse(http.StatusInternalServerError, "Failed to update comment"), nil
@@ -342,10 +382,23 @@ func (h *CommentHandler) moderateComment(ctx context.Context, request events.API
 
 	// Send notification to comment author if approved
 	if req.Status == models.CommentStatusApproved && comment.Status != models.CommentStatusApproved {
-		// TODO: Send approval notification
+		// Get the post details for the notification
+		var post models.Post
+		err := h.db.Model(&models.Post{}).
+			Where("ID", "=", comment.PostID).
+			First(&post)
+		if err == nil {
+			// Send notification asynchronously
+			go func() {
+				if err := h.notificationService.SendCommentApprovalNotification(&comment, &post); err != nil {
+					// Log error but don't fail the request
+					fmt.Printf("Failed to send approval notification: %v\n", err)
+				}
+			}()
+		}
 	}
 
-	return successResponse(http.StatusOK, map[string]interface{}{
+	return successResponse(http.StatusOK, map[string]any{
 		"message": "Comment moderated successfully",
 		"status":  req.Status,
 	}), nil
@@ -365,7 +418,7 @@ func (h *CommentHandler) deleteComment(ctx context.Context, request events.APIGa
 		First(&comment)
 
 	if err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == customerrors.ErrItemNotFound {
 			return errorResponse(http.StatusNotFound, "Comment not found"), nil
 		}
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch comment"), nil
@@ -378,22 +431,23 @@ func (h *CommentHandler) deleteComment(ctx context.Context, request events.APIGa
 	}
 
 	// Check if comment has children
-	var childCount int
-	err = h.db.Model(&models.Comment{}).
+	childCount, err := h.db.Model(&models.Comment{}).
 		Index("gsi-post").
 		Where("PostID", "=", comment.PostID).
 		Where("ParentID", "=", commentID).
-		Count(&childCount)
+		Count()
+
+	if err != nil {
+		return errorResponse(http.StatusInternalServerError, "Failed to check for child comments"), nil
+	}
 
 	if childCount > 0 {
 		// Soft delete - just update content
-		err = h.db.Model(&models.Comment{}).
-			Where("ID", "=", commentID).
-			Update(map[string]interface{}{
-				"Content":   "[Comment deleted]",
-				"Status":    "deleted",
-				"UpdatedAt": time.Now(),
-			})
+		comment.Content = "[Comment deleted]"
+		comment.Status = "deleted"
+		comment.UpdatedAt = time.Now()
+
+		err = h.db.Model(&comment).Update("Content", "Status", "UpdatedAt")
 	} else {
 		// Hard delete
 		err = h.db.Model(&models.Comment{}).

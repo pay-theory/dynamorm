@@ -63,9 +63,9 @@ func (h *InventoryHandlers) GetInventory(ctx context.Context, request events.API
 	// Get product details for additional info
 	var product models.Product
 	if err := h.db.GetItem(ctx, productID, &product); err == nil {
-		return jsonResponse(http.StatusOK, map[string]interface{}{
+		return jsonResponse(http.StatusOK, map[string]any{
 			"inventory": inventory,
-			"product": map[string]interface{}{
+			"product": map[string]any{
 				"id":   product.ID,
 				"name": product.Name,
 				"sku":  product.SKU,
@@ -73,7 +73,7 @@ func (h *InventoryHandlers) GetInventory(ctx context.Context, request events.API
 		})
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"inventory": inventory,
 	})
 }
@@ -120,15 +120,15 @@ func (h *InventoryHandlers) ListInventory(ctx context.Context, request events.AP
 	}
 
 	// Enrich with product details
-	enrichedInventory := make([]map[string]interface{}, len(inventories))
+	enrichedInventory := make([]map[string]any, len(inventories))
 	for i, inv := range inventories {
-		enrichedInventory[i] = map[string]interface{}{
+		enrichedInventory[i] = map[string]any{
 			"inventory": inv,
 		}
 
 		var product models.Product
 		if err := h.db.GetItem(ctx, inv.ProductID, &product); err == nil {
-			enrichedInventory[i]["product"] = map[string]interface{}{
+			enrichedInventory[i]["product"] = map[string]any{
 				"id":   product.ID,
 				"name": product.Name,
 				"sku":  product.SKU,
@@ -136,9 +136,9 @@ func (h *InventoryHandlers) ListInventory(ctx context.Context, request events.AP
 		}
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"inventories": enrichedInventory,
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"count": len(inventories),
 			"limit": limit,
 		},
@@ -146,7 +146,7 @@ func (h *InventoryHandlers) ListInventory(ctx context.Context, request events.AP
 
 	if result.LastEvaluatedKey != nil {
 		cursor, _ := json.Marshal(result.LastEvaluatedKey)
-		response["metadata"].(map[string]interface{})["next_cursor"] = string(cursor)
+		response["metadata"].(map[string]any)["next_cursor"] = string(cursor)
 	}
 
 	return jsonResponse(http.StatusOK, response)
@@ -294,7 +294,7 @@ func (h *InventoryHandlers) UpdateInventory(ctx context.Context, request events.
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch updated inventory")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"inventory": inventory,
 		"movements": movements,
 	})
@@ -399,7 +399,7 @@ func (h *InventoryHandlers) AdjustInventory(ctx context.Context, request events.
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch updated inventory")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"inventory": inventory,
 		"movement":  movement,
 		"message":   fmt.Sprintf("Inventory adjusted by %d", adjustment.Quantity),
@@ -534,13 +534,13 @@ func (h *InventoryHandlers) TransferInventory(ctx context.Context, request event
 		return errorResponse(http.StatusInternalServerError, "Failed to complete transfer")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"transfer_id": transferID,
-		"from": map[string]interface{}{
+		"from": map[string]any{
 			"location":      transfer.FromLocation,
 			"new_available": fromInventory.Available - transfer.Quantity,
 		},
-		"to": map[string]interface{}{
+		"to": map[string]any{
 			"location":      transfer.ToLocation,
 			"new_available": toInventory.Available + transfer.Quantity,
 		},
@@ -627,10 +627,10 @@ func (h *InventoryHandlers) GetInventoryMovements(ctx context.Context, request e
 		stats["net"] += movement.Quantity
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"movements":  movements,
 		"statistics": stats,
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"product_id": productID,
 			"count":      len(movements),
 			"limit":      limit,
@@ -639,7 +639,7 @@ func (h *InventoryHandlers) GetInventoryMovements(ctx context.Context, request e
 
 	if result.LastEvaluatedKey != nil {
 		cursor, _ := json.Marshal(result.LastEvaluatedKey)
-		response["metadata"].(map[string]interface{})["next_cursor"] = string(cursor)
+		response["metadata"].(map[string]any)["next_cursor"] = string(cursor)
 	}
 
 	return jsonResponse(http.StatusOK, response)
@@ -760,7 +760,7 @@ func (h *InventoryHandlers) BulkUpdateInventory(ctx context.Context, request eve
 		status = http.StatusPartialContent
 	}
 
-	return jsonResponse(status, map[string]interface{}{
+	return jsonResponse(status, map[string]any{
 		"successful": successful,
 		"failed":     failed,
 		"total":      len(bulkUpdate.Updates),

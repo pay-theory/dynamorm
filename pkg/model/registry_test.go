@@ -227,7 +227,7 @@ func TestRegisterDuplicatePrimaryKey(t *testing.T) {
 func TestRegisterInvalidTagTypes(t *testing.T) {
 	tests := []struct {
 		name  string
-		model interface{}
+		model any
 		error string
 	}{
 		{
@@ -293,7 +293,7 @@ func TestGetMetadataByTable(t *testing.T) {
 
 func TestTableNameDerivation(t *testing.T) {
 	tests := []struct {
-		model     interface{}
+		model     any
 		tableName string
 	}{
 		{&BasicModel{}, "BasicModels"},

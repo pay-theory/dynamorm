@@ -11,9 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/payment"
-	"github.com/example/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	dynamormtests "github.com/pay-theory/dynamorm/tests"
 )
 
 // LoadTestConfig defines load test parameters
@@ -44,9 +45,7 @@ type LoadTestMetrics struct {
 
 // TestRealisticLoad simulates realistic payment platform load
 func TestRealisticLoad(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping load test in short mode")
-	}
+	dynamormtests.RequireDynamoDBLocal(t)
 
 	config := LoadTestConfig{
 		Duration:            5 * time.Minute,
@@ -79,9 +78,7 @@ func TestRealisticLoad(t *testing.T) {
 
 // TestBurstTraffic simulates burst traffic scenarios
 func TestBurstTraffic(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping burst test in short mode")
-	}
+	dynamormtests.RequireDynamoDBLocal(t)
 
 	db, err := initLoadTestDB(t)
 	if err != nil {
@@ -172,9 +169,7 @@ func TestBurstTraffic(t *testing.T) {
 
 // TestMultiRegionSimulation simulates multi-region deployment
 func TestMultiRegionSimulation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping multi-region test in short mode")
-	}
+	dynamormtests.RequireDynamoDBLocal(t)
 
 	regions := []string{"us-east-1", "us-west-2", "eu-west-1"}
 	var wg sync.WaitGroup
@@ -194,18 +189,20 @@ func TestMultiRegionSimulation(t *testing.T) {
 			defer wg.Done()
 
 			// Simulate region-specific DB connection
-			db, err := dynamorm.New(
-				dynamorm.WithRegion(r),
-				dynamorm.WithEndpoint("http://localhost:8000"), // Would be real endpoint
-			)
+			db, err := dynamorm.New(dynamorm.Config{
+				Region:   r,
+				Endpoint: "http://localhost:8000", // Would be real endpoint
+			})
 			if err != nil {
 				t.Errorf("Failed to connect to region %s: %v", r, err)
 				return
 			}
 
 			// Register models
-			db.Model(&payment.Payment{})
-			db.Model(&payment.Merchant{})
+			if err := db.AutoMigrate(&payment.Payment{}, &payment.Merchant{}); err != nil {
+				t.Errorf("Failed to auto-migrate in region %s: %v", r, err)
+				return
+			}
 
 			// Create region-specific merchant
 			merchant := &payment.Merchant{
@@ -379,12 +376,23 @@ func createPayment(db *dynamorm.DB, merchantID, tag string) error {
 }
 
 func initLoadTestDB(t *testing.T) (*dynamorm.DB, error) {
-	return dynamorm.New(
-		dynamorm.WithRegion("us-east-1"),
-		dynamorm.WithEndpoint("http://localhost:8000"),
-		dynamorm.WithConnectionPool(100), // High pool for load testing
-		dynamorm.WithRetryPolicy(3, 100*time.Millisecond),
-	)
+	config := dynamorm.Config{
+		Region:     "us-east-1",
+		Endpoint:   "http://localhost:8000",
+		MaxRetries: 3,
+	}
+
+	db, err := dynamorm.New(config)
+	if err != nil {
+		return nil, err
+	}
+
+	// Register models
+	if err := db.AutoMigrate(&payment.Payment{}, &payment.Merchant{}, &payment.Customer{}); err != nil {
+		return nil, fmt.Errorf("failed to auto-migrate: %w", err)
+	}
+
+	return db, nil
 }
 
 func createLoadTestMerchants(t *testing.T, db *dynamorm.DB, count int) []*payment.Merchant {

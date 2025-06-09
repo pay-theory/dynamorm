@@ -86,18 +86,18 @@ type PaymentMethod struct {
 
 // Merchant represents a merchant account
 type Merchant struct {
-	ID              string                 `dynamorm:"pk" json:"id"`
-	Name            string                 `json:"name"`
-	Email           string                 `dynamorm:"index:gsi-email" json:"email"`
-	Status          string                 `json:"status"`
-	ProcessorConfig map[string]interface{} `dynamorm:"json,encrypted" json:"-"`
-	WebhookURL      string                 `json:"webhook_url,omitempty"`
-	WebhookSecret   string                 `dynamorm:"encrypted" json:"-"`
-	Features        []string               `dynamorm:"set" json:"features"`
-	RateLimits      RateLimits             `dynamorm:"json" json:"rate_limits"`
-	CreatedAt       time.Time              `dynamorm:"created_at" json:"created_at"`
-	UpdatedAt       time.Time              `dynamorm:"updated_at" json:"updated_at"`
-	Version         int                    `dynamorm:"version" json:"version"`
+	ID              string         `dynamorm:"pk" json:"id"`
+	Name            string         `json:"name"`
+	Email           string         `dynamorm:"index:gsi-email" json:"email"`
+	Status          string         `json:"status"`
+	ProcessorConfig map[string]any `dynamorm:"json,encrypted" json:"-"`
+	WebhookURL      string         `json:"webhook_url,omitempty"`
+	WebhookSecret   string         `dynamorm:"encrypted" json:"-"`
+	Features        []string       `dynamorm:"set" json:"features"`
+	RateLimits      RateLimits     `dynamorm:"json" json:"rate_limits"`
+	CreatedAt       time.Time      `dynamorm:"created_at" json:"created_at"`
+	UpdatedAt       time.Time      `dynamorm:"updated_at" json:"updated_at"`
+	Version         int            `dynamorm:"version" json:"version"`
 }
 
 // RateLimits defines rate limiting configuration
@@ -109,12 +109,12 @@ type RateLimits struct {
 
 // AuditEntry represents an entry in the audit trail
 type AuditEntry struct {
-	Timestamp time.Time              `json:"timestamp"`
-	Action    string                 `json:"action"`
-	UserID    string                 `json:"user_id,omitempty"`
-	IPAddress string                 `json:"ip_address,omitempty"`
-	Changes   map[string]interface{} `json:"changes,omitempty"`
-	Reason    string                 `json:"reason,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+	Action    string         `json:"action"`
+	UserID    string         `json:"user_id,omitempty"`
+	IPAddress string         `json:"ip_address,omitempty"`
+	Changes   map[string]any `json:"changes,omitempty"`
+	Reason    string         `json:"reason,omitempty"`
 }
 
 // IdempotencyRecord tracks idempotent requests
@@ -154,20 +154,20 @@ type SettlementDetail struct {
 
 // Webhook represents a webhook delivery attempt
 type Webhook struct {
-	ID           string                 `dynamorm:"pk" json:"id"`
-	MerchantID   string                 `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
-	EventType    string                 `dynamorm:"index:gsi-merchant,sk,prefix:event" json:"event_type"`
-	PaymentID    string                 `json:"payment_id,omitempty"`
-	URL          string                 `json:"url"`
-	Payload      map[string]interface{} `dynamorm:"json" json:"payload"`
-	Attempts     int                    `json:"attempts"`
-	LastAttempt  time.Time              `json:"last_attempt,omitempty"`
-	NextRetry    time.Time              `dynamorm:"index:gsi-retry" json:"next_retry,omitempty"`
-	Status       string                 `json:"status"`
-	ResponseCode int                    `json:"response_code,omitempty"`
-	ResponseBody string                 `json:"response_body,omitempty"`
-	CreatedAt    time.Time              `dynamorm:"created_at" json:"created_at"`
-	ExpiresAt    time.Time              `dynamorm:"ttl" json:"expires_at"`
+	ID           string         `dynamorm:"pk" json:"id"`
+	MerchantID   string         `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
+	EventType    string         `dynamorm:"index:gsi-merchant,sk,prefix:event" json:"event_type"`
+	PaymentID    string         `json:"payment_id,omitempty"`
+	URL          string         `json:"url"`
+	Payload      map[string]any `dynamorm:"json" json:"payload"`
+	Attempts     int            `json:"attempts"`
+	LastAttempt  time.Time      `json:"last_attempt,omitempty"`
+	NextRetry    time.Time      `dynamorm:"index:gsi-retry" json:"next_retry,omitempty"`
+	Status       string         `json:"status"`
+	ResponseCode int            `json:"response_code,omitempty"`
+	ResponseBody string         `json:"response_body,omitempty"`
+	CreatedAt    time.Time      `dynamorm:"created_at" json:"created_at"`
+	ExpiresAt    time.Time      `dynamorm:"ttl" json:"expires_at"`
 }
 
 // WebhookStatus constants

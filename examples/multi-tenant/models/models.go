@@ -199,8 +199,8 @@ type AuditLog struct {
 
 // Change represents a field change in audit log
 type Change struct {
-	From interface{} `json:"from"`
-	To   interface{} `json:"to"`
+	From any `json:"from"`
+	To   any `json:"to"`
 }
 
 // Invitation represents a pending user invitation

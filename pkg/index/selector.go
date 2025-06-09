@@ -26,25 +26,18 @@ type RequiredKeys struct {
 }
 
 // SelectOptimal selects the best index for the given query requirements
-func (s *Selector) SelectOptimal(required RequiredKeys, conditions []interface{}) (*core.IndexSchema, error) {
+func (s *Selector) SelectOptimal(required RequiredKeys, conditions []any) (*core.IndexSchema, error) {
 	var bestIndex *core.IndexSchema
 	var bestScore int
 
-	// First check the primary index (table)
-	primaryScore := s.scoreIndex(core.IndexSchema{
-		Name:         "",
-		Type:         "PRIMARY",
-		PartitionKey: required.PartitionKey,
-		SortKey:      required.SortKey,
-	}, required)
-
-	if primaryScore > 0 {
-		bestIndex = &core.IndexSchema{
-			Name: "",
-			Type: "PRIMARY",
-		}
-		bestScore = primaryScore
+	// If no partition key is required, we cannot use Query operation
+	if required.PartitionKey == "" {
+		return nil, nil
 	}
+
+	// We need to get the actual primary key from somewhere
+	// For now, we'll assume it's passed via the indexes with Type="PRIMARY"
+	// or we need to refactor to pass the primary key schema separately
 
 	// Check GSIs and LSIs
 	for _, idx := range s.indexes {
@@ -57,7 +50,7 @@ func (s *Selector) SelectOptimal(required RequiredKeys, conditions []interface{}
 	}
 
 	// If no suitable index found, scanning is required
-	if bestIndex == nil {
+	if bestIndex == nil || bestScore == 0 {
 		return nil, nil
 	}
 
@@ -147,5 +140,5 @@ func normalizeOperator(op string) string {
 type Condition struct {
 	Field    string
 	Operator string
-	Value    interface{}
+	Value    any
 }

@@ -3,6 +3,7 @@ package stress
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"testing"
@@ -12,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,9 @@ import (
 
 // TestConcurrentQueries tests system behavior under heavy concurrent load
 func TestConcurrentQueries(t *testing.T) {
+	// Use our new test utility instead of testing.Short()
+	tests.RequireDynamoDBLocal(t)
+
 	db, err := setupStressDB(t)
 	require.NoError(t, err)
 
@@ -62,7 +66,7 @@ func TestConcurrentQueries(t *testing.T) {
 					var users []models.TestUser
 					err := db.Model(&models.TestUser{}).
 						Where("Status", "=", "active").
-						Filter("Age > :age", core.Param{Name: "age", Value: 25}).
+						Filter("Age", ">", 25).
 						Limit(10).
 						All(&users)
 					if err != nil {
@@ -142,6 +146,8 @@ func TestConcurrentQueries(t *testing.T) {
 
 // TestLargeItemHandling tests handling of items near DynamoDB limits
 func TestLargeItemHandling(t *testing.T) {
+	tests.RequireDynamoDBLocal(t)
+
 	db, err := setupStressDB(t)
 	require.NoError(t, err)
 
@@ -182,13 +188,13 @@ func TestLargeItemHandling(t *testing.T) {
 	t.Run("Many Attributes", func(t *testing.T) {
 		// Create item with 100+ attributes (using a map)
 		type FlexibleItem struct {
-			ID         string                 `dynamorm:"pk"`
-			Attributes map[string]interface{} `dynamorm:""`
+			ID         string         `dynamorm:"pk"`
+			Attributes map[string]any `dynamorm:""`
 		}
 
 		item := FlexibleItem{
 			ID:         "many-attributes-item",
-			Attributes: make(map[string]interface{}),
+			Attributes: make(map[string]any),
 		}
 
 		// Add 100 attributes
@@ -246,8 +252,11 @@ func TestLargeItemHandling(t *testing.T) {
 
 // TestMemoryStability tests for memory leaks under sustained load
 func TestMemoryStability(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping memory stability test in short mode")
+	tests.RequireDynamoDBLocal(t)
+
+	// This is a longer test, so allow skipping it specifically
+	if os.Getenv("SKIP_MEMORY_TEST") == "true" {
+		t.Skip("Skipping memory stability test (SKIP_MEMORY_TEST=true)")
 	}
 
 	db, err := setupStressDB(t)
@@ -298,7 +307,7 @@ func TestMemoryStability(t *testing.T) {
 			// Scan with filter
 			var users []models.TestUser
 			err := db.Model(&models.TestUser{}).
-				Filter("Age > :age", core.Param{Name: "age", Value: 20}).
+				Filter("Age", ">", 20).
 				Limit(20).
 				Scan(&users)
 			if err != nil {
@@ -376,7 +385,7 @@ func setupStressDB(t *testing.T) (*dynamorm.DB, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
 		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			func(service, region string, options ...any) (aws.Endpoint, error) {
 				return aws.Endpoint{
 					URL:           "http://localhost:8000",
 					SigningRegion: "us-east-1",

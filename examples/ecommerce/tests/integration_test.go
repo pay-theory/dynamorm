@@ -106,11 +106,11 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		productsResp := result["products"].([]interface{})
+		productsResp := result["products"].([]any)
 		assert.GreaterOrEqual(t, len(productsResp), 3)
 	})
 
@@ -128,11 +128,11 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		product := result["product"].(map[string]interface{})
+		product := result["product"].(map[string]any)
 		assert.Equal(t, products[0].Name, product["name"])
 	})
 
@@ -142,7 +142,7 @@ func TestFullPurchaseFlow(t *testing.T) {
 
 	t.Run("Create Cart and Add Items", func(t *testing.T) {
 		// Create cart
-		cartReq := map[string]interface{}{
+		cartReq := map[string]any{
 			"customer_id": customerID,
 			"currency":    "USD",
 		}
@@ -157,17 +157,17 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		cart := result["cart"].(map[string]interface{})
+		cart := result["cart"].(map[string]any)
 		cartID = cart["id"].(string)
 		assert.NotEmpty(t, cartID)
 
 		// Add items to cart
 		for i, product := range products[:2] {
-			addItemReq := map[string]interface{}{
+			addItemReq := map[string]any{
 				"product_id": product.ID,
 				"quantity":   i + 1,
 			}
@@ -201,12 +201,12 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		cart := result["cart"].(map[string]interface{})
-		items := cart["items"].([]interface{})
+		cart := result["cart"].(map[string]any)
+		items := cart["items"].([]any)
 		assert.Len(t, items, 2)
 		assert.Greater(t, cart["total"].(float64), 0.0)
 	})
@@ -214,12 +214,12 @@ func TestFullPurchaseFlow(t *testing.T) {
 	// Step 6: Create order from cart
 	var orderID string
 	t.Run("Create Order", func(t *testing.T) {
-		orderReq := map[string]interface{}{
+		orderReq := map[string]any{
 			"cart_id":     cartID,
 			"customer_id": customerID,
 			"email":       "test@example.com",
 			"phone":       "+1234567890",
-			"shipping_address": map[string]interface{}{
+			"shipping_address": map[string]any{
 				"first_name":  "John",
 				"last_name":   "Doe",
 				"address1":    "123 Main St",
@@ -228,7 +228,7 @@ func TestFullPurchaseFlow(t *testing.T) {
 				"postal_code": "94102",
 				"country":     "US",
 			},
-			"billing_address": map[string]interface{}{
+			"billing_address": map[string]any{
 				"first_name":  "John",
 				"last_name":   "Doe",
 				"address1":    "123 Main St",
@@ -252,11 +252,11 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		order := result["order"].(map[string]interface{})
+		order := result["order"].(map[string]any)
 		orderID = order["id"].(string)
 		assert.NotEmpty(t, orderID)
 		assert.Equal(t, models.OrderStatusPending, order["status"])
@@ -278,11 +278,11 @@ func TestFullPurchaseFlow(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-			var result map[string]interface{}
+			var result map[string]any
 			err = json.Unmarshal([]byte(resp.Body), &result)
 			require.NoError(t, err)
 
-			inventory := result["inventory"].(map[string]interface{})
+			inventory := result["inventory"].(map[string]any)
 			// Check that reserved quantity increased
 			assert.Greater(t, inventory["reserved"].(float64), 0.0)
 		}
@@ -291,7 +291,7 @@ func TestFullPurchaseFlow(t *testing.T) {
 	// Step 8: Update order status
 	t.Run("Update Order Status", func(t *testing.T) {
 		// Process order
-		statusUpdate := map[string]interface{}{
+		statusUpdate := map[string]any{
 			"status": models.OrderStatusProcessing,
 			"notes":  "Payment confirmed, preparing for shipment",
 		}
@@ -313,7 +313,7 @@ func TestFullPurchaseFlow(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		// Ship order
-		statusUpdate = map[string]interface{}{
+		statusUpdate = map[string]any{
 			"status":          models.OrderStatusShipped,
 			"tracking_number": "TRACK123456",
 			"notes":           "Order shipped via FedEx",
@@ -324,11 +324,11 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		order := result["order"].(map[string]interface{})
+		order := result["order"].(map[string]any)
 		assert.Equal(t, models.OrderStatusShipped, order["status"])
 		assert.Equal(t, "TRACK123456", order["tracking_number"])
 	})
@@ -347,11 +347,11 @@ func TestFullPurchaseFlow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		orders := result["orders"].([]interface{})
+		orders := result["orders"].([]any)
 		assert.GreaterOrEqual(t, len(orders), 1)
 	})
 }
@@ -363,7 +363,7 @@ func TestInventoryManagement(t *testing.T) {
 	product := createTestProduct(t, ctx, "Inventory Test Product", 10000, 50)
 
 	t.Run("Adjust Inventory", func(t *testing.T) {
-		adjustment := map[string]interface{}{
+		adjustment := map[string]any{
 			"location_id": "main",
 			"quantity":    10,
 			"type":        "restock",
@@ -386,11 +386,11 @@ func TestInventoryManagement(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		inventory := result["inventory"].(map[string]interface{})
+		inventory := result["inventory"].(map[string]any)
 		assert.Equal(t, 60.0, inventory["available"].(float64))
 	})
 
@@ -398,7 +398,7 @@ func TestInventoryManagement(t *testing.T) {
 		// First, create inventory at source location
 		setupInventory(t, ctx, product.ID, "warehouse", 100)
 
-		transfer := map[string]interface{}{
+		transfer := map[string]any{
 			"product_id":    product.ID,
 			"from_location": "warehouse",
 			"to_location":   "store1",
@@ -419,12 +419,12 @@ func TestInventoryManagement(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		from := result["from"].(map[string]interface{})
-		to := result["to"].(map[string]interface{})
+		from := result["from"].(map[string]any)
+		to := result["to"].(map[string]any)
 
 		assert.Equal(t, 70.0, from["new_available"].(float64))
 		assert.Equal(t, 30.0, to["new_available"].(float64))
@@ -446,14 +446,14 @@ func TestInventoryManagement(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		movements := result["movements"].([]interface{})
+		movements := result["movements"].([]any)
 		assert.GreaterOrEqual(t, len(movements), 2) // At least adjustment and transfer
 
-		stats := result["statistics"].(map[string]interface{})
+		stats := result["statistics"].(map[string]any)
 		assert.Greater(t, stats["total_in"].(float64), 0.0)
 		assert.Greater(t, stats["total_out"].(float64), 0.0)
 	})
@@ -467,7 +467,7 @@ func TestCartOperations(t *testing.T) {
 
 	t.Run("Cart TTL Expiration", func(t *testing.T) {
 		// Create cart with short TTL
-		cartReq := map[string]interface{}{
+		cartReq := map[string]any{
 			"session_id": uuid.New().String(),
 			"currency":   "USD",
 			"ttl_hours":  1, // 1 hour TTL
@@ -483,11 +483,11 @@ func TestCartOperations(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		cart := result["cart"].(map[string]interface{})
+		cart := result["cart"].(map[string]any)
 		expiresAt, err := time.Parse(time.RFC3339, cart["expires_at"].(string))
 		require.NoError(t, err)
 
@@ -501,7 +501,7 @@ func TestCartOperations(t *testing.T) {
 		cartID := createCartWithItems(t, ctx, products[:1])
 
 		// Update quantity
-		updateReq := map[string]interface{}{
+		updateReq := map[string]any{
 			"quantity": 5,
 		}
 
@@ -521,9 +521,9 @@ func TestCartOperations(t *testing.T) {
 
 		// Verify update
 		cart := getCart(t, ctx, cartID)
-		items := cart["items"].([]interface{})
+		items := cart["items"].([]any)
 		assert.Len(t, items, 1)
-		assert.Equal(t, 5.0, items[0].(map[string]interface{})["quantity"].(float64))
+		assert.Equal(t, 5.0, items[0].(map[string]any)["quantity"].(float64))
 	})
 
 	t.Run("Remove Cart Item", func(t *testing.T) {
@@ -546,7 +546,7 @@ func TestCartOperations(t *testing.T) {
 
 		// Verify removal
 		cart := getCart(t, ctx, cartID)
-		items := cart["items"].([]interface{})
+		items := cart["items"].([]any)
 		assert.Len(t, items, 2) // Started with 3, removed 1
 	})
 }
@@ -596,11 +596,11 @@ func createTestProducts(t *testing.T, ctx context.Context) []models.Product {
 		require.NoError(t, err)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		require.NoError(t, err)
 
-		createdProduct := result["product"].(map[string]interface{})
+		createdProduct := result["product"].(map[string]any)
 		product.ID = createdProduct["id"].(string)
 	}
 
@@ -630,11 +630,11 @@ func createTestProduct(t *testing.T, ctx context.Context, name string, price, st
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal([]byte(resp.Body), &result)
 	require.NoError(t, err)
 
-	createdProduct := result["product"].(map[string]interface{})
+	createdProduct := result["product"].(map[string]any)
 	product.ID = createdProduct["id"].(string)
 
 	return product
@@ -642,7 +642,7 @@ func createTestProduct(t *testing.T, ctx context.Context, name string, price, st
 
 func createCartWithItems(t *testing.T, ctx context.Context, products []models.Product) string {
 	// Create cart
-	cartReq := map[string]interface{}{
+	cartReq := map[string]any{
 		"session_id": uuid.New().String(),
 		"currency":   "USD",
 	}
@@ -657,16 +657,16 @@ func createCartWithItems(t *testing.T, ctx context.Context, products []models.Pr
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal([]byte(resp.Body), &result)
 	require.NoError(t, err)
 
-	cart := result["cart"].(map[string]interface{})
+	cart := result["cart"].(map[string]any)
 	cartID := cart["id"].(string)
 
 	// Add items
 	for _, product := range products {
-		addItemReq := map[string]interface{}{
+		addItemReq := map[string]any{
 			"product_id": product.ID,
 			"quantity":   1,
 		}
@@ -688,7 +688,7 @@ func createCartWithItems(t *testing.T, ctx context.Context, products []models.Pr
 	return cartID
 }
 
-func getCart(t *testing.T, ctx context.Context, cartID string) map[string]interface{} {
+func getCart(t *testing.T, ctx context.Context, cartID string) map[string]any {
 	req := events.APIGatewayProxyRequest{
 		HTTPMethod: "GET",
 		Path:       fmt.Sprintf("/carts/%s", cartID),
@@ -701,15 +701,15 @@ func getCart(t *testing.T, ctx context.Context, cartID string) map[string]interf
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal([]byte(resp.Body), &result)
 	require.NoError(t, err)
 
-	return result["cart"].(map[string]interface{})
+	return result["cart"].(map[string]any)
 }
 
 func setupInventory(t *testing.T, ctx context.Context, productID, locationID string, quantity int) {
-	update := map[string]interface{}{
+	update := map[string]any{
 		"location_id": locationID,
 		"available":   quantity,
 	}
@@ -731,7 +731,7 @@ func setupInventory(t *testing.T, ctx context.Context, productID, locationID str
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
-func mustMarshal(v interface{}) string {
+func mustMarshal(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
 		panic(err)

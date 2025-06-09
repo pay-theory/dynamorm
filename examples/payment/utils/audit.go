@@ -6,24 +6,24 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dynamorm/dynamorm"
 	"github.com/google/uuid"
+	"github.com/pay-theory/dynamorm"
 )
 
 // AuditLog represents an audit log entry
 type AuditLog struct {
-	ID         string                 `dynamorm:"pk" json:"id"`
-	EntityType string                 `dynamorm:"index:gsi-entity,pk" json:"entity_type"`
-	EntityID   string                 `dynamorm:"index:gsi-entity,sk" json:"entity_id"`
-	Action     string                 `json:"action"`
-	UserID     string                 `json:"user_id,omitempty"`
-	MerchantID string                 `dynamorm:"index:gsi-merchant" json:"merchant_id"`
-	IPAddress  string                 `json:"ip_address,omitempty"`
-	UserAgent  string                 `json:"user_agent,omitempty"`
-	Before     map[string]interface{} `dynamorm:"json" json:"before,omitempty"`
-	After      map[string]interface{} `dynamorm:"json" json:"after,omitempty"`
-	Metadata   map[string]interface{} `dynamorm:"json" json:"metadata,omitempty"`
-	Timestamp  time.Time              `dynamorm:"created_at" json:"timestamp"`
+	ID         string         `dynamorm:"pk" json:"id"`
+	EntityType string         `dynamorm:"index:gsi-entity,pk" json:"entity_type"`
+	EntityID   string         `dynamorm:"index:gsi-entity,sk" json:"entity_id"`
+	Action     string         `json:"action"`
+	UserID     string         `json:"user_id,omitempty"`
+	MerchantID string         `dynamorm:"index:gsi-merchant" json:"merchant_id"`
+	IPAddress  string         `json:"ip_address,omitempty"`
+	UserAgent  string         `json:"user_agent,omitempty"`
+	Before     map[string]any `dynamorm:"json" json:"before,omitempty"`
+	After      map[string]any `dynamorm:"json" json:"after,omitempty"`
+	Metadata   map[string]any `dynamorm:"json" json:"metadata,omitempty"`
+	Timestamp  time.Time      `dynamorm:"created_at" json:"timestamp"`
 }
 
 // AuditTracker provides audit trail functionality
@@ -37,7 +37,7 @@ func NewAuditTracker(db *dynamorm.DB) *AuditTracker {
 }
 
 // Track records an audit event
-func (a *AuditTracker) Track(action string, entityType string, metadata map[string]interface{}) error {
+func (a *AuditTracker) Track(action string, entityType string, metadata map[string]any) error {
 	log := &AuditLog{
 		ID:         uuid.New().String(),
 		EntityType: entityType,
@@ -85,16 +85,16 @@ func (a *AuditTracker) TrackChange(ctx context.Context, req TrackChangeRequest) 
 
 // TrackChangeRequest contains details for tracking a change
 type TrackChangeRequest struct {
-	EntityType string                 `json:"entity_type"`
-	EntityID   string                 `json:"entity_id"`
-	Action     string                 `json:"action"`
-	UserID     string                 `json:"user_id,omitempty"`
-	MerchantID string                 `json:"merchant_id"`
-	IPAddress  string                 `json:"ip_address,omitempty"`
-	UserAgent  string                 `json:"user_agent,omitempty"`
-	Before     map[string]interface{} `json:"before,omitempty"`
-	After      map[string]interface{} `json:"after,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	EntityType string         `json:"entity_type"`
+	EntityID   string         `json:"entity_id"`
+	Action     string         `json:"action"`
+	UserID     string         `json:"user_id,omitempty"`
+	MerchantID string         `json:"merchant_id"`
+	IPAddress  string         `json:"ip_address,omitempty"`
+	UserAgent  string         `json:"user_agent,omitempty"`
+	Before     map[string]any `json:"before,omitempty"`
+	After      map[string]any `json:"after,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // GetAuditHistory retrieves audit history for an entity

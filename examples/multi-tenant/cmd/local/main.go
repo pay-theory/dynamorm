@@ -142,7 +142,7 @@ func main() {
 // createTables creates the necessary DynamoDB tables for local development
 func createTables(db *dynamorm.Client) error {
 	// Register models
-	models := []interface{}{
+	models := []any{
 		&models.Organization{},
 		&models.User{},
 		&models.Project{},

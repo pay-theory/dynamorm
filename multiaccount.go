@@ -19,7 +19,7 @@ import (
 type MultiAccountDB struct {
 	baseDB        *LambdaDB
 	accounts      map[string]AccountConfig
-	cache         sync.Map // Cache DB connections per account
+	cache         *sync.Map // Cache DB connections per account
 	baseConfig    aws.Config
 	refreshTicker *time.Ticker
 	refreshStop   chan struct{}
@@ -51,6 +51,7 @@ func NewMultiAccount(accounts map[string]AccountConfig) (*MultiAccountDB, error)
 	mdb := &MultiAccountDB{
 		baseDB:      baseDB,
 		accounts:    accounts,
+		cache:       &sync.Map{},
 		baseConfig:  baseConfig,
 		refreshStop: make(chan struct{}),
 	}
@@ -165,6 +166,7 @@ func (mdb *MultiAccountDB) createPartnerDB(partnerID string, account AccountConf
 
 	lambdaDB := &LambdaDB{
 		DB:             db,
+		modelCache:     &sync.Map{},
 		isLambda:       IsLambdaEnvironment(),
 		lambdaMemoryMB: GetLambdaMemoryMB(),
 		xrayEnabled:    EnableXRayTracing(),
@@ -202,7 +204,7 @@ func (mdb *MultiAccountDB) startCredentialRefresh() {
 func (mdb *MultiAccountDB) refreshExpiredCredentials() {
 	now := time.Now()
 
-	mdb.cache.Range(func(key, value interface{}) bool {
+	mdb.cache.Range(func(key, value any) bool {
 		partnerID := key.(string)
 		entry := value.(*cacheEntry)
 
@@ -233,15 +235,17 @@ func (mdb *MultiAccountDB) Close() error {
 
 // WithContext returns a new MultiAccountDB with the given context
 func (mdb *MultiAccountDB) WithContext(ctx context.Context) *MultiAccountDB {
-	return &MultiAccountDB{
+	// Create new MultiAccountDB without copying sync.Map
+	newMDB := &MultiAccountDB{
 		baseDB:        mdb.baseDB.WithLambdaTimeout(ctx),
 		accounts:      mdb.accounts,
-		cache:         mdb.cache,
 		baseConfig:    mdb.baseConfig,
 		refreshTicker: mdb.refreshTicker,
 		refreshStop:   mdb.refreshStop,
-		mu:            sync.RWMutex{},
 	}
+	// Share the same cache pointer
+	newMDB.cache = mdb.cache
+	return newMDB
 }
 
 // cacheEntry holds a cached DB connection with expiration

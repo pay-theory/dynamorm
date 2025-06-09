@@ -129,7 +129,7 @@ func (h *APIKeyHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	h.logAuditEvent(orgID, userID, "create", "api_key", apiKeyRecord.KeyID, nil, true, "")
 
 	// Return response with full key (only shown once)
-	response := map[string]interface{}{
+	response := map[string]any{
 		"key_id":     apiKeyRecord.KeyID,
 		"key":        apiKey, // Only returned on creation
 		"key_prefix": apiKeyRecord.KeyPrefix,

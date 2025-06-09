@@ -20,10 +20,10 @@ type Converter struct {
 // CustomConverter defines the interface for custom type converters
 type CustomConverter interface {
 	// ToAttributeValue converts a Go value to DynamoDB AttributeValue
-	ToAttributeValue(value interface{}) (types.AttributeValue, error)
+	ToAttributeValue(value any) (types.AttributeValue, error)
 
 	// FromAttributeValue converts a DynamoDB AttributeValue to Go value
-	FromAttributeValue(av types.AttributeValue, target interface{}) error
+	FromAttributeValue(av types.AttributeValue, target any) error
 }
 
 // NewConverter creates a new type converter
@@ -39,7 +39,7 @@ func (c *Converter) RegisterConverter(typ reflect.Type, converter CustomConverte
 }
 
 // ToAttributeValue converts a Go value to DynamoDB AttributeValue
-func (c *Converter) ToAttributeValue(value interface{}) (types.AttributeValue, error) {
+func (c *Converter) ToAttributeValue(value any) (types.AttributeValue, error) {
 	if value == nil {
 		return &types.AttributeValueMemberNULL{Value: true}, nil
 	}
@@ -170,7 +170,7 @@ func (c *Converter) structToMap(v reflect.Value) (types.AttributeValue, error) {
 }
 
 // FromAttributeValue converts a DynamoDB AttributeValue to Go value
-func (c *Converter) FromAttributeValue(av types.AttributeValue, target interface{}) error {
+func (c *Converter) FromAttributeValue(av types.AttributeValue, target any) error {
 	targetValue := reflect.ValueOf(target)
 	if targetValue.Kind() != reflect.Ptr {
 		return fmt.Errorf("target must be a pointer")
@@ -431,7 +431,7 @@ func (c *Converter) binarySetToSlice(set [][]byte, target reflect.Value) error {
 }
 
 // ConvertToSet determines if a slice should be converted to a DynamoDB set
-func (c *Converter) ConvertToSet(slice interface{}, isSet bool) (types.AttributeValue, error) {
+func (c *Converter) ConvertToSet(slice any, isSet bool) (types.AttributeValue, error) {
 	if !isSet {
 		return c.ToAttributeValue(slice)
 	}

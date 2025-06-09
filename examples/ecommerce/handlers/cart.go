@@ -276,7 +276,7 @@ func (h *CartHandler) addToCart(ctx context.Context, request events.APIGatewayPr
 	// Reserve inventory (best effort, don't fail the request)
 	go h.reserveInventory(product.ID, req.VariantID, req.Quantity)
 
-	return successResponse(http.StatusOK, map[string]interface{}{
+	return successResponse(http.StatusOK, map[string]any{
 		"cart":    cart,
 		"message": "Item added to cart",
 	}), nil
@@ -472,7 +472,7 @@ func (h *CartHandler) clearCart(ctx context.Context, request events.APIGatewayPr
 		return errorResponse(http.StatusInternalServerError, "Failed to clear cart"), nil
 	}
 
-	return successResponse(http.StatusOK, map[string]interface{}{
+	return successResponse(http.StatusOK, map[string]any{
 		"cart":    cart,
 		"message": "Cart cleared successfully",
 	}), nil
@@ -534,8 +534,8 @@ func getCustomerID(request events.APIGatewayProxyRequest) string {
 	return request.Headers["X-Customer-ID"]
 }
 
-func successResponse(statusCode int, data interface{}) events.APIGatewayProxyResponse {
-	body, _ := json.Marshal(map[string]interface{}{
+func successResponse(statusCode int, data any) events.APIGatewayProxyResponse {
+	body, _ := json.Marshal(map[string]any{
 		"success": true,
 		"data":    data,
 	})
@@ -551,7 +551,7 @@ func successResponse(statusCode int, data interface{}) events.APIGatewayProxyRes
 }
 
 func errorResponse(statusCode int, message string) events.APIGatewayProxyResponse {
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"success": false,
 		"error":   message,
 	})

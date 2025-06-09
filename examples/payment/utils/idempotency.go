@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm"
+	payment "github.com/pay-theory/dynamorm/examples/payment"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // ErrDuplicateRequest indicates a duplicate request was detected
@@ -30,19 +31,30 @@ func NewIdempotencyMiddleware(db *dynamorm.DB, ttl time.Duration) *IdempotencyMi
 }
 
 // Process executes a function with idempotency protection
-func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key string, fn func() (interface{}, error)) (interface{}, error) {
-	// Check for existing record
-	existing, err := m.getRecord(ctx, merchantID, key)
-	if err != nil && err != dynamorm.ErrNotFound {
-		return nil, fmt.Errorf("failed to check idempotency: %w", err)
+func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key string, fn func() (any, error)) (any, error) {
+	// Check if request already exists
+	var existing payment.IdempotencyRecord
+	err := m.db.Model(&payment.IdempotencyRecord{}).
+		Where("Key", "=", key).
+		Where("MerchantID", "=", merchantID).
+		First(&existing)
+
+	if err == nil {
+		// Request already exists
+		if existing.Response != "" {
+			// Parse and return existing response
+			var response any
+			if err := json.Unmarshal([]byte(existing.Response), &response); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal cached response: %w", err)
+			}
+			return response, ErrDuplicateRequest
+		}
+		// Request is still processing
+		return nil, fmt.Errorf("request is still being processed")
 	}
 
-	// If record exists, return cached response
-	if existing != nil {
-		var cached interface{}
-		if err := json.Unmarshal([]byte(existing.Response), &cached); err == nil {
-			return cached, ErrDuplicateRequest
-		}
+	if err != customerrors.ErrItemNotFound {
+		return nil, fmt.Errorf("failed to check idempotency: %w", err)
 	}
 
 	// Create new idempotency record with pending status
@@ -80,14 +92,12 @@ func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key str
 	record.Response = string(responseData)
 	record.StatusCode = statusCode
 
-	// Update the record
-	if err := m.db.Model(&payment.IdempotencyRecord{}).
-		Where("Key", "=", key).
-		Where("MerchantID", "=", merchantID).
-		Update(map[string]interface{}{
-			"Response":   record.Response,
-			"StatusCode": record.StatusCode,
-		}); err != nil {
+	// Update with response
+	record.Response = string(responseData)
+	record.StatusCode = 200
+
+	err = m.db.Model(record).Update("Response", "StatusCode")
+	if err != nil {
 		// Log error but don't fail the request
 		fmt.Printf("Failed to update idempotency record: %v\n", err)
 	}
@@ -100,7 +110,7 @@ func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key str
 }
 
 // GenerateKey generates an idempotency key from request data
-func (m *IdempotencyMiddleware) GenerateKey(merchantID string, data interface{}) string {
+func (m *IdempotencyMiddleware) GenerateKey(merchantID string, data any) string {
 	jsonData, _ := json.Marshal(data)
 	hash := sha256.Sum256(append([]byte(merchantID), jsonData...))
 	return fmt.Sprintf("%x", hash)
@@ -115,12 +125,15 @@ func (m *IdempotencyMiddleware) getRecord(ctx context.Context, merchantID, key s
 		First(&record)
 
 	if err != nil {
-		return nil, err
+		if err == customerrors.ErrItemNotFound {
+			return nil, fmt.Errorf("idempotency record not found")
+		}
+		return nil, fmt.Errorf("failed to get idempotency record: %w", err)
 	}
 
 	// Check if expired
 	if time.Now().After(record.ExpiresAt) {
-		return nil, dynamorm.ErrNotFound
+		return nil, customerrors.ErrItemNotFound
 	}
 
 	return &record, nil

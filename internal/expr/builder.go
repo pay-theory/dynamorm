@@ -136,6 +136,7 @@ type Builder struct {
 	updateExpressions map[string][]string // SET, ADD, REMOVE, DELETE
 	conditions        []string
 	projections       []string
+	filterOperators   []string // "AND", "OR"
 
 	// Attribute mappings
 	names  map[string]string
@@ -144,11 +145,6 @@ type Builder struct {
 	// Counters for placeholder generation
 	nameCounter  int
 	valueCounter int
-
-	// Complex condition support
-	currentGroup  []string
-	groupStack    [][]string
-	operatorStack []string
 }
 
 // NewBuilder creates a new expression builder
@@ -157,56 +153,11 @@ func NewBuilder() *Builder {
 		names:             make(map[string]string),
 		values:            make(map[string]types.AttributeValue),
 		updateExpressions: make(map[string][]string),
-		groupStack:        make([][]string, 0),
-		operatorStack:     make([]string, 0),
 	}
-}
-
-// BeginGroup starts a new expression group (for parentheses)
-func (b *Builder) BeginGroup() *Builder {
-	b.groupStack = append(b.groupStack, b.currentGroup)
-	b.currentGroup = []string{}
-	return b
-}
-
-// EndGroup ends the current expression group
-func (b *Builder) EndGroup() *Builder {
-	if len(b.groupStack) == 0 {
-		return b // No group to end
-	}
-
-	// Build the group expression
-	groupExpr := "(" + strings.Join(b.currentGroup, " AND ") + ")"
-
-	// Pop the previous group
-	b.currentGroup = b.groupStack[len(b.groupStack)-1]
-	b.groupStack = b.groupStack[:len(b.groupStack)-1]
-
-	// Add the group expression to the current context
-	b.currentGroup = append(b.currentGroup, groupExpr)
-
-	return b
-}
-
-// Or adds an OR operator (changes the default AND behavior)
-func (b *Builder) Or() *Builder {
-	if len(b.currentGroup) > 0 {
-		// Mark that the next condition should be ORed
-		b.operatorStack = append(b.operatorStack, "OR")
-	}
-	return b
-}
-
-// And explicitly adds an AND operator (this is the default)
-func (b *Builder) And() *Builder {
-	if len(b.currentGroup) > 0 {
-		b.operatorStack = append(b.operatorStack, "AND")
-	}
-	return b
 }
 
 // AddKeyCondition adds a key condition expression
-func (b *Builder) AddKeyCondition(field string, operator string, value interface{}) error {
+func (b *Builder) AddKeyCondition(field string, operator string, value any) error {
 	expr, err := b.buildCondition(field, operator, value)
 	if err != nil {
 		return err
@@ -216,32 +167,34 @@ func (b *Builder) AddKeyCondition(field string, operator string, value interface
 }
 
 // AddFilterCondition adds a filter condition expression
-func (b *Builder) AddFilterCondition(field string, operator string, value interface{}) error {
+func (b *Builder) AddFilterCondition(logicalOp, field, operator string, value any) error {
 	expr, err := b.buildCondition(field, operator, value)
 	if err != nil {
 		return err
 	}
 	b.filterConditions = append(b.filterConditions, expr)
+	if len(b.filterConditions) > 1 {
+		b.filterOperators = append(b.filterOperators, logicalOp)
+	}
 	return nil
 }
 
-// AddRawFilter adds a raw filter expression with parameters
-func (b *Builder) AddRawFilter(expr string, params map[string]interface{}) error {
-	// Replace parameter placeholders with actual value references
-	processedExpr := expr
-	for name, value := range params {
-		placeholder := ":" + name
-		if strings.Contains(expr, placeholder) {
-			valueRef := b.addValue(value)
-			processedExpr = strings.ReplaceAll(processedExpr, placeholder, valueRef)
-		}
+// AddGroupFilter adds a grouped filter expression
+func (b *Builder) AddGroupFilter(logicalOp string, components ExpressionComponents) {
+	for ph, name := range components.ExpressionAttributeNames {
+		b.names[ph] = name
+	}
+	for ph, val := range components.ExpressionAttributeValues {
+		b.values[ph] = val
 	}
 
-	// Process attribute names
-	processedExpr = b.processAttributeNames(processedExpr)
-
-	b.filterConditions = append(b.filterConditions, processedExpr)
-	return nil
+	if components.FilterExpression != "" {
+		groupExpr := "(" + components.FilterExpression + ")"
+		b.filterConditions = append(b.filterConditions, groupExpr)
+		if len(b.filterConditions) > 1 {
+			b.filterOperators = append(b.filterOperators, logicalOp)
+		}
+	}
 }
 
 // AddProjection adds fields to the projection expression
@@ -253,7 +206,7 @@ func (b *Builder) AddProjection(fields ...string) {
 }
 
 // AddUpdateSet adds a SET update expression
-func (b *Builder) AddUpdateSet(field string, value interface{}) {
+func (b *Builder) AddUpdateSet(field string, value any) {
 	nameRef := b.addName(field)
 	valueRef := b.addValue(value)
 	expr := fmt.Sprintf("%s = %s", nameRef, valueRef)
@@ -261,7 +214,7 @@ func (b *Builder) AddUpdateSet(field string, value interface{}) {
 }
 
 // AddUpdateAdd adds an ADD update expression (for numeric increment)
-func (b *Builder) AddUpdateAdd(field string, value interface{}) {
+func (b *Builder) AddUpdateAdd(field string, value any) {
 	nameRef := b.addName(field)
 	valueRef := b.addValue(value)
 	expr := fmt.Sprintf("%s %s", nameRef, valueRef)
@@ -274,8 +227,16 @@ func (b *Builder) AddUpdateRemove(field string) {
 	b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], nameRef)
 }
 
+// AddUpdateDelete adds a DELETE update expression (for removing elements from a set)
+func (b *Builder) AddUpdateDelete(field string, value any) {
+	nameRef := b.addName(field)
+	valueRef := b.addValue(value)
+	expr := fmt.Sprintf("%s %s", nameRef, valueRef)
+	b.updateExpressions["DELETE"] = append(b.updateExpressions["DELETE"], expr)
+}
+
 // AddConditionExpression adds a condition for conditional updates
-func (b *Builder) AddConditionExpression(field string, operator string, value interface{}) error {
+func (b *Builder) AddConditionExpression(field string, operator string, value any) error {
 	expr, err := b.buildCondition(field, operator, value)
 	if err != nil {
 		return err
@@ -298,7 +259,14 @@ func (b *Builder) Build() ExpressionComponents {
 
 	// Build filter expression
 	if len(b.filterConditions) > 0 {
-		components.FilterExpression = strings.Join(b.filterConditions, " AND ")
+		var builtExpr strings.Builder
+		builtExpr.WriteString(b.filterConditions[0])
+		for i := 1; i < len(b.filterConditions); i++ {
+			// The operator at i-1 links condition i-1 and condition i
+			builtExpr.WriteString(" " + b.filterOperators[i-1] + " ")
+			builtExpr.WriteString(b.filterConditions[i])
+		}
+		components.FilterExpression = builtExpr.String()
 	}
 
 	// Build projection expression
@@ -326,7 +294,7 @@ func (b *Builder) Build() ExpressionComponents {
 }
 
 // buildCondition builds a single condition expression
-func (b *Builder) buildCondition(field string, operator string, value interface{}) (string, error) {
+func (b *Builder) buildCondition(field string, operator string, value any) (string, error) {
 	nameRef := b.addName(field)
 
 	switch strings.ToUpper(operator) {
@@ -355,8 +323,8 @@ func (b *Builder) buildCondition(field string, operator string, value interface{
 		return fmt.Sprintf("%s >= %s", nameRef, valueRef), nil
 
 	case "BETWEEN":
-		// Value should be []interface{} with two elements
-		values, ok := value.([]interface{})
+		// Value should be []any with two elements
+		values, ok := value.([]any)
 		if !ok || len(values) != 2 {
 			return "", errors.New("BETWEEN operator requires two values")
 		}
@@ -393,6 +361,12 @@ func (b *Builder) buildCondition(field string, operator string, value interface{
 	case "NOT_EXISTS":
 		return fmt.Sprintf("attribute_not_exists(%s)", nameRef), nil
 
+	case "ATTRIBUTE_EXISTS":
+		return fmt.Sprintf("attribute_exists(%s)", nameRef), nil
+
+	case "ATTRIBUTE_NOT_EXISTS":
+		return fmt.Sprintf("attribute_not_exists(%s)", nameRef), nil
+
 	default:
 		return "", fmt.Errorf("%w: %s", dynamormErrors.ErrInvalidOperator, operator)
 	}
@@ -411,7 +385,7 @@ func (b *Builder) addName(name string) string {
 	if b.isReservedWord(name) {
 		// Always use placeholder for reserved words
 		b.nameCounter++
-		placeholder := fmt.Sprintf("#%s", name)
+		placeholder := fmt.Sprintf("#%s", strings.ToUpper(name))
 		b.names[placeholder] = name
 		return placeholder
 	}
@@ -424,7 +398,7 @@ func (b *Builder) addName(name string) string {
 		for i, part := range parts {
 			if b.isReservedWord(part) {
 				b.nameCounter++
-				placeholder := fmt.Sprintf("#%s", part)
+				placeholder := fmt.Sprintf("#%s", strings.ToUpper(part))
 				b.names[placeholder] = part
 				processedParts[i] = placeholder
 			} else {
@@ -452,7 +426,7 @@ func (b *Builder) isReservedWord(word string) bool {
 }
 
 // addValue adds an attribute value and returns its placeholder
-func (b *Builder) addValue(value interface{}) string {
+func (b *Builder) addValue(value any) string {
 	b.valueCounter++
 	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
 
@@ -467,49 +441,19 @@ func (b *Builder) addValue(value interface{}) string {
 	return placeholder
 }
 
-// processAttributeNames replaces attribute names with placeholders in raw expressions
-func (b *Builder) processAttributeNames(expr string) string {
-	// Split expression into tokens
-	// This is a simple tokenizer - in production, use a proper parser
-	tokens := strings.Fields(expr)
-
-	for i, token := range tokens {
-		// Skip operators and functions
-		if strings.Contains("()=<>!,", token) {
-			continue
-		}
-
-		// Check if it looks like an attribute name (not a value placeholder)
-		if !strings.HasPrefix(token, ":") && !strings.HasPrefix(token, "#") {
-			// Check if it's a function name
-			if i+1 < len(tokens) && strings.HasPrefix(tokens[i+1], "(") {
-				continue
-			}
-
-			// Process as attribute name
-			if b.isReservedWord(token) || strings.Contains(token, ".") {
-				placeholder := b.addName(token)
-				tokens[i] = placeholder
-			}
-		}
-	}
-
-	return strings.Join(tokens, " ")
-}
-
-// convertToSlice converts various slice types to []interface{}
-func (b *Builder) convertToSlice(value interface{}) ([]interface{}, error) {
+// convertToSlice converts various slice types to []any
+func (b *Builder) convertToSlice(value any) ([]any, error) {
 	switch v := value.(type) {
-	case []interface{}:
+	case []any:
 		return v, nil
 	case []string:
-		result := make([]interface{}, len(v))
+		result := make([]any, len(v))
 		for i, s := range v {
 			result[i] = s
 		}
 		return result, nil
 	case []int:
-		result := make([]interface{}, len(v))
+		result := make([]any, len(v))
 		for i, n := range v {
 			result[i] = n
 		}
@@ -531,7 +475,7 @@ type ExpressionComponents struct {
 }
 
 // AddAdvancedFunction adds support for DynamoDB functions
-func (b *Builder) AddAdvancedFunction(function string, field string, args ...interface{}) (string, error) {
+func (b *Builder) AddAdvancedFunction(function string, field string, args ...any) (string, error) {
 	nameRef := b.addName(field)
 
 	switch strings.ToLower(function) {
@@ -560,5 +504,51 @@ func (b *Builder) AddAdvancedFunction(function string, field string, args ...int
 
 	default:
 		return "", fmt.Errorf("unsupported function: %s", function)
+	}
+}
+
+// AddUpdateFunction adds a function-based update expression (e.g., list_append)
+func (b *Builder) AddUpdateFunction(field string, function string, args ...any) error {
+	nameRef := b.addName(field)
+
+	switch function {
+	case "list_append":
+		if len(args) != 2 {
+			return errors.New("list_append requires exactly 2 arguments")
+		}
+
+		// Determine which argument is the field and which is the value
+		var expr string
+		if args[0] == field {
+			// list_append(field, value) - append to end
+			valueRef := b.addValue(args[1])
+			expr = fmt.Sprintf("%s = list_append(%s, %s)", nameRef, nameRef, valueRef)
+		} else if args[1] == field {
+			// list_append(value, field) - prepend to beginning
+			valueRef := b.addValue(args[0])
+			expr = fmt.Sprintf("%s = list_append(%s, %s)", nameRef, valueRef, nameRef)
+		} else {
+			// Both arguments are values (for merging two lists)
+			valueRef1 := b.addValue(args[0])
+			valueRef2 := b.addValue(args[1])
+			expr = fmt.Sprintf("%s = list_append(%s, %s)", nameRef, valueRef1, valueRef2)
+		}
+
+		b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
+		return nil
+
+	case "if_not_exists":
+		if len(args) != 2 {
+			return errors.New("if_not_exists requires exactly 2 arguments")
+		}
+
+		// if_not_exists(field, default_value)
+		defaultRef := b.addValue(args[1])
+		expr := fmt.Sprintf("%s = if_not_exists(%s, %s)", nameRef, nameRef, defaultRef)
+		b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported update function: %s", function)
 	}
 }

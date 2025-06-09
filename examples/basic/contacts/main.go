@@ -128,7 +128,7 @@ func (app *ContactsApp) Create(contact *Contact) error {
 }
 
 // List returns all contacts for the organization with pagination
-func (app *ContactsApp) List(limit int, lastKey map[string]interface{}) ([]Contact, map[string]interface{}, error) {
+func (app *ContactsApp) List(limit int, lastKey map[string]any) ([]Contact, map[string]any, error) {
 	var contacts []Contact
 
 	// Use prefix query on composite key
@@ -152,9 +152,9 @@ func (app *ContactsApp) List(limit int, lastKey map[string]interface{}) ([]Conta
 	}
 
 	// In real implementation, get LastEvaluatedKey from query result
-	var nextKey map[string]interface{}
+	var nextKey map[string]any
 	if len(contacts) == limit {
-		nextKey = map[string]interface{}{
+		nextKey = map[string]any{
 			"ID": contacts[len(contacts)-1].ID,
 		}
 	}
@@ -253,7 +253,7 @@ func (app *ContactsApp) GetFavorites() ([]Contact, error) {
 }
 
 // Update modifies an existing contact
-func (app *ContactsApp) Update(contactID string, updates map[string]interface{}) error {
+func (app *ContactsApp) Update(contactID string, updates map[string]any) error {
 	// Build composite key
 	id := fmt.Sprintf("%s#%s", app.orgID, contactID)
 
@@ -338,7 +338,7 @@ func (app *ContactsApp) Delete(contactID string) error {
 // RecordInteraction updates the last contacted timestamp
 func (app *ContactsApp) RecordInteraction(contactID string) error {
 	now := time.Now()
-	return app.Update(contactID, map[string]interface{}{
+	return app.Update(contactID, map[string]any{
 		"last_contacted": &now,
 	})
 }
@@ -375,7 +375,7 @@ func (app *ContactsApp) BatchImport(contacts []Contact) error {
 }
 
 // GetStats returns contact statistics
-func (app *ContactsApp) GetStats() (map[string]interface{}, error) {
+func (app *ContactsApp) GetStats() (map[string]any, error) {
 	contacts, _, err := app.List(1000, nil)
 	if err != nil {
 		return nil, err
@@ -412,7 +412,7 @@ func (app *ContactsApp) GetStats() (map[string]interface{}, error) {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_contacts":     len(contacts),
 		"favorite_count":     favoriteCount,
 		"with_phone":         withPhone,
@@ -659,7 +659,7 @@ func (app *ContactsApp) handleFavorite(numStr string) {
 	}
 
 	contact := contacts[num-1]
-	err = app.Update(contact.ContactID, map[string]interface{}{
+	err = app.Update(contact.ContactID, map[string]any{
 		"favorite": !contact.IsFavorite,
 	})
 
@@ -728,7 +728,7 @@ func (app *ContactsApp) handleImport() {
 	}
 }
 
-func (app *ContactsApp) printStats(stats map[string]interface{}) {
+func (app *ContactsApp) printStats(stats map[string]any) {
 	fmt.Println("\n📊 Contact Statistics:")
 	fmt.Println("─────────────────────")
 	fmt.Printf("Total Contacts: %v\n", stats["total_contacts"])

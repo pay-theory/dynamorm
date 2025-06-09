@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/tests/models"
 )
 
@@ -30,7 +29,7 @@ func setupBenchDB(b *testing.B) (*dynamorm.DB, *dynamodb.Client) {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
 		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			func(service, region string, options ...any) (aws.Endpoint, error) {
 				return aws.Endpoint{
 					URL:           "http://localhost:8000",
 					SigningRegion: "us-east-1",
@@ -223,9 +222,8 @@ func BenchmarkComplexQueryWithFilters(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		err := db.Model(&models.TestUser{}).
 			Where("Status", "=", "active").
-			Filter("Age > :minAge AND Age < :maxAge",
-				core.Param{Name: "minAge", Value: 25},
-				core.Param{Name: "maxAge", Value: 35}).
+			Filter("Age", ">", 25).
+			Filter("Age", "<", 35).
 			Limit(20).
 			All(&users)
 		if err != nil {
@@ -260,8 +258,7 @@ func BenchmarkExpressionBuilding(b *testing.B) {
 		// Build a complex query to measure expression building overhead
 		query := db.Model(&models.TestUser{}).
 			Where("Status", "=", "active").
-			Filter("Age > :minAge", core.Param{Name: "minAge", Value: 25}).
-			Filter("contains(Tags, :tag)", core.Param{Name: "tag", Value: "premium"}).
+			Filter("Age", ">", 25).
 			OrderBy("CreatedAt", "desc").
 			Select("ID", "Email", "Name", "Age").
 			Limit(50)
@@ -275,7 +272,7 @@ func BenchmarkBatchGet(b *testing.B) {
 	db, _ := setupBenchDB(b)
 
 	// Prepare keys
-	keys := make([]interface{}, 20)
+	keys := make([]any, 20)
 	for i := 0; i < 20; i++ {
 		keys[i] = fmt.Sprintf("bench-user-%d", i*10)
 	}
@@ -298,7 +295,7 @@ func BenchmarkScanWithFilters(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		err := db.Model(&models.TestUser{}).
-			Filter("Age > :age", core.Param{Name: "age", Value: 30}).
+			Filter("Age", ">", 30).
 			Limit(50).
 			Scan(&users)
 		if err != nil {

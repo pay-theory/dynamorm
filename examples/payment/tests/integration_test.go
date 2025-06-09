@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -11,16 +12,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/payment"
-	"github.com/example/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm"
+	payment "github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // TestMultiAccountPaymentFlow tests payment processing across multiple accounts
 func TestMultiAccountPaymentFlow(t *testing.T) {
 	// Initialize DynamoDB connection
 	db, err := initTestDB(t)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skip("Skipping test - DynamoDB connection not available")
+		return
+	}
+	require.NotNil(t, db)
 
 	// Create test merchants
 	merchant1 := createTestMerchant(t, db, "merchant-1", "Merchant One")
@@ -54,7 +60,7 @@ func TestMultiAccountPaymentFlow(t *testing.T) {
 		PaymentID:   payment1.ID,
 		Type:        payment.TransactionTypeCapture,
 		Amount:      payment1.Amount,
-		Status:      payment.PaymentStatusSucceeded,
+		Status:      "succeeded",
 		ProcessedAt: time.Now(),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -96,14 +102,15 @@ func TestMultiAccountPaymentFlow(t *testing.T) {
 	}
 
 	// Execute transfer in transaction
-	tx := db.Transaction()
-	err = tx.Model(transferOut).Create()
-	require.NoError(t, err)
-
-	err = tx.Model(transferIn).Create()
-	require.NoError(t, err)
-
-	err = tx.Commit()
+	err = db.Transaction(func(tx *core.Tx) error {
+		if err := tx.Create(transferOut); err != nil {
+			return err
+		}
+		if err := tx.Create(transferIn); err != nil {
+			return err
+		}
+		return nil
+	})
 	require.NoError(t, err)
 
 	// Verify balances
@@ -126,7 +133,7 @@ func TestMultiAccountPaymentFlow(t *testing.T) {
 
 	// Test audit trail
 	auditTracker := utils.NewAuditTracker(db)
-	err = auditTracker.Track("transfer_completed", "payment", map[string]interface{}{
+	err = auditTracker.Track("transfer_completed", "payment", map[string]any{
 		"from_merchant": merchant1.ID,
 		"to_merchant":   merchant2.ID,
 		"amount":        transferAmount,
@@ -143,7 +150,11 @@ func TestMultiAccountPaymentFlow(t *testing.T) {
 // TestHighVolumeProcessing tests processing high volume of payments
 func TestHighVolumeProcessing(t *testing.T) {
 	db, err := initTestDB(t)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skip("Skipping test - DynamoDB connection not available")
+		return
+	}
+	require.NotNil(t, db)
 
 	merchant := createTestMerchant(t, db, "high-volume-merchant", "High Volume Merchant")
 
@@ -168,7 +179,7 @@ func TestHighVolumeProcessing(t *testing.T) {
 
 			for i := range paymentChan {
 				// Create payment
-				payment := &payment.Payment{
+				p := &payment.Payment{
 					ID:             fmt.Sprintf("payment-%d-%d", workerID, i),
 					IdempotencyKey: fmt.Sprintf("idempotency-%d-%d", workerID, i),
 					MerchantID:     merchant.ID,
@@ -181,7 +192,7 @@ func TestHighVolumeProcessing(t *testing.T) {
 					Version:        1,
 				}
 
-				if err := db.Model(payment).Create(); err != nil {
+				if err := db.Model(p).Create(); err != nil {
 					errorChan <- err
 					continue
 				}
@@ -189,10 +200,10 @@ func TestHighVolumeProcessing(t *testing.T) {
 				// Create transaction
 				transaction := &payment.Transaction{
 					ID:          fmt.Sprintf("transaction-%d-%d", workerID, i),
-					PaymentID:   payment.ID,
+					PaymentID:   p.ID,
 					Type:        payment.TransactionTypeCapture,
-					Amount:      payment.Amount,
-					Status:      payment.PaymentStatusSucceeded,
+					Amount:      p.Amount,
+					Status:      "succeeded",
 					ProcessedAt: time.Now(),
 					CreatedAt:   time.Now(),
 					UpdatedAt:   time.Now(),
@@ -247,7 +258,11 @@ func TestHighVolumeProcessing(t *testing.T) {
 // TestPaymentErrorScenarios tests various error conditions
 func TestPaymentErrorScenarios(t *testing.T) {
 	db, err := initTestDB(t)
-	require.NoError(t, err)
+	if err != nil {
+		t.Skip("Skipping test - DynamoDB connection not available")
+		return
+	}
+	require.NotNil(t, db)
 
 	merchant := createTestMerchant(t, db, "error-test-merchant", "Error Test Merchant")
 	idempotency := utils.NewIdempotencyMiddleware(db, 24*time.Hour)
@@ -256,7 +271,7 @@ func TestPaymentErrorScenarios(t *testing.T) {
 	idempotencyKey := "duplicate-key-123"
 
 	// First request
-	result1, err := idempotency.Process(context.Background(), merchant.ID, idempotencyKey, func() (interface{}, error) {
+	result1, err := idempotency.Process(context.Background(), merchant.ID, idempotencyKey, func() (any, error) {
 		return &payment.Payment{
 			ID:     "payment-1",
 			Amount: 1000,
@@ -266,7 +281,7 @@ func TestPaymentErrorScenarios(t *testing.T) {
 	assert.NotNil(t, result1)
 
 	// Duplicate request
-	result2, err := idempotency.Process(context.Background(), merchant.ID, idempotencyKey, func() (interface{}, error) {
+	result2, err := idempotency.Process(context.Background(), merchant.ID, idempotencyKey, func() (any, error) {
 		return &payment.Payment{
 			ID:     "payment-2",
 			Amount: 2000,
@@ -308,7 +323,7 @@ func TestPaymentErrorScenarios(t *testing.T) {
 	defer cancel()
 
 	// Simulate slow operation
-	_, err = idempotency.Process(ctx, merchant.ID, "timeout-key", func() (interface{}, error) {
+	_, err = idempotency.Process(ctx, merchant.ID, "timeout-key", func() (any, error) {
 		time.Sleep(10 * time.Millisecond) // Longer than timeout
 		return nil, nil
 	})
@@ -317,6 +332,8 @@ func TestPaymentErrorScenarios(t *testing.T) {
 	// Test Case 4: Recovery procedures
 	// Create a payment in pending state
 	pendingPayment := &payment.Payment{
+		// All fields must be set to create a valid database record
+		// even if not all are used in assertions
 		ID:             uuid.New().String(),
 		IdempotencyKey: uuid.New().String(),
 		MerchantID:     merchant.ID,
@@ -346,12 +363,9 @@ func TestPaymentErrorScenarios(t *testing.T) {
 	for _, p := range oldPendingPayments {
 		// In real scenario, check with payment processor
 		// For now, mark as failed
-		err = db.Model(&payment.Payment{}).
-			Where("ID", "=", p.ID).
-			Update(map[string]interface{}{
-				"Status":    payment.PaymentStatusFailed,
-				"UpdatedAt": time.Now(),
-			})
+		p.Status = payment.PaymentStatusFailed
+		p.UpdatedAt = time.Now()
+		err = db.Model(p).Update("Status", "UpdatedAt")
 		require.NoError(t, err)
 	}
 }
@@ -359,17 +373,22 @@ func TestPaymentErrorScenarios(t *testing.T) {
 // Helper functions
 
 func initTestDB(t *testing.T) (*dynamorm.DB, error) {
+	// Skip if no AWS credentials or DynamoDB Local not available
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
+		return nil, fmt.Errorf("AWS credentials not available")
+	}
+
 	// Initialize test database
-	db, err := dynamorm.New(
-		dynamorm.WithRegion("us-east-1"),
-		dynamorm.WithEndpoint("http://localhost:8000"), // Local DynamoDB
-	)
+	db, err := dynamorm.New(dynamorm.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000", // Local DynamoDB
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Register models
-	models := []interface{}{
+	models := []any{
 		&payment.Payment{},
 		&payment.Transaction{},
 		&payment.Customer{},

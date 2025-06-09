@@ -46,7 +46,7 @@ func (tx *Transaction) WithContext(ctx context.Context) *Transaction {
 }
 
 // Create adds a create operation to the transaction
-func (tx *Transaction) Create(model interface{}) error {
+func (tx *Transaction) Create(model any) error {
 	metadata, err := tx.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -78,7 +78,7 @@ func (tx *Transaction) Create(model interface{}) error {
 }
 
 // Update adds an update operation to the transaction
-func (tx *Transaction) Update(model interface{}) error {
+func (tx *Transaction) Update(model any) error {
 	metadata, err := tx.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -178,7 +178,7 @@ func (tx *Transaction) Update(model interface{}) error {
 }
 
 // Delete adds a delete operation to the transaction
-func (tx *Transaction) Delete(model interface{}) error {
+func (tx *Transaction) Delete(model any) error {
 	metadata, err := tx.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -225,7 +225,7 @@ func (tx *Transaction) Delete(model interface{}) error {
 }
 
 // Get adds a get operation to the transaction
-func (tx *Transaction) Get(model interface{}, dest interface{}) error {
+func (tx *Transaction) Get(model any, dest any) error {
 	metadata, err := tx.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -322,7 +322,7 @@ func (tx *Transaction) handleTransactionError(err error) error {
 }
 
 // marshalItem converts a model to DynamoDB attribute values
-func (tx *Transaction) marshalItem(model interface{}, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
 	item := make(map[string]types.AttributeValue)
 
 	modelValue := reflect.ValueOf(model)
@@ -356,7 +356,7 @@ func (tx *Transaction) marshalItem(model interface{}, metadata *model.Metadata) 
 }
 
 // extractPrimaryKey extracts the primary key from a model
-func (tx *Transaction) extractPrimaryKey(model interface{}, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+func (tx *Transaction) extractPrimaryKey(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
 	key := make(map[string]types.AttributeValue)
 
 	modelValue := reflect.ValueOf(model)

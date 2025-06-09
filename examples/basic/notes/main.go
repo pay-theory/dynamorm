@@ -194,7 +194,7 @@ func (app *NotesApp) GetRecentNotes(days int) ([]Note, error) {
 }
 
 // Update modifies an existing note
-func (app *NotesApp) Update(id string, updates map[string]interface{}) error {
+func (app *NotesApp) Update(id string, updates map[string]any) error {
 	// Get the note first
 	var note Note
 	if err := app.db.Model(&Note{}).Where("ID", "=", id).First(&note); err != nil {
@@ -267,7 +267,7 @@ func (app *NotesApp) Delete(id string) error {
 }
 
 // GetStats returns statistics about user's notes
-func (app *NotesApp) GetStats() (map[string]interface{}, error) {
+func (app *NotesApp) GetStats() (map[string]any, error) {
 	notes, err := app.ListMyNotes(1000) // Get all notes
 	if err != nil {
 		return nil, err
@@ -292,7 +292,7 @@ func (app *NotesApp) GetStats() (map[string]interface{}, error) {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_notes":    len(notes),
 		"total_words":    totalWords,
 		"pinned_count":   pinnedCount,
@@ -513,7 +513,7 @@ func (app *NotesApp) handlePin(numStr string) error {
 	}
 
 	note := notes[num-1]
-	return app.Update(note.ID, map[string]interface{}{
+	return app.Update(note.ID, map[string]any{
 		"pinned": !note.IsPinned,
 	})
 }
@@ -536,7 +536,7 @@ func (app *NotesApp) handleDelete(numStr string) error {
 	return app.Delete(notes[num-1].ID)
 }
 
-func (app *NotesApp) printStats(stats map[string]interface{}) {
+func (app *NotesApp) printStats(stats map[string]any) {
 	fmt.Println("\n📊 Your Notes Statistics:")
 	fmt.Println("────────────────────────")
 	fmt.Printf("Total Notes: %v\n", stats["total_notes"])

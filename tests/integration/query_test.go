@@ -51,7 +51,7 @@ func TestComplexQuery(t *testing.T) {
 		// err := db.Model(&models.TestProduct{}).
 		//     Index("gsi-category").
 		//     Where("Category", "=", "electronics").
-		//     Where("Price", "between", []interface{}{100.0, 500.0}).
+		//     Where("Price", "between", []any{100.0, 500.0}).
 		//     Filter("InStock = :instock", core.Param{Name: "instock", Value: true}).
 		//     Limit(20).
 		//     All(&products)

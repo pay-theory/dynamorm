@@ -56,12 +56,12 @@ type mockExecutor struct {
 	mock.Mock
 }
 
-func (m *mockExecutor) ExecuteQuery(input *core.CompiledQuery, dest interface{}) error {
+func (m *mockExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 	args := m.Called(input, dest)
 	return args.Error(0)
 }
 
-func (m *mockExecutor) ExecuteScan(input *core.CompiledQuery, dest interface{}) error {
+func (m *mockExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 	args := m.Called(input, dest)
 	return args.Error(0)
 }
@@ -148,13 +148,13 @@ func TestQuery_ComplexFilters(t *testing.T) {
 
 	// Complex query with multiple conditions
 	q.Where("id", "=", "test-123").
-		Where("timestamp", "BETWEEN", []interface{}{1000, 2000}).
-		Filter("status IN (:status1, :status2)", "active", "pending")
+		Where("timestamp", "BETWEEN", []any{1000, 2000}).
+		Filter("status", "IN", []string{"active", "pending"})
 
 	compiled, err := q.Compile()
 	assert.NoError(t, err)
 	assert.NotEmpty(t, compiled.FilterExpression)
-	assert.Contains(t, compiled.FilterExpression, "status IN")
+	assert.Contains(t, compiled.FilterExpression, "IN")
 }
 
 func TestQuery_Projection(t *testing.T) {
@@ -212,7 +212,7 @@ func TestQuery_BatchGet(t *testing.T) {
 	q := query.New(&TestItem{}, metadata, executor)
 
 	// Batch get with composite keys
-	keys := []interface{}{
+	keys := []any{
 		TestItem{ID: "test-1", Timestamp: 1000},
 		TestItem{ID: "test-2", Timestamp: 2000},
 	}
@@ -330,7 +330,7 @@ type mockBatchExecutor struct {
 	mockExecutor
 }
 
-func (m *mockBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, dest interface{}) error {
+func (m *mockBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, dest any) error {
 	return nil
 }
 

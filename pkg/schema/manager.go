@@ -68,7 +68,7 @@ func WithSSESpecification(spec types.SSESpecification) TableOption {
 }
 
 // CreateTable creates a DynamoDB table based on the model struct
-func (m *Manager) CreateTable(model interface{}, opts ...TableOption) error {
+func (m *Manager) CreateTable(model any, opts ...TableOption) error {
 	metadata, err := m.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -307,7 +307,7 @@ func (m *Manager) DeleteTable(tableName string) error {
 }
 
 // DescribeTable returns table description
-func (m *Manager) DescribeTable(model interface{}) (*types.TableDescription, error) {
+func (m *Manager) DescribeTable(model any) (*types.TableDescription, error) {
 	metadata, err := m.registry.GetMetadata(model)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get model metadata: %w", err)
@@ -326,7 +326,7 @@ func (m *Manager) DescribeTable(model interface{}) (*types.TableDescription, err
 }
 
 // UpdateTable updates table configuration (throughput, indexes, etc.)
-func (m *Manager) UpdateTable(model interface{}, opts ...TableOption) error {
+func (m *Manager) UpdateTable(model any, opts ...TableOption) error {
 	metadata, err := m.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -369,7 +369,47 @@ func (m *Manager) UpdateTable(model interface{}, opts ...TableOption) error {
 		input.SSESpecification = createInput.SSESpecification
 	}
 
-	// TODO: Handle GSI updates (create/delete indexes)
+	// Handle GSI updates
+	gsiUpdates, err := m.calculateGSIUpdates(metadata, current)
+	if err != nil {
+		return fmt.Errorf("failed to calculate GSI updates: %w", err)
+	}
+
+	// Apply GSI updates (DynamoDB allows only one GSI operation per UpdateTable call)
+	if len(gsiUpdates.ToCreate) > 0 || len(gsiUpdates.ToDelete) > 0 {
+		// If there are multiple GSI changes, we'll need to make multiple UpdateTable calls
+		// For now, we'll return an error with instructions
+		totalChanges := len(gsiUpdates.ToCreate) + len(gsiUpdates.ToDelete)
+		if totalChanges > 1 {
+			return fmt.Errorf("multiple GSI changes detected (%d creates, %d deletes). DynamoDB allows only one GSI operation per UpdateTable call. Please use AutoMigrate for complex schema changes",
+				len(gsiUpdates.ToCreate), len(gsiUpdates.ToDelete))
+		}
+
+		// Apply single GSI create
+		if len(gsiUpdates.ToCreate) == 1 {
+			input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
+				{
+					Create: &types.CreateGlobalSecondaryIndexAction{
+						IndexName:             gsiUpdates.ToCreate[0].IndexName,
+						KeySchema:             gsiUpdates.ToCreate[0].KeySchema,
+						Projection:            gsiUpdates.ToCreate[0].Projection,
+						ProvisionedThroughput: gsiUpdates.ToCreate[0].ProvisionedThroughput,
+					},
+				},
+			}
+		}
+
+		// Apply single GSI delete
+		if len(gsiUpdates.ToDelete) == 1 {
+			input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
+				{
+					Delete: &types.DeleteGlobalSecondaryIndexAction{
+						IndexName: aws.String(gsiUpdates.ToDelete[0]),
+					},
+				},
+			}
+		}
+	}
 
 	ctx := context.Background()
 	_, err = m.session.Client().UpdateTable(ctx, input)
@@ -379,4 +419,100 @@ func (m *Manager) UpdateTable(model interface{}, opts ...TableOption) error {
 
 	// Wait for update to complete
 	return m.waitForTableActive(metadata.TableName)
+}
+
+// GSIUpdatePlan contains GSIs to create and delete
+type GSIUpdatePlan struct {
+	ToCreate []types.GlobalSecondaryIndex
+	ToDelete []string
+}
+
+// calculateGSIUpdates compares current GSIs with desired GSIs and returns update plan
+func (m *Manager) calculateGSIUpdates(metadata *model.Metadata, current *types.TableDescription) (*GSIUpdatePlan, error) {
+	plan := &GSIUpdatePlan{
+		ToCreate: []types.GlobalSecondaryIndex{},
+		ToDelete: []string{},
+	}
+
+	// Build desired GSIs from metadata
+	desiredGSIs, _ := m.buildIndexes(metadata)
+
+	// Create map of current GSIs
+	currentGSIMap := make(map[string]*types.GlobalSecondaryIndexDescription)
+	if current.GlobalSecondaryIndexes != nil {
+		for _, gsi := range current.GlobalSecondaryIndexes {
+			if gsi.IndexName != nil {
+				currentGSIMap[*gsi.IndexName] = &gsi
+			}
+		}
+	}
+
+	// Create map of desired GSIs
+	desiredGSIMap := make(map[string]*types.GlobalSecondaryIndex)
+	for i := range desiredGSIs {
+		gsi := &desiredGSIs[i]
+		if gsi.IndexName != nil {
+			desiredGSIMap[*gsi.IndexName] = gsi
+		}
+	}
+
+	// Find GSIs to create (in desired but not in current)
+	for name, desiredGSI := range desiredGSIMap {
+		if _, exists := currentGSIMap[name]; !exists {
+			// Set default provisioned throughput if billing mode is provisioned
+			if current.BillingModeSummary != nil &&
+				current.BillingModeSummary.BillingMode == types.BillingModeProvisioned &&
+				desiredGSI.ProvisionedThroughput == nil {
+				desiredGSI.ProvisionedThroughput = &types.ProvisionedThroughput{
+					ReadCapacityUnits:  aws.Int64(5),
+					WriteCapacityUnits: aws.Int64(5),
+				}
+			}
+			plan.ToCreate = append(plan.ToCreate, *desiredGSI)
+		}
+	}
+
+	// Find GSIs to delete (in current but not in desired)
+	for name := range currentGSIMap {
+		if _, exists := desiredGSIMap[name]; !exists {
+			plan.ToDelete = append(plan.ToDelete, name)
+		}
+	}
+
+	// Note: We don't check for GSI modifications because DynamoDB doesn't support
+	// modifying GSIs in place. Users would need to delete and recreate.
+
+	return plan, nil
+}
+
+// WithGSICreate creates a TableOption for adding a new GSI
+func WithGSICreate(indexName string, partitionKey string, sortKey string, projectionType types.ProjectionType) TableOption {
+	return func(input *dynamodb.CreateTableInput) {
+		// This is a marker option - actual GSI creation is handled in UpdateTable
+		// by comparing model metadata with current table state
+	}
+}
+
+// WithGSIDelete creates a TableOption for deleting a GSI
+func WithGSIDelete(indexName string) TableOption {
+	return func(input *dynamodb.CreateTableInput) {
+		// This is a marker option - actual GSI deletion is handled in UpdateTable
+		// by comparing model metadata with current table state
+	}
+}
+
+// BatchUpdateTable performs multiple table updates that require separate API calls
+// This is useful for multiple GSI changes since DynamoDB only allows one GSI operation per UpdateTable call
+func (m *Manager) BatchUpdateTable(model any, updates []TableOption) error {
+	for i, update := range updates {
+		if err := m.UpdateTable(model, update); err != nil {
+			return fmt.Errorf("batch update failed at step %d: %w", i+1, err)
+		}
+
+		// Wait a bit between updates to avoid throttling
+		if i < len(updates)-1 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	return nil
 }

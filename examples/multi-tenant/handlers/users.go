@@ -99,7 +99,7 @@ func (h *UserHandler) InviteUser(w http.ResponseWriter, r *http.Request) {
 	// In production, send invitation email here
 	// sendInvitationEmail(req.Email, inviteToken)
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"invitation_id": inviteID,
 		"email":         req.Email,
 		"expires_at":    invitation.ExpiresAt,
@@ -386,7 +386,7 @@ func (h *UserHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	// Generate auth token (simplified - use proper JWT in production)
 	token := uuid.New().String()
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"user":  user,
 		"token": token,
 	}

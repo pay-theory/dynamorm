@@ -10,6 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
 
+// configLoadFunc is a variable to allow mocking config.LoadDefaultConfig in tests
+var configLoadFunc = config.LoadDefaultConfig
+
 // Config holds the configuration for DynamORM
 type Config struct {
 	// AWS region
@@ -38,6 +41,9 @@ type Config struct {
 
 	// Custom DynamoDB client options
 	DynamoDBOptions []func(*dynamodb.Options)
+
+	// Credentials provider
+	CredentialsProvider aws.CredentialsProvider
 }
 
 // DefaultConfig returns the default configuration
@@ -66,11 +72,16 @@ func NewSession(cfg *Config) (*Session, error) {
 	}
 
 	// Build AWS config options
-	options := make([]func(*config.LoadOptions) error, 0, len(cfg.AWSConfigOptions)+2)
+	options := make([]func(*config.LoadOptions) error, 0, len(cfg.AWSConfigOptions)+3)
 
 	// Add region if specified
 	if cfg.Region != "" {
 		options = append(options, config.WithRegion(cfg.Region))
+	}
+
+	// Add credentials provider if specified
+	if cfg.CredentialsProvider != nil {
+		options = append(options, config.WithCredentialsProvider(cfg.CredentialsProvider))
 	}
 
 	// Add retry configuration
@@ -82,7 +93,7 @@ func NewSession(cfg *Config) (*Session, error) {
 	options = append(options, cfg.AWSConfigOptions...)
 
 	// Load AWS config
-	awsConfig, err := config.LoadDefaultConfig(context.Background(), options...)
+	awsConfig, err := configLoadFunc(context.Background(), options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}

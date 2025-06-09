@@ -8,9 +8,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
 	"github.com/stretchr/testify/suite"
 )
@@ -23,16 +25,18 @@ type QueryIntegrationSuite struct {
 }
 
 func (s *QueryIntegrationSuite) SetupSuite() {
+	tests.RequireDynamoDBLocal(s.T())
 	// Initialize AWS config for DynamoDB Local
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
 		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			func(service, region string, options ...any) (aws.Endpoint, error) {
 				return aws.Endpoint{
 					URL:           "http://localhost:8000",
 					SigningRegion: "us-east-1",
 				}, nil
 			})),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy", "dummy")),
 	)
 	s.Require().NoError(err)
 
@@ -264,9 +268,8 @@ func (s *QueryIntegrationSuite) TestComplexFilters() {
 	var users []models.TestUser
 	err := s.db.Model(&models.TestUser{}).
 		Where("Status", "=", "active").
-		Filter("Age > :minAge AND Age < :maxAge",
-			core.Param{Name: "minAge", Value: 20},
-			core.Param{Name: "maxAge", Value: 35}).
+		Filter("Age", ">", 20).
+		Filter("Age", "<", 35).
 		All(&users)
 
 	s.NoError(err)
@@ -293,9 +296,11 @@ func (s *QueryIntegrationSuite) TestINOperator() {
 }
 
 func (s *QueryIntegrationSuite) TestContainsOperator() {
+	// Note: The contains operator might need special handling
+	// For now, let's use a Where clause with contains
 	var users []models.TestUser
 	err := s.db.Model(&models.TestUser{}).
-		Filter("contains(Tags, :tag)", core.Param{Name: "tag", Value: "verified"}).
+		Where("Tags", "contains", "verified").
 		All(&users)
 
 	s.NoError(err)

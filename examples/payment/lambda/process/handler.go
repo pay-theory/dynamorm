@@ -6,16 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/google/uuid"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/payment"
-	"github.com/example/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm"
+	payment "github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // ProcessPaymentRequest represents the payment request payload
@@ -27,22 +28,22 @@ type ProcessPaymentRequest struct {
 	CustomerID     string            `json:"customer_id,omitempty"`
 	Description    string            `json:"description,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
+	UserID         string            `json:"user_id"`
 }
 
 // Handler processes payment requests
 type Handler struct {
-	db          *dynamorm.DB
-	idempotency *utils.IdempotencyMiddleware
+	db            *dynamorm.DB
+	idempotency   *utils.IdempotencyMiddleware
+	webhookSender *utils.WebhookSender
+	jwtValidator  *utils.SimpleJWTValidator
 }
 
 // NewHandler creates a new payment handler
 func NewHandler() (*Handler, error) {
-	// Initialize DynamoDB connection with Lambda optimizations
-	db, err := dynamorm.New(
-		dynamorm.WithLambdaOptimization(),
-		dynamorm.WithConnectionPool(10),
-		dynamorm.WithRegion("us-east-1"),
-	)
+	db, err := dynamorm.New(dynamorm.Config{
+		Region: os.Getenv("AWS_REGION"),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize DynamoDB: %w", err)
 	}
@@ -52,20 +53,38 @@ func NewHandler() (*Handler, error) {
 	db.Model(&payment.IdempotencyRecord{})
 	db.Model(&payment.Transaction{})
 	db.Model(&payment.AuditEntry{})
+	db.Model(&payment.Merchant{})
+	db.Model(&payment.Webhook{})
 
 	// Initialize idempotency middleware
 	idempotency := utils.NewIdempotencyMiddleware(db, 24*time.Hour)
 
+	// Initialize webhook sender with 5 workers
+	webhookSender := utils.NewWebhookSender(db, 5)
+
+	// Initialize JWT validator
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "your-secret-key" // Use environment variable in production
+	}
+	jwtValidator := utils.NewSimpleJWTValidator(
+		jwtSecret,
+		os.Getenv("JWT_ISSUER"),
+		os.Getenv("JWT_AUDIENCE"),
+	)
+
 	return &Handler{
-		db:          db,
-		idempotency: idempotency,
+		db:            db,
+		idempotency:   idempotency,
+		webhookSender: webhookSender,
+		jwtValidator:  jwtValidator,
 	}, nil
 }
 
 // HandleRequest processes the payment request
 func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Extract merchant ID from JWT claims
-	merchantID, err := extractMerchantID(request.Headers)
+	merchantID, err := h.extractMerchantID(request.Headers)
 	if err != nil {
 		return errorResponse(http.StatusUnauthorized, "Invalid authentication"), nil
 	}
@@ -87,7 +106,7 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayPr
 	}
 
 	// Process with idempotency
-	result, err := h.idempotency.Process(ctx, merchantID, req.IdempotencyKey, func() (interface{}, error) {
+	result, err := h.idempotency.Process(ctx, merchantID, req.IdempotencyKey, func() (any, error) {
 		return h.processPayment(ctx, merchantID, &req)
 	})
 
@@ -111,8 +130,8 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayPr
 
 // processPayment handles the actual payment processing
 func (h *Handler) processPayment(ctx context.Context, merchantID string, req *ProcessPaymentRequest) (*payment.Payment, error) {
-	// Create payment record
-	payment := &payment.Payment{
+	// Create payment record first
+	paymentRecord := &payment.Payment{
 		ID:             uuid.New().String(),
 		IdempotencyKey: req.IdempotencyKey,
 		MerchantID:     merchantID,
@@ -128,97 +147,96 @@ func (h *Handler) processPayment(ctx context.Context, merchantID string, req *Pr
 		Version:        1,
 	}
 
-	// Start transaction
-	tx := h.db.Transaction()
-	defer tx.Rollback()
-
-	// Create payment record
-	if err := tx.Model(payment).Create(); err != nil {
-		return nil, fmt.Errorf("failed to create payment: %w", err)
-	}
-
-	// Create initial transaction
-	transaction := &payment.Transaction{
+	// Create transaction record
+	txRecord := &payment.Transaction{
 		ID:          uuid.New().String(),
-		PaymentID:   payment.ID,
+		PaymentID:   paymentRecord.ID,
 		Type:        payment.TransactionTypeCapture,
-		Amount:      payment.Amount,
-		Status:      payment.PaymentStatusProcessing,
+		Amount:      req.Amount,
+		Status:      "pending",
 		ProcessedAt: time.Now(),
-		AuditTrail: []payment.AuditEntry{
-			{
-				Timestamp: time.Now(),
-				Action:    "payment_initiated",
-				Changes: map[string]interface{}{
-					"amount":   payment.Amount,
-					"currency": payment.Currency,
-				},
-			},
+		AuditTrail:  []payment.AuditEntry{},
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Version:     1,
+	}
+
+	// Add initial audit entry
+	txRecord.AuditTrail = append(txRecord.AuditTrail, payment.AuditEntry{
+		Timestamp: time.Now(),
+		Action:    "transaction_created",
+		Changes: map[string]any{
+			"type":   payment.TransactionTypeCapture,
+			"amount": req.Amount,
 		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		Version:   1,
+	})
+
+	// Begin transaction
+	err := h.db.Transaction(func(tx *core.Tx) error {
+		if err := tx.Create(paymentRecord); err != nil {
+			return fmt.Errorf("failed to create payment: %w", err)
+		}
+
+		if err := tx.Create(txRecord); err != nil {
+			return fmt.Errorf("failed to create transaction: %w", err)
+		}
+
+		// Simulate payment processing
+		// In real implementation, this would call the payment processor
+		paymentRecord.Status = payment.PaymentStatusSucceeded
+		paymentRecord.UpdatedAt = time.Now()
+
+		txRecord.Status = "succeeded"
+		txRecord.ProcessorID = "PROC-" + uuid.New().String()
+		txRecord.ResponseCode = "00"
+		txRecord.ResponseText = "Approved"
+		txRecord.UpdatedAt = time.Now()
+
+		if err := tx.Update(paymentRecord, "Status", "UpdatedAt"); err != nil {
+			return fmt.Errorf("failed to update payment: %w", err)
+		}
+
+		if err := tx.Update(txRecord, "Status", "ProcessorID", "ResponseCode", "ResponseText", "UpdatedAt"); err != nil {
+			return fmt.Errorf("failed to update transaction: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to process payment: %w", err)
 	}
 
-	if err := tx.Model(transaction).Create(); err != nil {
-		return nil, fmt.Errorf("failed to create transaction: %w", err)
+	// Send webhook notification asynchronously
+	webhookJob := &utils.WebhookJob{
+		MerchantID: merchantID,
+		EventType:  "payment.succeeded",
+		PaymentID:  paymentRecord.ID,
+		Data:       paymentRecord,
 	}
 
-	// TODO: Call payment processor API here
-	// For now, we'll simulate success
-	payment.Status = payment.PaymentStatusSucceeded
-	transaction.Status = payment.PaymentStatusSucceeded
-	transaction.ResponseCode = "00"
-	transaction.ResponseText = "Approved"
+	// Queue webhook for async delivery (non-blocking)
+	go func() {
+		if err := h.webhookSender.Send(webhookJob); err != nil {
+			// Log error but don't fail the payment
+			fmt.Printf("Failed to queue webhook: %v\n", err)
+		}
+	}()
 
-	// Update payment status
-	if err := tx.Model(payment).
-		Where("ID", "=", payment.ID).
-		Update(map[string]interface{}{
-			"Status":    payment.Status,
-			"UpdatedAt": time.Now(),
-		}); err != nil {
-		return nil, fmt.Errorf("failed to update payment: %w", err)
-	}
-
-	// Update transaction status
-	if err := tx.Model(transaction).
-		Where("ID", "=", transaction.ID).
-		Update(map[string]interface{}{
-			"Status":       transaction.Status,
-			"ResponseCode": transaction.ResponseCode,
-			"ResponseText": transaction.ResponseText,
-			"UpdatedAt":    time.Now(),
-		}); err != nil {
-		return nil, fmt.Errorf("failed to update transaction: %w", err)
-	}
-
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// TODO: Send webhook notification asynchronously
-
-	return payment, nil
+	return paymentRecord, nil
 }
 
 // Helper functions
 
-func extractMerchantID(headers map[string]string) (string, error) {
+func (h *Handler) extractMerchantID(headers map[string]string) (string, error) {
 	// Extract from Authorization header
 	auth := headers["Authorization"]
 	if auth == "" {
 		auth = headers["authorization"]
 	}
 
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return "", fmt.Errorf("invalid authorization header")
-	}
-
-	// TODO: Validate JWT and extract merchant ID
-	// For now, return a mock merchant ID
-	return "merchant-123", nil
+	// Use the JWT validator to extract merchant ID
+	return utils.ValidateAndExtractMerchantID(auth, h.jwtValidator)
 }
 
 func validatePaymentRequest(req *ProcessPaymentRequest) error {
@@ -246,8 +264,8 @@ func generateIdempotencyKey(merchantID string, req *ProcessPaymentRequest) strin
 	return fmt.Sprintf("%x", hash)
 }
 
-func successResponse(statusCode int, data interface{}) events.APIGatewayProxyResponse {
-	body, _ := json.Marshal(map[string]interface{}{
+func successResponse(statusCode int, data any) events.APIGatewayProxyResponse {
+	body, _ := json.Marshal(map[string]any{
 		"success": true,
 		"data":    data,
 	})
@@ -262,7 +280,7 @@ func successResponse(statusCode int, data interface{}) events.APIGatewayProxyRes
 }
 
 func errorResponse(statusCode int, message string) events.APIGatewayProxyResponse {
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"success": false,
 		"error":   message,
 	})
@@ -281,6 +299,9 @@ func main() {
 	if err != nil {
 		panic(fmt.Sprintf("Failed to initialize handler: %v", err))
 	}
+
+	// Ensure webhook sender is stopped gracefully
+	defer handler.webhookSender.Stop()
 
 	lambda.Start(handler.HandleRequest)
 }

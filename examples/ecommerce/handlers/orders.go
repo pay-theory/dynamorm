@@ -170,7 +170,7 @@ func (h *OrderHandlers) CreateOrder(ctx context.Context, request events.APIGatew
 	// Send order confirmation email (async)
 	go h.sendOrderConfirmation(order)
 
-	return jsonResponse(http.StatusCreated, map[string]interface{}{
+	return jsonResponse(http.StatusCreated, map[string]any{
 		"order":   order,
 		"message": "Order created successfully",
 	})
@@ -197,7 +197,7 @@ func (h *OrderHandlers) GetOrder(ctx context.Context, request events.APIGatewayP
 		return errorResponse(http.StatusForbidden, "Access denied")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"order": order,
 	})
 }
@@ -231,7 +231,7 @@ func (h *OrderHandlers) GetOrderByNumber(ctx context.Context, request events.API
 		return errorResponse(http.StatusForbidden, "Access denied")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"order": order,
 	})
 }
@@ -249,7 +249,7 @@ func (h *OrderHandlers) ListOrders(ctx context.Context, request events.APIGatewa
 		}
 	}
 
-	var lastEvaluatedKey map[string]interface{}
+	var lastEvaluatedKey map[string]any
 	if cursor := request.QueryStringParameters["cursor"]; cursor != "" {
 		if err := json.Unmarshal([]byte(cursor), &lastEvaluatedKey); err != nil {
 			return errorResponse(http.StatusBadRequest, "Invalid cursor")
@@ -322,16 +322,16 @@ func (h *OrderHandlers) ListOrders(ctx context.Context, request events.APIGatewa
 	}
 
 	// Build response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"orders": orders,
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"count": len(orders),
 			"limit": limit,
 		},
 	}
 
 	if nextCursor != "" {
-		response["metadata"].(map[string]interface{})["next_cursor"] = nextCursor
+		response["metadata"].(map[string]any)["next_cursor"] = nextCursor
 	}
 
 	return jsonResponse(http.StatusOK, response)
@@ -450,7 +450,7 @@ func (h *OrderHandlers) UpdateOrderStatus(ctx context.Context, request events.AP
 			return errorResponse(http.StatusInternalServerError, "Failed to fetch updated order")
 		}
 
-		return jsonResponse(http.StatusOK, map[string]interface{}{
+		return jsonResponse(http.StatusOK, map[string]any{
 			"order":   order,
 			"message": "Order cancelled and inventory released",
 		})
@@ -476,7 +476,7 @@ func (h *OrderHandlers) UpdateOrderStatus(ctx context.Context, request events.AP
 	// Send status update notification
 	go h.sendStatusUpdateNotification(order)
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"order":   order,
 		"message": fmt.Sprintf("Order status updated to %s", statusUpdate.Status),
 	})
@@ -520,7 +520,7 @@ func (h *OrderHandlers) CancelOrder(ctx context.Context, request events.APIGatew
 	}
 
 	// Use the UpdateOrderStatus handler with cancel status
-	cancelUpdate := map[string]interface{}{
+	cancelUpdate := map[string]any{
 		"status": models.OrderStatusCancelled,
 		"notes":  cancelRequest.Reason,
 	}
@@ -657,7 +657,7 @@ func (h *OrderHandlers) sendStatusUpdateNotification(order models.Order) {
 	fmt.Printf("Sending status update notification for order %s: %s\n", order.OrderNumber, order.Status)
 }
 
-func mustMarshal(v interface{}) string {
+func mustMarshal(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }

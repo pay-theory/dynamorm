@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +13,10 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm"
+	payment "github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // QueryRequest represents the query parameters
@@ -46,19 +48,32 @@ type PaymentSummary struct {
 	AverageAmount int64            `json:"average_amount"`
 }
 
+// ExportJob represents an export job in the queue
+type ExportJob struct {
+	ID         string                 `dynamorm:"pk" json:"id"`
+	MerchantID string                 `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
+	Status     string                 `dynamorm:"index:gsi-status,pk" json:"status"`
+	Query      QueryRequest           `json:"query"`
+	Format     string                 `json:"format"` // csv, json
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	ResultURL  string                 `json:"result_url,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	CreatedAt  time.Time              `dynamorm:"created_at" json:"created_at"`
+	UpdatedAt  time.Time              `dynamorm:"updated_at" json:"updated_at"`
+	ExpiresAt  time.Time              `dynamorm:"ttl" json:"expires_at"`
+}
+
 // Handler processes query requests
 type Handler struct {
-	db *dynamorm.DB
+	db           *dynamorm.DB
+	jwtValidator *utils.SimpleJWTValidator
 }
 
 // NewHandler creates a new query handler
 func NewHandler() (*Handler, error) {
-	// Initialize DynamoDB connection
-	db, err := dynamorm.New(
-		dynamorm.WithLambdaOptimization(),
-		dynamorm.WithConnectionPool(5), // Smaller pool for query operations
-		dynamorm.WithRegion("us-east-1"),
-	)
+	db, err := dynamorm.New(dynamorm.Config{
+		Region: os.Getenv("AWS_REGION"),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize DynamoDB: %w", err)
 	}
@@ -67,14 +82,29 @@ func NewHandler() (*Handler, error) {
 	db.Model(&payment.Payment{})
 	db.Model(&payment.Customer{})
 	db.Model(&payment.Transaction{})
+	db.Model(&ExportJob{})
 
-	return &Handler{db: db}, nil
+	// Initialize JWT validator
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "your-secret-key" // Use environment variable in production
+	}
+	jwtValidator := utils.NewSimpleJWTValidator(
+		jwtSecret,
+		os.Getenv("JWT_ISSUER"),
+		os.Getenv("JWT_AUDIENCE"),
+	)
+
+	return &Handler{
+		db:           db,
+		jwtValidator: jwtValidator,
+	}, nil
 }
 
 // HandleRequest processes query requests
 func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Extract merchant ID from JWT
-	merchantID, err := extractMerchantID(request.Headers)
+	merchantID, err := h.extractMerchantID(request.Headers)
 	if err != nil {
 		return errorResponse(http.StatusUnauthorized, "Invalid authentication"), nil
 	}
@@ -101,110 +131,99 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayPr
 }
 
 // queryPayments returns paginated payment results
-func (h *Handler) queryPayments(ctx context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
+func (h *Handler) queryPayments(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
 	// Build query
 	query := h.db.Model(&payment.Payment{}).
 		Index("gsi-merchant").
-		Where("MerchantID", "=", merchantID)
+		Where("MerchantID", "=", merchantID).
+		OrderBy("CreatedAt", "DESC").
+		Limit(req.Limit)
 
-	// Apply filters
+	// Apply status filter if provided
 	if req.Status != "" {
-		query = query.Where("Status", "=", req.Status)
+		query = query.Filter("Status", "=", req.Status)
 	}
 
+	// Apply date range filter
+	if req.StartDate != "" || req.EndDate != "" {
+		if req.StartDate != "" && req.EndDate != "" {
+			query = query.Filter("CreatedAt", "BETWEEN", []string{req.StartDate, req.EndDate})
+		} else if req.StartDate != "" {
+			query = query.Filter("CreatedAt", ">=", req.StartDate)
+		} else {
+			query = query.Filter("CreatedAt", "<=", req.EndDate)
+		}
+	}
+
+	// Apply customer filter if provided
 	if req.CustomerID != "" {
-		query = query.Where("CustomerID", "=", req.CustomerID)
+		query = query.Filter("CustomerID", "=", req.CustomerID)
 	}
 
+	// Apply amount filters if provided
 	if req.MinAmount > 0 {
-		query = query.Where("Amount", ">=", req.MinAmount)
+		query = query.Filter("Amount", ">=", req.MinAmount)
 	}
 
 	if req.MaxAmount > 0 {
-		query = query.Where("Amount", "<=", req.MaxAmount)
-	}
-
-	// Apply date filters
-	if req.StartDate != "" {
-		startTime, err := time.Parse("2006-01-02", req.StartDate)
-		if err == nil {
-			query = query.Where("CreatedAt", ">=", startTime)
-		}
-	}
-
-	if req.EndDate != "" {
-		endTime, err := time.Parse("2006-01-02", req.EndDate)
-		if err == nil {
-			// Add 1 day to include the entire end date
-			endTime = endTime.Add(24 * time.Hour)
-			query = query.Where("CreatedAt", "<", endTime)
-		}
-	}
-
-	// Set limit
-	limit := req.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-	query = query.Limit(limit)
-
-	// Apply cursor if provided
-	if req.Cursor != "" {
-		cursor, err := decodeCursor(req.Cursor)
-		if err == nil {
-			query = query.Cursor(cursor)
-		}
+		query = query.Filter("Amount", "<=", req.MaxAmount)
 	}
 
 	// Execute query
 	var payments []*payment.Payment
-	nextCursor, err := query.All(&payments)
+	err := query.All(&payments)
 	if err != nil {
 		return errorResponse(http.StatusInternalServerError, "Failed to query payments"), nil
 	}
 
-	// Encode next cursor
-	var encodedCursor string
-	if nextCursor != "" {
-		encodedCursor = encodeCursor(nextCursor)
-	}
+	// Calculate total count (would require a separate count query in production)
+	totalCount := len(payments)
 
 	// Build response
 	response := QueryResponse{
-		Payments:   payments,
-		NextCursor: encodedCursor,
-		Total:      len(payments),
-		HasMore:    nextCursor != "",
+		Payments: payments,
+		Total:    totalCount,
+		HasMore:  len(payments) == req.Limit,
 	}
 
 	return successResponse(http.StatusOK, response), nil
 }
 
 // getPayment returns a single payment
-func (h *Handler) getPayment(ctx context.Context, merchantID, paymentID string) (events.APIGatewayProxyResponse, error) {
-	var payment payment.Payment
+func (h *Handler) getPayment(_ context.Context, merchantID, paymentID string) (events.APIGatewayProxyResponse, error) {
+	// Get payment details
+	var paymentRecord payment.Payment
 	err := h.db.Model(&payment.Payment{}).
 		Where("ID", "=", paymentID).
-		Where("MerchantID", "=", merchantID). // Ensure merchant owns this payment
-		First(&payment)
+		First(&paymentRecord)
 
 	if err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == customerrors.ErrItemNotFound {
 			return errorResponse(http.StatusNotFound, "Payment not found"), nil
 		}
-		return errorResponse(http.StatusInternalServerError, "Failed to retrieve payment"), nil
+		return errorResponse(http.StatusInternalServerError, "Failed to fetch payment"), nil
 	}
 
-	// Get related transactions
+	// Verify payment belongs to merchant
+	if paymentRecord.MerchantID != merchantID {
+		return errorResponse(http.StatusNotFound, "Payment not found"), nil
+	}
+
+	// Get all transactions for this payment
 	var transactions []*payment.Transaction
 	err = h.db.Model(&payment.Transaction{}).
 		Index("gsi-payment").
 		Where("PaymentID", "=", paymentID).
+		OrderBy("CreatedAt", "DESC").
 		All(&transactions)
 
+	if err != nil {
+		return errorResponse(http.StatusInternalServerError, "Failed to fetch transactions"), nil
+	}
+
 	// Build detailed response
-	response := map[string]interface{}{
-		"payment":      payment,
+	response := map[string]any{
+		"payment":      paymentRecord,
 		"transactions": transactions,
 	}
 
@@ -212,7 +231,7 @@ func (h *Handler) getPayment(ctx context.Context, merchantID, paymentID string) 
 }
 
 // getPaymentSummary returns aggregated statistics
-func (h *Handler) getPaymentSummary(ctx context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
+func (h *Handler) getPaymentSummary(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
 	// For large datasets, this would typically use DynamoDB Streams + aggregation
 	// For demo purposes, we'll do a simplified version
 
@@ -259,41 +278,58 @@ func (h *Handler) getPaymentSummary(ctx context.Context, merchantID string, req 
 	return successResponse(http.StatusOK, summary), nil
 }
 
-// exportPayments generates a CSV export URL
-func (h *Handler) exportPayments(ctx context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
-	// In production, this would:
-	// 1. Create an async export job
-	// 2. Process in the background
-	// 3. Upload to S3
-	// 4. Return a pre-signed URL
-
-	exportID := fmt.Sprintf("export-%s-%d", merchantID, time.Now().Unix())
-
-	response := map[string]interface{}{
-		"export_id": exportID,
-		"status":    "processing",
-		"message":   "Export job created. You will receive a notification when complete.",
+// exportPayments creates an export job in the queue
+func (h *Handler) exportPayments(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
+	// Create export job
+	exportJob := &ExportJob{
+		ID:         fmt.Sprintf("export-%s-%d", merchantID, time.Now().Unix()),
+		MerchantID: merchantID,
+		Status:     "pending",
+		Query:      *req,
+		Format:     "csv", // Default to CSV
+		Metadata: map[string]interface{}{
+			"requested_at": time.Now().Format(time.RFC3339),
+			"requested_by": "API",
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // Expire after 7 days
 	}
 
-	// TODO: Trigger async export Lambda
+	// Save export job to DynamoDB
+	if err := h.db.Model(exportJob).Create(); err != nil {
+		return errorResponse(http.StatusInternalServerError, "Failed to create export job"), nil
+	}
+
+	// In a real implementation, a separate worker process would:
+	// 1. Poll for pending export jobs
+	// 2. Execute the query
+	// 3. Generate the CSV/JSON file
+	// 4. Upload to S3
+	// 5. Update the job with the result URL
+	// 6. Send notification to the user
+
+	// Return immediate response
+	response := map[string]any{
+		"export_id": exportJob.ID,
+		"status":    exportJob.Status,
+		"message":   "Export job created. You will receive a notification when complete.",
+		"check_url": fmt.Sprintf("/exports/%s", exportJob.ID),
+	}
 
 	return successResponse(http.StatusAccepted, response), nil
 }
 
 // Helper functions
 
-func extractMerchantID(headers map[string]string) (string, error) {
+func (h *Handler) extractMerchantID(headers map[string]string) (string, error) {
 	auth := headers["Authorization"]
 	if auth == "" {
 		auth = headers["authorization"]
 	}
 
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return "", fmt.Errorf("invalid authorization header")
-	}
-
-	// TODO: Validate JWT and extract merchant ID
-	return "merchant-123", nil
+	// Use the JWT validator to extract merchant ID
+	return utils.ValidateAndExtractMerchantID(auth, h.jwtValidator)
 }
 
 func parseQueryParams(params map[string]string) *QueryRequest {
@@ -305,8 +341,11 @@ func parseQueryParams(params map[string]string) *QueryRequest {
 	req.CustomerID = params["customer_id"]
 	req.Cursor = params["cursor"]
 
-	if limit, err := strconv.Atoi(params["limit"]); err == nil {
+	// Set default limit if not provided
+	if limit, err := strconv.Atoi(params["limit"]); err == nil && limit > 0 {
 		req.Limit = limit
+	} else {
+		req.Limit = 20 // Default limit
 	}
 
 	if minAmount, err := strconv.ParseInt(params["min_amount"], 10, 64); err == nil {
@@ -320,20 +359,8 @@ func parseQueryParams(params map[string]string) *QueryRequest {
 	return req
 }
 
-func encodeCursor(cursor string) string {
-	return base64.URLEncoding.EncodeToString([]byte(cursor))
-}
-
-func decodeCursor(encoded string) (string, error) {
-	decoded, err := base64.URLEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", err
-	}
-	return string(decoded), nil
-}
-
-func successResponse(statusCode int, data interface{}) events.APIGatewayProxyResponse {
-	body, _ := json.Marshal(map[string]interface{}{
+func successResponse(statusCode int, data any) events.APIGatewayProxyResponse {
+	body, _ := json.Marshal(map[string]any{
 		"success": true,
 		"data":    data,
 	})
@@ -349,7 +376,7 @@ func successResponse(statusCode int, data interface{}) events.APIGatewayProxyRes
 }
 
 func errorResponse(statusCode int, message string) events.APIGatewayProxyResponse {
-	body, _ := json.Marshal(map[string]interface{}{
+	body, _ := json.Marshal(map[string]any{
 		"success": false,
 		"error":   message,
 	})

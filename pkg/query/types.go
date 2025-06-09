@@ -22,7 +22,7 @@ type CompiledBatchWrite struct {
 // BatchExecutor extends QueryExecutor with batch operations
 type BatchExecutor interface {
 	QueryExecutor
-	ExecuteBatchGet(input *CompiledBatchGet, dest interface{}) error
+	ExecuteBatchGet(input *CompiledBatchGet, dest any) error
 	ExecuteBatchWrite(input *CompiledBatchWrite) error
 }
 
@@ -50,11 +50,11 @@ type BatchGetResult struct {
 
 // PaginatedResult represents a paginated query result
 type PaginatedResult struct {
-	Items        interface{} `json:"items"`
-	NextCursor   string      `json:"nextCursor,omitempty"`
-	Count        int         `json:"count"`
-	HasMore      bool        `json:"hasMore"`
-	ScannedCount int         `json:"scannedCount,omitempty"`
+	Items        any    `json:"items"`
+	NextCursor   string `json:"nextCursor,omitempty"`
+	Count        int    `json:"count"`
+	HasMore      bool   `json:"hasMore"`
+	ScannedCount int    `json:"scannedCount,omitempty"`
 }
 
 // CompiledScan represents a compiled scan operation

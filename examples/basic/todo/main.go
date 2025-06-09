@@ -130,7 +130,7 @@ func (app *TodoApp) Get(id string) (*Todo, error) {
 }
 
 // Update modifies an existing todo
-func (app *TodoApp) Update(id string, updates map[string]interface{}) error {
+func (app *TodoApp) Update(id string, updates map[string]any) error {
 	// First, check if the todo exists
 	todo, err := app.Get(id)
 	if err != nil {
@@ -182,7 +182,7 @@ func (app *TodoApp) ToggleComplete(id string) error {
 	}
 
 	// Toggle the completed status
-	return app.Update(id, map[string]interface{}{
+	return app.Update(id, map[string]any{
 		"completed": !todo.Completed,
 	})
 }

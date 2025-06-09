@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
+	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +48,7 @@ func TestCreateTable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
 	}
+	tests.RequireDynamoDBLocal(t)
 
 	// Create test session
 	sess, err := session.NewSession(&session.Config{
@@ -173,6 +175,7 @@ func TestTableExists(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
 	}
+	tests.RequireDynamoDBLocal(t)
 
 	// Create test session
 	sess, err := session.NewSession(&session.Config{
@@ -214,6 +217,7 @@ func TestUpdateTable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test")
 	}
+	tests.RequireDynamoDBLocal(t)
 
 	// Create test session
 	sess, err := session.NewSession(&session.Config{

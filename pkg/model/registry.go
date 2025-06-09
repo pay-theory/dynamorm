@@ -26,7 +26,7 @@ func NewRegistry() *Registry {
 }
 
 // Register registers a model and parses its metadata
-func (r *Registry) Register(model interface{}) error {
+func (r *Registry) Register(model any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -58,7 +58,7 @@ func (r *Registry) Register(model interface{}) error {
 }
 
 // GetMetadata retrieves metadata for a model
-func (r *Registry) GetMetadata(model interface{}) (*Metadata, error) {
+func (r *Registry) GetMetadata(model any) (*Metadata, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

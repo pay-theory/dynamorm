@@ -71,16 +71,16 @@ func init() {
 
 // Event structure for Lambda input
 type Event struct {
-	PartnerID string                 `json:"partnerId"`
-	Action    string                 `json:"action"`
-	Data      map[string]interface{} `json:"data"`
+	PartnerID string         `json:"partnerId"`
+	Action    string         `json:"action"`
+	Data      map[string]any `json:"data"`
 }
 
 // Response structure for Lambda output
 type Response struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Success bool   `json:"success"`
+	Data    any    `json:"data,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // Main Lambda handler
@@ -108,7 +108,7 @@ func handler(ctx context.Context, event Event) (Response, error) {
 }
 
 // Get payment by ID
-func handleGetPayment(db *dynamorm.LambdaDB, data map[string]interface{}) (Response, error) {
+func handleGetPayment(db *dynamorm.LambdaDB, data map[string]any) (Response, error) {
 	paymentID, ok := data["paymentId"].(string)
 	if !ok {
 		return Response{Success: false, Error: "paymentId required"}, nil
@@ -124,7 +124,7 @@ func handleGetPayment(db *dynamorm.LambdaDB, data map[string]interface{}) (Respo
 }
 
 // Create new payment
-func handleCreatePayment(db *dynamorm.LambdaDB, data map[string]interface{}) (Response, error) {
+func handleCreatePayment(db *dynamorm.LambdaDB, data map[string]any) (Response, error) {
 	amount, _ := data["amount"].(float64)
 	currency, _ := data["currency"].(string)
 

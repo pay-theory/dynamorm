@@ -6,7 +6,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/dynamorm/dynamorm)](https://goreportcard.com/report/github.com/dynamorm/dynamorm)
 [![Coverage Status](https://coveralls.io/repos/github/dynamorm/dynamorm/badge.svg?branch=main)](https://coveralls.io/github/dynamorm/dynamorm?branch=main)
 
-DynamORM is a **Lambda-native**, type-safe ORM for Amazon DynamoDB written in Go. It dramatically simplifies DynamoDB operations while maintaining the performance and scalability benefits of DynamoDB.
+DynamORM is a **Lambda-native**, type-safe ORM for Amazon DynamoDB written in Go. Designed specifically for serverless architectures, it provides lightweight wrappers around DynamoDB operations while maintaining compatibility with Infrastructure as Code patterns.
 
 ## 🎯 Project Vision
 
@@ -113,6 +113,13 @@ err := db.Model(&User{}).
     All(&results)
 ```
 
+### ⚠️ Important Note on Queries
+
+DynamORM provides a powerful and flexible query interface. However, it's crucial to understand how your queries translate to DynamoDB operations to avoid unexpected costs and performance issues.
+
+-   **Use Indexes:** Always design your tables with the necessary Global Secondary Indexes (GSIs) and Local Secondary Indexes (LSIs) to support your query patterns. Queries that can use an index are significantly more efficient and cost-effective.
+-   **Avoid Scans:** A query that does not use an index on its primary condition will result in a DynamoDB `Scan` operation, which reads every item in your table. On large tables, this can be slow and expensive. Use `Scan` operations deliberately and sparingly.
+
 ### Transaction Support
 
 ```go
@@ -127,6 +134,8 @@ err := db.Transaction(func(tx *dynamorm.Tx) error {
     return tx.Model(transfer).Create()
 })
 ```
+
+> **Note:** The `Transaction` function is currently a simplified wrapper. For full ACID transaction support across multiple operations, please use the more advanced `TransactionFunc` method.
 
 ### Multi-Account Support
 
@@ -143,7 +152,28 @@ db := dynamorm.New(
 err := db.WithAccount("prod").Model(&User{}).All(&users)
 ```
 
-## 📚 Documentation
+### Table Operations
+
+DynamORM provides simple table operations for development and testing:
+
+```go
+// Create table from model (development/testing)
+err := db.CreateTable(&User{})
+
+// Ensure table exists (idempotent)
+err := db.EnsureTable(&User{})
+
+// AutoMigrate with data copy
+err := db.AutoMigrateWithOptions(&UserV1{},
+    dynamorm.WithTargetModel(&UserV2{}),
+    dynamorm.WithDataCopy(true),
+    dynamorm.WithTransform(transformFunc),
+)
+```
+
+> **Note:** In production, tables should be created and managed using Infrastructure as Code tools (AWS CDK, Terraform, CloudFormation). DynamORM's table operations are designed for development, testing, and controlled migration scenarios.
+
+### 📚 Documentation
 
 - [**Getting Started**](docs/getting-started/quickstart.md) - Get up and running in 5 minutes
 - [**API Reference**](docs/reference/api.md) - Complete API documentation
@@ -232,9 +262,11 @@ See our [public roadmap](docs/architecture/roadmap.md) for upcoming features:
 
 - [ ] GraphQL integration
 - [ ] Real-time subscriptions
-- [ ] Schema migrations
+- [ ] Enhanced data transformation utilities
 - [ ] Admin UI
 - [ ] More database adapters
+
+> **Table Management:** DynamORM provides simple table operations like `CreateTable`, `EnsureTable`, and `AutoMigrate` for development and testing. Production tables should be managed using Infrastructure as Code tools (CDK, Terraform, CloudFormation) as per AWS best practices.
 
 ## 🏆 Used By
 

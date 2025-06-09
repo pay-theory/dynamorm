@@ -232,7 +232,7 @@ func httpToLambdaEvent(r *http.Request) events.APIGatewayProxyRequest {
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status": "healthy",
 		"time":   time.Now().UTC(),
 	}

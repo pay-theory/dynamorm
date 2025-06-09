@@ -53,10 +53,10 @@ var (
 
 // DynamORMError represents a detailed error with context
 type DynamORMError struct {
-	Op      string                 // Operation that failed
-	Model   string                 // Model type name
-	Err     error                  // Underlying error
-	Context map[string]interface{} // Additional context
+	Op      string         // Operation that failed
+	Model   string         // Model type name
+	Err     error          // Underlying error
+	Context map[string]any // Additional context
 }
 
 // Error implements the error interface
@@ -87,7 +87,7 @@ func NewError(op, model string, err error) *DynamORMError {
 }
 
 // NewErrorWithContext creates a new DynamORMError with context
-func NewErrorWithContext(op, model string, err error, context map[string]interface{}) *DynamORMError {
+func NewErrorWithContext(op, model string, err error, context map[string]any) *DynamORMError {
 	return &DynamORMError{
 		Op:      op,
 		Model:   model,

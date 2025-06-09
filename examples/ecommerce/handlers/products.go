@@ -36,7 +36,7 @@ func (h *ProductHandlers) ListProducts(ctx context.Context, request events.APIGa
 		}
 	}
 
-	var lastEvaluatedKey map[string]interface{}
+	var lastEvaluatedKey map[string]any
 	if cursor := request.QueryStringParameters["cursor"]; cursor != "" {
 		// Decode cursor from base64
 		if err := json.Unmarshal([]byte(cursor), &lastEvaluatedKey); err != nil {
@@ -111,16 +111,16 @@ func (h *ProductHandlers) ListProducts(ctx context.Context, request events.APIGa
 	}
 
 	// Build response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"products": products,
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"count": len(products),
 			"limit": limit,
 		},
 	}
 
 	if nextCursor != "" {
-		response["metadata"].(map[string]interface{})["next_cursor"] = nextCursor
+		response["metadata"].(map[string]any)["next_cursor"] = nextCursor
 	}
 
 	return jsonResponse(http.StatusOK, response)
@@ -149,9 +149,9 @@ func (h *ProductHandlers) GetProduct(ctx context.Context, request events.APIGate
 
 	// Calculate available stock
 	availableStock := product.Stock - product.Reserved
-	productResponse := map[string]interface{}{
+	productResponse := map[string]any{
 		"product": product,
-		"availability": map[string]interface{}{
+		"availability": map[string]any{
 			"in_stock":        availableStock > 0,
 			"available_stock": availableStock,
 		},
@@ -188,7 +188,7 @@ func (h *ProductHandlers) GetProductBySKU(ctx context.Context, request events.AP
 		return errorResponse(http.StatusNotFound, "Product not found")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"product": product,
 	})
 }
@@ -231,7 +231,7 @@ func (h *ProductHandlers) CreateProduct(ctx context.Context, request events.APIG
 		return errorResponse(http.StatusInternalServerError, "Failed to create product")
 	}
 
-	return jsonResponse(http.StatusCreated, map[string]interface{}{
+	return jsonResponse(http.StatusCreated, map[string]any{
 		"product": product,
 	})
 }
@@ -248,7 +248,7 @@ func (h *ProductHandlers) UpdateProduct(ctx context.Context, request events.APIG
 	}
 
 	// Parse update data
-	var updates map[string]interface{}
+	var updates map[string]any
 	if err := json.Unmarshal([]byte(request.Body), &updates); err != nil {
 		return errorResponse(http.StatusBadRequest, "Invalid request body")
 	}
@@ -287,7 +287,7 @@ func (h *ProductHandlers) UpdateProduct(ctx context.Context, request events.APIG
 	}
 
 	// Handle arrays and complex types
-	if tags, ok := updates["tags"].([]interface{}); ok {
+	if tags, ok := updates["tags"].([]any); ok {
 		stringTags := make([]string, len(tags))
 		for i, tag := range tags {
 			stringTags[i] = tag.(string)
@@ -314,7 +314,7 @@ func (h *ProductHandlers) UpdateProduct(ctx context.Context, request events.APIG
 		return errorResponse(http.StatusInternalServerError, "Failed to fetch updated product")
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"product": updatedProduct,
 	})
 }
@@ -361,9 +361,9 @@ func (h *ProductHandlers) SearchProducts(ctx context.Context, request events.API
 	// Sort by relevance (simple implementation - name matches first)
 	// In production, use proper scoring algorithm
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
 		"products": matches,
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"query": query,
 			"count": len(matches),
 		},
@@ -439,8 +439,8 @@ func (h *ProductHandlers) UpdateInventory(ctx context.Context, request events.AP
 		fmt.Printf("Failed to create inventory movement record: %v\n", err)
 	}
 
-	return jsonResponse(http.StatusOK, map[string]interface{}{
-		"product": map[string]interface{}{
+	return jsonResponse(http.StatusOK, map[string]any{
+		"product": map[string]any{
 			"id":    productID,
 			"stock": newStock,
 		},
@@ -470,7 +470,7 @@ func getAdminUserID(request events.APIGatewayProxyRequest) string {
 	return "admin-user"
 }
 
-func jsonResponse(statusCode int, body interface{}) (events.APIGatewayProxyResponse, error) {
+func jsonResponse(statusCode int, body any) (events.APIGatewayProxyResponse, error) {
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return events.APIGatewayProxyResponse{

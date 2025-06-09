@@ -115,7 +115,7 @@ func (h *ResourceHandler) RecordUsage(w http.ResponseWriter, r *http.Request) {
 	// Log audit event
 	h.logAuditEvent(orgID, apiKeyID, "record_usage", "resource", resource.ResourceID, nil, true, "")
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"resource_id": resource.ResourceID,
 		"quantity":    resource.Quantity,
 		"unit":        resource.Unit,
@@ -230,7 +230,7 @@ func (h *ResourceHandler) GetProjectUsage(w http.ResponseWriter, r *http.Request
 		usage[resource.Type] = u
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"project_id": projectID,
 		"start_date": startDate,
 		"end_date":   endDate,

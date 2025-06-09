@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/internal/expr"
@@ -14,7 +15,7 @@ import (
 
 // Query represents a DynamoDB query builder
 type Query struct {
-	model      interface{}
+	model      any
 	conditions []Condition
 	filters    []Filter
 	rawFilters []RawFilter
@@ -29,19 +30,24 @@ type Query struct {
 	// Internal state
 	metadata core.ModelMetadata
 	executor QueryExecutor
+	builder  *expr.Builder
+
+	// Parallel scan configuration
+	segment       *int32
+	totalSegments *int32
 }
 
 // Condition represents a query condition
 type Condition struct {
 	Field    string
 	Operator string
-	Value    interface{}
+	Value    any
 }
 
 // Filter represents a filter expression
 type Filter struct {
 	Expression string
-	Params     map[string]interface{}
+	Params     map[string]any
 }
 
 // RawFilter represents a raw filter with parameters
@@ -56,14 +62,39 @@ type OrderBy struct {
 	Order string // "asc" or "desc"
 }
 
-// QueryExecutor executes compiled queries (provided by Team 1)
+// QueryExecutor is the base query executor interface
 type QueryExecutor interface {
-	ExecuteQuery(input *core.CompiledQuery, dest interface{}) error
-	ExecuteScan(input *core.CompiledQuery, dest interface{}) error
+	ExecuteQuery(input *core.CompiledQuery, dest any) error
+	ExecuteScan(input *core.CompiledQuery, dest any) error
+}
+
+// PaginatedQueryExecutor extends QueryExecutor with pagination support
+type PaginatedQueryExecutor interface {
+	QueryExecutor
+	ExecuteQueryWithPagination(input *core.CompiledQuery, dest any) (*QueryResult, error)
+	ExecuteScanWithPagination(input *core.CompiledQuery, dest any) (*ScanResult, error)
+}
+
+// PutItemExecutor extends QueryExecutor with PutItem support
+type PutItemExecutor interface {
+	QueryExecutor
+	ExecutePutItem(input *core.CompiledQuery, item map[string]types.AttributeValue) error
+}
+
+// UpdateItemExecutor extends QueryExecutor with UpdateItem support
+type UpdateItemExecutor interface {
+	QueryExecutor
+	ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error
+}
+
+// DeleteItemExecutor extends QueryExecutor with DeleteItem support
+type DeleteItemExecutor interface {
+	QueryExecutor
+	ExecuteDeleteItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error
 }
 
 // New creates a new Query instance
-func New(model interface{}, metadata core.ModelMetadata, executor QueryExecutor) *Query {
+func New(model any, metadata core.ModelMetadata, executor QueryExecutor) *Query {
 	return &Query{
 		model:    model,
 		metadata: metadata,
@@ -73,7 +104,7 @@ func New(model interface{}, metadata core.ModelMetadata, executor QueryExecutor)
 }
 
 // Where adds a condition to the query
-func (q *Query) Where(field string, op string, value interface{}) core.Query {
+func (q *Query) Where(field string, op string, value any) core.Query {
 	q.conditions = append(q.conditions, Condition{
 		Field:    field,
 		Operator: op,
@@ -83,17 +114,13 @@ func (q *Query) Where(field string, op string, value interface{}) core.Query {
 }
 
 // Filter adds a filter expression to the query
-func (q *Query) Filter(expr string, values ...interface{}) core.Query {
-	// Convert values to parameter map
-	paramMap := make(map[string]interface{})
-	for i, v := range values {
-		paramMap[fmt.Sprintf("param%d", i)] = v
+func (q *Query) Filter(field string, op string, value any) core.Query {
+	// Initialize builder if not already done
+	if q.builder == nil {
+		q.builder = expr.NewBuilder()
 	}
 
-	q.filters = append(q.filters, Filter{
-		Expression: expr,
-		Params:     paramMap,
-	})
+	q.builder.AddFilterCondition("AND", field, op, value)
 	return q
 }
 
@@ -131,7 +158,7 @@ func (q *Query) Select(fields ...string) core.Query {
 }
 
 // First executes the query and returns the first result
-func (q *Query) First(dest interface{}) error {
+func (q *Query) First(dest any) error {
 	// Set limit to 1 for efficiency
 	q.limit = 1
 
@@ -147,7 +174,7 @@ func (q *Query) First(dest interface{}) error {
 }
 
 // All executes the query and returns all results
-func (q *Query) All(dest interface{}) error {
+func (q *Query) All(dest any) error {
 	compiled, err := q.Compile()
 	if err != nil {
 		return err
@@ -185,24 +212,342 @@ func (q *Query) Count() (int64, error) {
 
 // Create creates a new item
 func (q *Query) Create() error {
-	// TODO: This should be implemented by Team 1
-	return errors.New("Create not yet implemented")
+	// Marshal the model to AttributeValues
+	item, err := convertItemToAttributeValue(q.model)
+	if err != nil {
+		return fmt.Errorf("failed to marshal item: %w", err)
+	}
+
+	// Build PutItem request
+	compiled := &core.CompiledQuery{
+		Operation: "PutItem",
+		TableName: q.metadata.TableName(),
+	}
+
+	// Add conditional expression to prevent overwriting existing items
+	if len(q.conditions) > 0 {
+		// If conditions are specified, use them as conditional expressions
+		builder := expr.NewBuilder()
+		for _, cond := range q.conditions {
+			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
+			if err != nil {
+				return fmt.Errorf("failed to build condition: %w", err)
+			}
+		}
+		components := builder.Build()
+		compiled.ConditionExpression = components.FilterExpression
+		compiled.ExpressionAttributeNames = components.ExpressionAttributeNames
+		compiled.ExpressionAttributeValues = components.ExpressionAttributeValues
+	} else {
+		// Default: ensure item doesn't already exist (using partition key)
+		primaryKey := q.metadata.PrimaryKey()
+		if primaryKey.PartitionKey != "" {
+			builder := expr.NewBuilder()
+			builder.AddFilterCondition("AND", primaryKey.PartitionKey, "attribute_not_exists", nil)
+			components := builder.Build()
+			compiled.ConditionExpression = components.FilterExpression
+			compiled.ExpressionAttributeNames = components.ExpressionAttributeNames
+		}
+	}
+
+	// Execute through a specialized PutItem executor
+	if putExecutor, ok := q.executor.(PutItemExecutor); ok {
+		return putExecutor.ExecutePutItem(compiled, item)
+	}
+
+	// Fallback: return error if executor doesn't support PutItem
+	return fmt.Errorf("executor does not support PutItem operation")
 }
 
-// Update updates an item
+// isZeroValue checks if a reflect.Value is the zero value for its type
+func isZeroValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+		return v.Len() == 0
+	case reflect.Bool:
+		return !v.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return v.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return v.Float() == 0
+	case reflect.Interface, reflect.Ptr:
+		return v.IsNil()
+	case reflect.Struct:
+		// Check if it's time.Time
+		if v.Type().String() == "time.Time" {
+			return v.Interface().(interface{ IsZero() bool }).IsZero()
+		}
+		// For other structs, check if all fields are zero
+		for i := 0; i < v.NumField(); i++ {
+			if !isZeroValue(v.Field(i)) {
+				return false
+			}
+		}
+		return true
+	default:
+		// For other types (chan, func), compare with zero value
+		return v.IsZero()
+	}
+}
+
+// Update updates specified fields on an item
 func (q *Query) Update(fields ...string) error {
-	// TODO: This should be implemented by Team 1
-	return errors.New("Update not yet implemented")
+	// Validate we have key conditions
+	primaryKey := q.metadata.PrimaryKey()
+	keyValues := make(map[string]any)
+
+	// Extract key values from conditions
+	for _, cond := range q.conditions {
+		if cond.Field == primaryKey.PartitionKey ||
+			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+			if cond.Operator != "=" {
+				return fmt.Errorf("key condition must use '=' operator")
+			}
+			keyValues[cond.Field] = cond.Value
+		}
+	}
+
+	// Validate we have complete key
+	if _, ok := keyValues[primaryKey.PartitionKey]; !ok {
+		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
+	}
+	if primaryKey.SortKey != "" {
+		if _, ok := keyValues[primaryKey.SortKey]; !ok {
+			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
+		}
+	}
+
+	// Build update expression for specified fields
+	updateParts := []string{}
+	updateValues := make(map[string]any)
+
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+	modelType := modelValue.Type()
+
+	if len(fields) > 0 {
+		// Update only specified fields
+		for i, field := range fields {
+			// Get field value from model
+			fieldValue := modelValue.FieldByName(field)
+			if !fieldValue.IsValid() {
+				return fmt.Errorf("field %s not found in model", field)
+			}
+
+			// Add to update expression
+			placeholder := fmt.Sprintf(":val%d", i)
+			updateParts = append(updateParts, fmt.Sprintf("#%s = %s", field, placeholder))
+			updateValues[placeholder] = fieldValue.Interface()
+		}
+	} else {
+		// Update all non-key fields
+		primaryKey := q.metadata.PrimaryKey()
+		fieldIndex := 0
+
+		for i := 0; i < modelType.NumField(); i++ {
+			field := modelType.Field(i)
+
+			// Skip unexported fields
+			if !field.IsExported() {
+				continue
+			}
+
+			// Parse dynamorm tags
+			tag := field.Tag.Get("dynamorm")
+			if tag == "-" {
+				continue
+			}
+
+			// Skip primary key fields
+			if field.Name == primaryKey.PartitionKey || field.Name == primaryKey.SortKey {
+				continue
+			}
+
+			// Check if this is a primary key field based on tags
+			if strings.Contains(tag, "pk") || strings.Contains(tag, "sk") {
+				continue
+			}
+
+			// Skip special fields based on tags
+			if strings.Contains(tag, "created_at") {
+				continue
+			}
+
+			// Get field value
+			fieldValue := modelValue.Field(i)
+			if !fieldValue.IsValid() {
+				continue
+			}
+
+			// Skip zero values if omitempty is set
+			if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
+				continue
+			}
+
+			// Add to update expression
+			placeholder := fmt.Sprintf(":val%d", fieldIndex)
+			updateParts = append(updateParts, fmt.Sprintf("#%s = %s", field.Name, placeholder))
+			updateValues[placeholder] = fieldValue.Interface()
+
+			// Also add to expression attribute names
+			fields = append(fields, field.Name)
+			fieldIndex++
+		}
+
+		// Check if we have any fields to update
+		if len(updateParts) == 0 {
+			return fmt.Errorf("no non-key fields to update")
+		}
+	}
+
+	// Build expressions
+	builder := expr.NewBuilder()
+
+	// Add filter conditions as condition expressions
+	for _, cond := range q.conditions {
+		// Skip key conditions
+		if cond.Field == primaryKey.PartitionKey ||
+			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+			continue
+		}
+		builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
+	}
+
+	filterComponents := builder.Build()
+
+	// Build update expression manually
+	updateExpression := ""
+	if len(updateParts) > 0 {
+		updateExpression = "SET " + strings.Join(updateParts, ", ")
+	}
+
+	// Convert update values to AttributeValues
+	expressionAttributeValues := make(map[string]types.AttributeValue)
+	for k, v := range updateValues {
+		av, err := expr.ConvertToAttributeValue(v)
+		if err != nil {
+			return fmt.Errorf("failed to convert update value: %w", err)
+		}
+		expressionAttributeValues[k] = av
+	}
+
+	// Merge with filter expression values
+	for k, v := range filterComponents.ExpressionAttributeValues {
+		expressionAttributeValues[k] = v
+	}
+
+	// Build expression attribute names
+	expressionAttributeNames := make(map[string]string)
+	for _, field := range fields {
+		expressionAttributeNames["#"+field] = field
+	}
+
+	// Merge with filter expression names
+	for k, v := range filterComponents.ExpressionAttributeNames {
+		expressionAttributeNames[k] = v
+	}
+
+	// Compile the update query
+	compiled := &core.CompiledQuery{
+		Operation:                 "UpdateItem",
+		TableName:                 q.metadata.TableName(),
+		UpdateExpression:          updateExpression,
+		ConditionExpression:       filterComponents.FilterExpression,
+		ExpressionAttributeNames:  expressionAttributeNames,
+		ExpressionAttributeValues: expressionAttributeValues,
+	}
+
+	// Convert key to AttributeValues
+	keyAV := make(map[string]types.AttributeValue)
+	for k, v := range keyValues {
+		av, err := expr.ConvertToAttributeValue(v)
+		if err != nil {
+			return fmt.Errorf("failed to convert key value: %w", err)
+		}
+		keyAV[k] = av
+	}
+
+	// Execute update
+	if updateExecutor, ok := q.executor.(UpdateItemExecutor); ok {
+		return updateExecutor.ExecuteUpdateItem(compiled, keyAV)
+	}
+
+	return fmt.Errorf("executor does not support UpdateItem operation")
 }
 
 // Delete deletes an item
 func (q *Query) Delete() error {
-	// TODO: This should be implemented by Team 1
-	return errors.New("Delete not yet implemented")
+	// Validate we have key conditions
+	primaryKey := q.metadata.PrimaryKey()
+	keyValues := make(map[string]any)
+
+	// Extract key values from conditions
+	for _, cond := range q.conditions {
+		if cond.Field == primaryKey.PartitionKey ||
+			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+			if cond.Operator != "=" {
+				return fmt.Errorf("key condition must use '=' operator")
+			}
+			keyValues[cond.Field] = cond.Value
+		}
+	}
+
+	// Validate we have complete key
+	if _, ok := keyValues[primaryKey.PartitionKey]; !ok {
+		return fmt.Errorf("partition key %s is required for delete", primaryKey.PartitionKey)
+	}
+	if primaryKey.SortKey != "" {
+		if _, ok := keyValues[primaryKey.SortKey]; !ok {
+			return fmt.Errorf("sort key %s is required for delete", primaryKey.SortKey)
+		}
+	}
+
+	// Build condition expression from non-key conditions
+	builder := expr.NewBuilder()
+	for _, cond := range q.conditions {
+		// Skip key conditions
+		if cond.Field == primaryKey.PartitionKey ||
+			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+			continue
+		}
+		builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
+	}
+
+	components := builder.Build()
+
+	// Compile the delete query
+	compiled := &core.CompiledQuery{
+		Operation:                 "DeleteItem",
+		TableName:                 q.metadata.TableName(),
+		ConditionExpression:       components.FilterExpression,
+		ExpressionAttributeNames:  components.ExpressionAttributeNames,
+		ExpressionAttributeValues: components.ExpressionAttributeValues,
+	}
+
+	// Convert key to AttributeValues
+	keyAV := make(map[string]types.AttributeValue)
+	for k, v := range keyValues {
+		av, err := expr.ConvertToAttributeValue(v)
+		if err != nil {
+			return fmt.Errorf("failed to convert key value: %w", err)
+		}
+		keyAV[k] = av
+	}
+
+	// Execute delete
+	if deleteExecutor, ok := q.executor.(DeleteItemExecutor); ok {
+		return deleteExecutor.ExecuteDeleteItem(compiled, keyAV)
+	}
+
+	return fmt.Errorf("executor does not support DeleteItem operation")
 }
 
 // Scan performs a table scan
-func (q *Query) Scan(dest interface{}) error {
+func (q *Query) Scan(dest any) error {
 	compiled, err := q.compileScan()
 	if err != nil {
 		return err
@@ -211,8 +556,98 @@ func (q *Query) Scan(dest interface{}) error {
 	return q.executor.ExecuteScan(compiled, dest)
 }
 
+// ParallelScan performs a parallel table scan with the specified segment
+func (q *Query) ParallelScan(segment int32, totalSegments int32) core.Query {
+	q.segment = &segment
+	q.totalSegments = &totalSegments
+	return q
+}
+
+// ScanAllSegments performs a parallel scan across all segments and combines results
+func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
+	// Validate destination is a slice pointer
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("destination must be a pointer to slice")
+	}
+
+	// Create a channel to collect results from each segment
+	type segmentResult struct {
+		items []any
+		err   error
+	}
+
+	results := make(chan segmentResult, totalSegments)
+
+	// Launch goroutines for each segment
+	for i := int32(0); i < totalSegments; i++ {
+		go func(segment int32) {
+			// Create a new query for this segment
+			segmentQuery := &Query{
+				model:         q.model,
+				conditions:    q.conditions,
+				filters:       q.filters,
+				rawFilters:    q.rawFilters,
+				index:         q.index,
+				limit:         q.limit,
+				offset:        q.offset,
+				projection:    q.projection,
+				orderBy:       q.orderBy,
+				exclusive:     q.exclusive,
+				ctx:           q.ctx,
+				metadata:      q.metadata,
+				executor:      q.executor,
+				builder:       q.builder,
+				segment:       &segment,
+				totalSegments: &totalSegments,
+			}
+
+			// Create a slice to hold this segment's results
+			elemType := destValue.Type().Elem()
+			segmentDest := reflect.New(reflect.SliceOf(elemType))
+
+			// Execute scan for this segment
+			err := segmentQuery.Scan(segmentDest.Interface())
+			if err != nil {
+				results <- segmentResult{nil, err}
+				return
+			}
+
+			// Convert results to []any
+			segmentSlice := segmentDest.Elem()
+			items := make([]any, segmentSlice.Len())
+			for j := 0; j < segmentSlice.Len(); j++ {
+				items[j] = segmentSlice.Index(j).Interface()
+			}
+
+			results <- segmentResult{items, nil}
+		}(i)
+	}
+
+	// Collect results from all segments
+	var allItems []any
+	for i := int32(0); i < totalSegments; i++ {
+		result := <-results
+		if result.err != nil {
+			return result.err
+		}
+		allItems = append(allItems, result.items...)
+	}
+
+	// Combine all results into the destination slice
+	destSlice := destValue.Elem()
+	newSlice := reflect.MakeSlice(destSlice.Type(), len(allItems), len(allItems))
+
+	for i, item := range allItems {
+		newSlice.Index(i).Set(reflect.ValueOf(item))
+	}
+
+	destSlice.Set(newSlice)
+	return nil
+}
+
 // BatchGet retrieves multiple items by their primary keys
-func (q *Query) BatchGet(keys []interface{}, dest interface{}) error {
+func (q *Query) BatchGet(keys []any, dest any) error {
 	// Validate dest is a pointer to slice
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
@@ -284,7 +719,7 @@ func (q *Query) BatchGet(keys []interface{}, dest interface{}) error {
 }
 
 // BatchCreate creates multiple items
-func (q *Query) BatchCreate(items interface{}) error {
+func (q *Query) BatchCreate(items any) error {
 	// Validate items is a slice
 	itemsValue := reflect.ValueOf(items)
 	if itemsValue.Kind() != reflect.Slice {
@@ -335,7 +770,22 @@ func (q *Query) WithContext(ctx context.Context) core.Query {
 
 // selectBestIndex analyzes conditions and selects the optimal index
 func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
-	selector := index.NewSelector(q.metadata.Indexes())
+	// Get all indexes including the primary index
+	allIndexes := make([]core.IndexSchema, 0, len(q.metadata.Indexes())+1)
+
+	// Add the primary index
+	primaryKey := q.metadata.PrimaryKey()
+	allIndexes = append(allIndexes, core.IndexSchema{
+		Name:         "", // Empty name indicates primary index
+		Type:         "PRIMARY",
+		PartitionKey: primaryKey.PartitionKey,
+		SortKey:      primaryKey.SortKey,
+	})
+
+	// Add GSIs and LSIs
+	allIndexes = append(allIndexes, q.metadata.Indexes()...)
+
+	selector := index.NewSelector(allIndexes)
 
 	// Convert our conditions to index.Condition type
 	indexConditions := make([]index.Condition, len(q.conditions))
@@ -355,7 +805,7 @@ func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 }
 
 // AllPaginated executes the query and returns paginated results
-func (q *Query) AllPaginated(dest interface{}) (*PaginatedResult, error) {
+func (q *Query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	// Set a reasonable limit if not specified
 	if q.limit == 0 {
 		q.limit = 100
@@ -367,7 +817,7 @@ func (q *Query) AllPaginated(dest interface{}) (*PaginatedResult, error) {
 	}
 
 	// Execute the query
-	var result interface{}
+	var result any
 	if compiled.Operation == "Query" {
 		result, err = q.executePaginatedQuery(compiled, dest)
 	} else {
@@ -379,13 +829,38 @@ func (q *Query) AllPaginated(dest interface{}) (*PaginatedResult, error) {
 	}
 
 	// Extract pagination info
-	queryResult := result.(map[string]interface{})
+	queryResult := result.(map[string]any)
 
-	return &PaginatedResult{
-		Items:      dest,
-		NextCursor: q.encodeCursor(queryResult["LastEvaluatedKey"]),
-		Count:      queryResult["Count"].(int),
-	}, nil
+	// Build the paginated result
+	paginatedResult := &core.PaginatedResult{
+		Items:        dest,
+		NextCursor:   q.encodeCursor(queryResult["LastEvaluatedKey"]),
+		Count:        0,
+		ScannedCount: 0,
+	}
+
+	// Safely extract counts
+	if count, ok := queryResult["Count"].(int64); ok {
+		paginatedResult.Count = int(count)
+	} else if count, ok := queryResult["Count"].(int); ok {
+		paginatedResult.Count = count
+	}
+
+	if scannedCount, ok := queryResult["ScannedCount"].(int64); ok {
+		paginatedResult.ScannedCount = int(scannedCount)
+	} else if scannedCount, ok := queryResult["ScannedCount"].(int); ok {
+		paginatedResult.ScannedCount = scannedCount
+	}
+
+	// Set HasMore based on cursor
+	paginatedResult.HasMore = paginatedResult.NextCursor != ""
+
+	// Extract LastEvaluatedKey
+	if lastKey, ok := queryResult["LastEvaluatedKey"].(map[string]types.AttributeValue); ok {
+		paginatedResult.LastEvaluatedKey = lastKey
+	}
+
+	return paginatedResult, nil
 }
 
 // SetCursor sets the pagination cursor for the query
@@ -415,39 +890,69 @@ func (q *Query) Cursor(cursor string) core.Query {
 }
 
 // executePaginatedQuery executes a query with pagination support
-func (q *Query) executePaginatedQuery(compiled *core.CompiledQuery, dest interface{}) (interface{}, error) {
-	// This will be implemented by Team 1's executor
+func (q *Query) executePaginatedQuery(compiled *core.CompiledQuery, dest any) (any, error) {
+	// Check if executor supports pagination
+	if paginatedExecutor, ok := q.executor.(PaginatedQueryExecutor); ok {
+		result, err := paginatedExecutor.ExecuteQueryWithPagination(compiled, dest)
+		if err != nil {
+			return nil, err
+		}
+
+		// Return the actual pagination info
+		return map[string]any{
+			"Count":            result.Count,
+			"ScannedCount":     result.ScannedCount,
+			"LastEvaluatedKey": result.LastEvaluatedKey,
+		}, nil
+	}
+
+	// Fall back to regular query without pagination info
 	err := q.executor.ExecuteQuery(compiled, dest)
 	if err != nil {
 		return nil, err
 	}
 
-	// For now, return a mock result structure
-	// Team 1 will need to update their executor to return proper pagination info
-	return map[string]interface{}{
+	// Return mock result for backward compatibility
+	return map[string]any{
 		"Count":            0,
+		"ScannedCount":     0,
 		"LastEvaluatedKey": nil,
 	}, nil
 }
 
 // executePaginatedScan executes a scan with pagination support
-func (q *Query) executePaginatedScan(compiled *core.CompiledQuery, dest interface{}) (interface{}, error) {
-	// This will be implemented by Team 1's executor
+func (q *Query) executePaginatedScan(compiled *core.CompiledQuery, dest any) (any, error) {
+	// Check if executor supports pagination
+	if paginatedExecutor, ok := q.executor.(PaginatedQueryExecutor); ok {
+		result, err := paginatedExecutor.ExecuteScanWithPagination(compiled, dest)
+		if err != nil {
+			return nil, err
+		}
+
+		// Return the actual pagination info
+		return map[string]any{
+			"Count":            result.Count,
+			"ScannedCount":     result.ScannedCount,
+			"LastEvaluatedKey": result.LastEvaluatedKey,
+		}, nil
+	}
+
+	// Fall back to regular scan without pagination info
 	err := q.executor.ExecuteScan(compiled, dest)
 	if err != nil {
 		return nil, err
 	}
 
-	// For now, return a mock result structure
-	// Team 1 will need to update their executor to return proper pagination info
-	return map[string]interface{}{
+	// Return mock result for backward compatibility
+	return map[string]any{
 		"Count":            0,
+		"ScannedCount":     0,
 		"LastEvaluatedKey": nil,
 	}, nil
 }
 
 // encodeCursor encodes the LastEvaluatedKey as a cursor string
-func (q *Query) encodeCursor(lastKey interface{}) string {
+func (q *Query) encodeCursor(lastKey any) string {
 	if lastKey == nil {
 		return ""
 	}
@@ -457,8 +962,8 @@ func (q *Query) encodeCursor(lastKey interface{}) string {
 	switch v := lastKey.(type) {
 	case map[string]types.AttributeValue:
 		avMap = v
-	case map[string]interface{}:
-		// Handle the case where lastKey is map[string]interface{}
+	case map[string]any:
+		// Handle the case where lastKey is map[string]any
 		// This would come from the executor results
 		if val, ok := v["LastEvaluatedKey"]; ok {
 			if m, ok := val.(map[string]types.AttributeValue); ok {
@@ -469,7 +974,7 @@ func (q *Query) encodeCursor(lastKey interface{}) string {
 		return ""
 	}
 
-	if avMap == nil || len(avMap) == 0 {
+	if len(avMap) == 0 {
 		return ""
 	}
 
@@ -502,20 +1007,16 @@ func (q *Query) decodeCursor(cursor string) (map[string]types.AttributeValue, er
 	return decodedCursor.ToAttributeValues()
 }
 
-// shouldUseQuery determines if we can use Query vs Scan
-func (q *Query) shouldUseQuery() bool {
-	bestIndex, err := q.selectBestIndex()
-	if err != nil || bestIndex == nil {
-		return false
-	}
-
-	// If we found a suitable index, we can use Query
-	return true
-}
-
 // Compile compiles the query into executable form
 func (q *Query) Compile() (*core.CompiledQuery, error) {
-	builder := expr.NewBuilder()
+	// Use existing builder if available (contains filters from Filter/OrFilter calls)
+	// Otherwise create a new one
+	var builder *expr.Builder
+	if q.builder != nil {
+		builder = q.builder
+	} else {
+		builder = expr.NewBuilder()
+	}
 
 	// Select the best index
 	bestIndex, err := q.selectBestIndex()
@@ -564,9 +1065,9 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 			}
 		}
 
-		// Add filter conditions
+		// Add filter conditions from Where clauses
 		for _, cond := range filterConditions {
-			err := builder.AddFilterCondition(cond.Field, cond.Operator, cond.Value)
+			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
 			if err != nil {
 				return nil, err
 			}
@@ -577,20 +1078,14 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 
 		// All conditions become filters
 		for _, cond := range q.conditions {
-			err := builder.AddFilterCondition(cond.Field, cond.Operator, cond.Value)
+			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	// Add additional filters
-	for _, filter := range q.filters {
-		err := builder.AddRawFilter(filter.Expression, filter.Params)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// Note: Additional filters from Filter/OrFilter calls are already in the builder
 
 	// Add projections
 	if len(q.projection) > 0 {
@@ -623,28 +1118,29 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 
 // compileScan compiles a scan operation
 func (q *Query) compileScan() (*core.CompiledQuery, error) {
-	builder := expr.NewBuilder()
+	// Use existing builder if available (contains filters from Filter/OrFilter calls)
+	// Otherwise create a new one
+	var builder *expr.Builder
+	if q.builder != nil {
+		builder = q.builder
+	} else {
+		builder = expr.NewBuilder()
+	}
 
 	compiled := &core.CompiledQuery{
 		TableName: q.metadata.TableName(),
 		Operation: "Scan",
 	}
 
-	// Add filter conditions
+	// Add filter conditions from Where clauses
 	for _, cond := range q.conditions {
-		err := builder.AddFilterCondition(cond.Field, cond.Operator, cond.Value)
+		err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Add additional filters
-	for _, filter := range q.filters {
-		err := builder.AddRawFilter(filter.Expression, filter.Params)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// Note: Additional filters from Filter/OrFilter calls are already in the builder
 
 	// Add projections
 	if len(q.projection) > 0 {
@@ -673,50 +1169,94 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 
 	compiled.ExclusiveStartKey = q.exclusive
 
+	// Set parallel scan parameters if specified
+	if q.segment != nil && q.totalSegments != nil {
+		compiled.Segment = q.segment
+		compiled.TotalSegments = q.totalSegments
+	}
+
 	return compiled, nil
 }
 
 // convertItemToAttributeValue converts an item to DynamoDB AttributeValue map
-// This is a placeholder that should be replaced by Team 1's marshaler
-func convertItemToAttributeValue(item interface{}) (map[string]types.AttributeValue, error) {
-	// TODO: This should use Team 1's marshaler when available
-	// For now, using reflection to build the attribute map
-
-	result := make(map[string]types.AttributeValue)
-
-	v := reflect.ValueOf(item)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
+func convertItemToAttributeValue(item any) (map[string]types.AttributeValue, error) {
+	// Use our new converter
+	av, err := expr.ConvertToAttributeValue(item)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert item: %w", err)
 	}
 
-	if v.Kind() != reflect.Struct {
-		return nil, errors.New("item must be a struct")
+	// The converter returns a M type for structs
+	if m, ok := av.(*types.AttributeValueMemberM); ok {
+		return m.Value, nil
 	}
 
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := t.Field(i)
-		fieldValue := v.Field(i)
+	return nil, fmt.Errorf("expected map type for struct conversion, got %T", av)
+}
 
-		// Skip unexported fields
-		if !fieldValue.CanInterface() {
-			continue
-		}
-
-		// Get the DynamoDB field name from tags or use the field name
-		fieldName := field.Name
-		if tag := field.Tag.Get("dynamodb"); tag != "" && tag != "-" {
-			fieldName = tag
-		}
-
-		// Convert field value to AttributeValue
-		av, err := expr.ConvertToAttributeValue(fieldValue.Interface())
-		if err != nil {
-			continue // Skip fields that can't be converted
-		}
-
-		result[fieldName] = av
+// OrFilter adds an OR filter condition
+func (q *Query) OrFilter(field string, op string, value any) core.Query {
+	// Initialize builder if not already done
+	if q.builder == nil {
+		q.builder = expr.NewBuilder()
 	}
 
-	return result, nil
+	q.builder.AddFilterCondition("OR", field, op, value)
+	return q
+}
+
+// FilterGroup adds a grouped AND filter condition
+func (q *Query) FilterGroup(fn func(core.Query)) core.Query {
+	// Initialize builder if not already done
+	if q.builder == nil {
+		q.builder = expr.NewBuilder()
+	}
+
+	// Create a new sub-query and builder for the group
+	subBuilder := expr.NewBuilder()
+	subQuery := &Query{
+		model:    q.model,
+		metadata: q.metadata,
+		executor: q.executor,
+		ctx:      q.ctx,
+		builder:  subBuilder,
+	}
+
+	// Execute the user's function to build the sub-query
+	fn(subQuery)
+
+	// Build the components from the sub-query
+	components := subBuilder.Build()
+
+	// Add the built group to the main builder
+	q.builder.AddGroupFilter("AND", components)
+	return q
+}
+
+// OrFilterGroup adds a grouped OR filter condition
+func (q *Query) OrFilterGroup(fn func(core.Query)) core.Query {
+	// Initialize builder if not already done
+	if q.builder == nil {
+		q.builder = expr.NewBuilder()
+	}
+
+	// Create a new sub-query and builder for the group
+	subBuilder := expr.NewBuilder()
+	subQuery := &Query{
+		model:    q.model,
+		metadata: q.metadata,
+		executor: q.executor,
+		ctx:      q.ctx,
+		builder:  subBuilder,
+	}
+
+	// Execute the user's function to build the sub-query
+	fn(subQuery)
+
+	// Build the components from the sub-query
+	components := subBuilder.Build()
+
+	// Add the built group to the main builder
+	q.builder.AddGroupFilter("OR", components)
+	return q
 }

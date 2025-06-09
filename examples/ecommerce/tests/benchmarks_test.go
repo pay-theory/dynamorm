@@ -118,7 +118,7 @@ func BenchmarkCartOperations(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Create cart
-		cartReq := map[string]interface{}{
+		cartReq := map[string]any{
 			"session_id": fmt.Sprintf("bench-session-%d", i),
 			"currency":   "USD",
 		}
@@ -134,13 +134,13 @@ func BenchmarkCartOperations(b *testing.B) {
 			b.Fatalf("Failed to create cart: %v", err)
 		}
 
-		var result map[string]interface{}
+		var result map[string]any
 		json.Unmarshal([]byte(resp.Body), &result)
-		cart := result["cart"].(map[string]interface{})
+		cart := result["cart"].(map[string]any)
 		cartID := cart["id"].(string)
 
 		// Add item
-		addItemReq := map[string]interface{}{
+		addItemReq := map[string]any{
 			"product_id": product.ID,
 			"quantity":   1,
 		}
@@ -180,11 +180,11 @@ func BenchmarkOrderCreation(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		orderReq := map[string]interface{}{
+		orderReq := map[string]any{
 			"cart_id":     cartIDs[i],
 			"customer_id": customerID,
 			"email":       "bench@example.com",
-			"shipping_address": map[string]interface{}{
+			"shipping_address": map[string]any{
 				"first_name":  "Benchmark",
 				"last_name":   "User",
 				"address1":    "123 Bench St",
@@ -193,7 +193,7 @@ func BenchmarkOrderCreation(b *testing.B) {
 				"postal_code": "94102",
 				"country":     "US",
 			},
-			"billing_address": map[string]interface{}{
+			"billing_address": map[string]any{
 				"first_name":  "Benchmark",
 				"last_name":   "User",
 				"address1":    "123 Bench St",
@@ -235,7 +235,7 @@ func BenchmarkInventoryUpdates(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			adjustment := map[string]interface{}{
+			adjustment := map[string]any{
 				"location_id": "main",
 				"quantity":    1, // Small adjustment
 				"type":        "sale",
@@ -297,11 +297,11 @@ func BenchmarkConcurrentOrders(b *testing.B) {
 				cartID := createCartWithItemsBench(b, ctx, products[:2])
 
 				// Create order
-				orderReq := map[string]interface{}{
+				orderReq := map[string]any{
 					"cart_id":     cartID,
 					"customer_id": customerID,
 					"email":       fmt.Sprintf("bench%d@example.com", workerID),
-					"shipping_address": map[string]interface{}{
+					"shipping_address": map[string]any{
 						"first_name":  "Concurrent",
 						"last_name":   "Test",
 						"address1":    "123 Bench St",
@@ -310,7 +310,7 @@ func BenchmarkConcurrentOrders(b *testing.B) {
 						"postal_code": "94102",
 						"country":     "US",
 					},
-					"billing_address": map[string]interface{}{
+					"billing_address": map[string]any{
 						"first_name":  "Concurrent",
 						"last_name":   "Test",
 						"address1":    "123 Bench St",
@@ -530,13 +530,13 @@ func createTestProductsBench(b *testing.B, ctx context.Context) []models.Product
 			b.Fatalf("Expected status 201, got %d", resp.StatusCode)
 		}
 
-		var result map[string]interface{}
+		var result map[string]any
 		err = json.Unmarshal([]byte(resp.Body), &result)
 		if err != nil {
 			b.Fatalf("Failed to unmarshal response: %v", err)
 		}
 
-		createdProduct := result["product"].(map[string]interface{})
+		createdProduct := result["product"].(map[string]any)
 		product.ID = createdProduct["id"].(string)
 	}
 
@@ -570,13 +570,13 @@ func createTestProductBench(b *testing.B, ctx context.Context, name string, pric
 		b.Fatalf("Expected status 201, got %d", resp.StatusCode)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal([]byte(resp.Body), &result)
 	if err != nil {
 		b.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	createdProduct := result["product"].(map[string]interface{})
+	createdProduct := result["product"].(map[string]any)
 	product.ID = createdProduct["id"].(string)
 
 	return product
@@ -584,7 +584,7 @@ func createTestProductBench(b *testing.B, ctx context.Context, name string, pric
 
 func createCartWithItemsBench(b *testing.B, ctx context.Context, products []models.Product) string {
 	// Create cart
-	cartReq := map[string]interface{}{
+	cartReq := map[string]any{
 		"session_id": uuid.New().String(),
 		"currency":   "USD",
 	}
@@ -603,18 +603,18 @@ func createCartWithItemsBench(b *testing.B, ctx context.Context, products []mode
 		b.Fatalf("Expected status 201, got %d", resp.StatusCode)
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal([]byte(resp.Body), &result)
 	if err != nil {
 		b.Fatalf("Failed to unmarshal response: %v", err)
 	}
 
-	cart := result["cart"].(map[string]interface{})
+	cart := result["cart"].(map[string]any)
 	cartID := cart["id"].(string)
 
 	// Add items
 	for _, product := range products {
-		addItemReq := map[string]interface{}{
+		addItemReq := map[string]any{
 			"product_id": product.ID,
 			"quantity":   1,
 		}

@@ -28,7 +28,7 @@ func setupTestDB(t *testing.T) *dynamorm.Client {
 	db := dynamorm.New(svc)
 
 	// Create test tables
-	models := []interface{}{
+	models := []any{
 		&models.Organization{},
 		&models.User{},
 		&models.Project{},
@@ -55,20 +55,20 @@ func TestCreateOrganization(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		payload        map[string]interface{}
+		payload        map[string]any
 		expectedStatus int
-		checkResponse  func(t *testing.T, resp map[string]interface{})
+		checkResponse  func(t *testing.T, resp map[string]any)
 	}{
 		{
 			name: "Create organization successfully",
-			payload: map[string]interface{}{
+			payload: map[string]any{
 				"name":        "Test Corp",
 				"slug":        "test-corp",
 				"owner_email": "owner@test.com",
 				"plan":        "starter",
 			},
 			expectedStatus: http.StatusOK,
-			checkResponse: func(t *testing.T, resp map[string]interface{}) {
+			checkResponse: func(t *testing.T, resp map[string]any) {
 				assert.Equal(t, "Test Corp", resp["name"])
 				assert.Equal(t, "test-corp", resp["slug"])
 				assert.Equal(t, "starter", resp["plan"])
@@ -78,29 +78,29 @@ func TestCreateOrganization(t *testing.T) {
 		},
 		{
 			name: "Create organization with free plan",
-			payload: map[string]interface{}{
+			payload: map[string]any{
 				"name":        "Free Corp",
 				"slug":        "free-corp",
 				"owner_email": "free@test.com",
 			},
 			expectedStatus: http.StatusOK,
-			checkResponse: func(t *testing.T, resp map[string]interface{}) {
+			checkResponse: func(t *testing.T, resp map[string]any) {
 				assert.Equal(t, "free", resp["plan"])
-				limits := resp["limits"].(map[string]interface{})
+				limits := resp["limits"].(map[string]any)
 				assert.Equal(t, float64(3), limits["max_users"])
 				assert.Equal(t, float64(1), limits["max_projects"])
 			},
 		},
 		{
 			name: "Missing required fields",
-			payload: map[string]interface{}{
+			payload: map[string]any{
 				"name": "Incomplete Corp",
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name: "Duplicate slug",
-			payload: map[string]interface{}{
+			payload: map[string]any{
 				"name":        "Duplicate Corp",
 				"slug":        "test-corp", // Same as first test
 				"owner_email": "dup@test.com",
@@ -121,7 +121,7 @@ func TestCreateOrganization(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, rr.Code)
 
 			if tt.checkResponse != nil && rr.Code == http.StatusOK {
-				var resp map[string]interface{}
+				var resp map[string]any
 				err := json.Unmarshal(rr.Body.Bytes(), &resp)
 				require.NoError(t, err)
 				tt.checkResponse(t, resp)
@@ -252,7 +252,7 @@ func TestOrganizationPlanLimits(t *testing.T) {
 
 	for _, p := range plans {
 		t.Run(p.plan+" plan limits", func(t *testing.T) {
-			payload := map[string]interface{}{
+			payload := map[string]any{
 				"name":        p.plan + " Test Corp",
 				"slug":        p.plan + "-test-corp",
 				"owner_email": p.plan + "@test.com",
@@ -268,11 +268,11 @@ func TestOrganizationPlanLimits(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, rr.Code)
 
-			var resp map[string]interface{}
+			var resp map[string]any
 			err := json.Unmarshal(rr.Body.Bytes(), &resp)
 			require.NoError(t, err)
 
-			limits := resp["limits"].(map[string]interface{})
+			limits := resp["limits"].(map[string]any)
 			assert.Equal(t, float64(p.expectedUsers), limits["max_users"])
 			assert.Equal(t, float64(p.expectedProjects), limits["max_projects"])
 			assert.Equal(t, float64(p.expectedAPIReqs), limits["max_api_requests"])

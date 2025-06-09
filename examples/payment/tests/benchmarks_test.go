@@ -8,9 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/example/dynamorm"
-	"github.com/example/dynamorm/examples/payment"
-	"github.com/example/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm"
+	payment "github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // BenchmarkPaymentCreate benchmarks single payment creation
@@ -60,7 +61,7 @@ func BenchmarkIdempotencyCheck(b *testing.B) {
 	// Pre-populate some idempotency records
 	for i := 0; i < 1000; i++ {
 		key := fmt.Sprintf("bench-key-%d", i)
-		_, _ = idempotency.Process(nil, merchant.ID, key, func() (interface{}, error) {
+		_, _ = idempotency.Process(nil, merchant.ID, key, func() (any, error) {
 			return &payment.Payment{ID: fmt.Sprintf("payment-%d", i)}, nil
 		})
 	}
@@ -71,7 +72,7 @@ func BenchmarkIdempotencyCheck(b *testing.B) {
 		for pb.Next() {
 			// Mix of existing and new keys
 			key := fmt.Sprintf("bench-key-%d", i%1500)
-			_, _ = idempotency.Process(nil, merchant.ID, key, func() (interface{}, error) {
+			_, _ = idempotency.Process(nil, merchant.ID, key, func() (any, error) {
 				return &payment.Payment{ID: fmt.Sprintf("payment-new-%d", i)}, nil
 			})
 			i++
@@ -190,28 +191,27 @@ func BenchmarkQueryMerchantPayments(b *testing.B) {
 	})
 
 	b.Run("WithPagination", func(b *testing.B) {
-		var cursor string
+		offset := 0
+		pageSize := 20
+
 		for i := 0; i < b.N; i++ {
 			var payments []*payment.Payment
-			query := db.Model(&payment.Payment{}).
+			err := db.Model(&payment.Payment{}).
 				Index("gsi-merchant").
 				Where("MerchantID", "=", merchant.ID).
-				Limit(20)
+				Limit(pageSize).
+				Offset(offset).
+				All(&payments)
 
-			if cursor != "" {
-				query = query.Cursor(cursor)
-			}
-
-			nextCursor, err := query.All(&payments)
 			if err != nil {
 				b.Error(err)
 			}
 
-			// Reset cursor after 5 pages
+			// Reset offset after 5 pages
 			if i%5 == 0 {
-				cursor = ""
+				offset = 0
 			} else {
-				cursor = nextCursor
+				offset += pageSize
 			}
 		}
 		b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "pages/sec")
@@ -230,11 +230,8 @@ func BenchmarkComplexTransaction(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Start transaction
-		tx := db.Transaction()
-
 		// Create payment
-		payment := &payment.Payment{
+		paymentRecord := &payment.Payment{
 			ID:             fmt.Sprintf("tx-payment-%d", i),
 			IdempotencyKey: fmt.Sprintf("tx-key-%d", i),
 			MerchantID:     merchant.ID,
@@ -248,45 +245,37 @@ func BenchmarkComplexTransaction(b *testing.B) {
 			Version:        1,
 		}
 
-		if err := tx.Model(payment).Create(); err != nil {
-			tx.Rollback()
-			b.Error(err)
-			continue
-		}
+		// Use transaction
+		err := db.Transaction(func(tx *core.Tx) error {
+			if err := tx.Create(paymentRecord); err != nil {
+				return err
+			}
 
-		// Create transaction record
-		transaction := &payment.Transaction{
-			ID:          fmt.Sprintf("tx-trans-%d", i),
-			PaymentID:   payment.ID,
-			Type:        payment.TransactionTypeCapture,
-			Amount:      payment.Amount,
-			Status:      payment.PaymentStatusProcessing,
-			ProcessedAt: time.Now(),
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-			Version:     1,
-		}
+			// Create transaction record
+			txRecord := &payment.Transaction{
+				ID:          fmt.Sprintf("tx-trans-%d", i),
+				PaymentID:   paymentRecord.ID,
+				Type:        payment.TransactionTypeCapture,
+				Amount:      paymentRecord.Amount,
+				Status:      "processing",
+				ProcessedAt: time.Now(),
+				CreatedAt:   time.Now(),
+				UpdatedAt:   time.Now(),
+				Version:     1,
+			}
 
-		if err := tx.Model(transaction).Create(); err != nil {
-			tx.Rollback()
-			b.Error(err)
-			continue
-		}
+			if err := tx.Create(txRecord); err != nil {
+				return err
+			}
 
-		// Update payment status
-		if err := tx.Model(&payment.Payment{}).
-			Where("ID", "=", payment.ID).
-			Update(map[string]interface{}{
-				"Status":    payment.PaymentStatusSucceeded,
-				"UpdatedAt": time.Now(),
-			}); err != nil {
-			tx.Rollback()
-			b.Error(err)
-			continue
-		}
+			// Update payment status
+			paymentRecord.Status = payment.PaymentStatusSucceeded
+			paymentRecord.UpdatedAt = time.Now()
 
-		// Commit
-		if err := tx.Commit(); err != nil {
+			return tx.Update(paymentRecord, "Status", "UpdatedAt")
+		})
+
+		if err != nil {
 			b.Error(err)
 		}
 	}
@@ -348,18 +337,18 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 							All(&payments)
 
 					case 2: // Update
-						_ = db.Model(&payment.Payment{}).
-							Where("ID", "=", fmt.Sprintf("concurrent-%d", idx-1)).
-							Update(map[string]interface{}{
-								"Status":    payment.PaymentStatusSucceeded,
-								"UpdatedAt": time.Now(),
-							})
+						p := &payment.Payment{
+							ID:        fmt.Sprintf("concurrent-%d", idx-1),
+							Status:    payment.PaymentStatusSucceeded,
+							UpdatedAt: time.Now(),
+						}
+						_ = db.Model(p).Update("Status", "UpdatedAt")
 
 					case 3: // Get
-						var payment payment.Payment
+						var p payment.Payment
 						_ = db.Model(&payment.Payment{}).
 							Where("ID", "=", fmt.Sprintf("concurrent-%d", idx-2)).
-							First(&payment)
+							First(&p)
 					}
 				}(i)
 			}
@@ -373,20 +362,121 @@ func BenchmarkConcurrentOperations(b *testing.B) {
 	}
 }
 
+// BenchmarkQueryWithFilters benchmarks queries with multiple filters
+func BenchmarkQueryWithFilters(b *testing.B) {
+	db := setupBenchmark(b)
+	defer teardownBenchmark(b, db)
+
+	// Create test data
+	createBenchmarkData(b, db, 10000)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			var payments []*payment.Payment
+			err := db.Model(&payment.Payment{}).
+				Index("gsi-merchant").
+				Where("MerchantID", "=", fmt.Sprintf("merchant-%d", b.N%10)).
+				Filter("Status", "=", getRandomStatus(b.N)).
+				Filter("Amount", ">", 100).
+				Limit(100).
+				All(&payments)
+
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+// BenchmarkQueryPagination benchmarks paginated queries
+func BenchmarkQueryPagination(b *testing.B) {
+	db := setupBenchmark(b)
+	defer teardownBenchmark(b, db)
+
+	// Create test data
+	createBenchmarkData(b, db, 10000)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Pagination is handled by the client using limit/offset
+		pageSize := 50
+		offset := 0
+
+		for {
+			var payments []*payment.Payment
+			err := db.Model(&payment.Payment{}).
+				Index("gsi-merchant").
+				Where("MerchantID", "=", "merchant-0").
+				OrderBy("CreatedAt", "DESC").
+				Limit(pageSize).
+				Offset(offset).
+				All(&payments)
+
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			if len(payments) < pageSize {
+				break
+			}
+
+			offset += pageSize
+		}
+	}
+}
+
+// BenchmarkTransactionOperations benchmarks complex transactional operations
+func BenchmarkTransactionOperations(b *testing.B) {
+	db := setupBenchmark(b)
+	defer teardownBenchmark(b, db)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		paymentRecord := createTestPayment()
+
+		err := db.Transaction(func(tx *core.Tx) error {
+			// Create payment
+			if err := tx.Create(paymentRecord); err != nil {
+				return err
+			}
+
+			// Create transaction
+			txRecord := createTestTransaction(paymentRecord.ID)
+			if err := tx.Create(txRecord); err != nil {
+				return err
+			}
+
+			// Update payment status
+			paymentRecord.Status = payment.PaymentStatusSucceeded
+			paymentRecord.UpdatedAt = time.Now()
+
+			if err := tx.Update(paymentRecord, "Status", "UpdatedAt"); err != nil {
+				return err
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // Helper functions
 
 func initBenchDB(b *testing.B) (*dynamorm.DB, error) {
-	db, err := dynamorm.New(
-		dynamorm.WithRegion("us-east-1"),
-		dynamorm.WithEndpoint("http://localhost:8000"),
-		dynamorm.WithConnectionPool(50), // Higher pool for benchmarks
-	)
+	db, err := dynamorm.New(dynamorm.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	// Register models
-	models := []interface{}{
+	models := []any{
 		&payment.Payment{},
 		&payment.Transaction{},
 		&payment.Customer{},
@@ -453,4 +543,82 @@ func getRandomStatus(i int) string {
 		payment.PaymentStatusCanceled,
 	}
 	return statuses[i%len(statuses)]
+}
+
+func createTestTransaction(paymentID string) *payment.Transaction {
+	return &payment.Transaction{
+		ID:          uuid.New().String(),
+		PaymentID:   paymentID,
+		Type:        payment.TransactionTypeCapture,
+		Amount:      1000,
+		Status:      "succeeded",
+		ProcessedAt: time.Now(),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Version:     1,
+	}
+}
+
+func createTestPayment() *payment.Payment {
+	return &payment.Payment{
+		ID:             uuid.New().String(),
+		IdempotencyKey: uuid.New().String(),
+		MerchantID:     "merchant-123",
+		Amount:         1000,
+		Currency:       "USD",
+		Status:         payment.PaymentStatusPending,
+		PaymentMethod:  "card",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Version:        1,
+	}
+}
+
+// setupBenchmark initializes the benchmark environment
+func setupBenchmark(b *testing.B) *dynamorm.DB {
+	db, err := initBenchDB(b)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return db
+}
+
+// teardownBenchmark cleans up after benchmarks
+func teardownBenchmark(_ *testing.B, db *dynamorm.DB) {
+	// In production, you might want to clean up test data
+	// For benchmarks, we'll just close the connection
+	_ = db.Close()
+}
+
+// createBenchmarkData creates test data for benchmarks
+func createBenchmarkData(b *testing.B, db *dynamorm.DB, count int) {
+	// Create a test merchant
+	merchant := createBenchMerchant(b, db)
+
+	// Create payments in batches
+	batchSize := 100
+	for i := 0; i < count; i += batchSize {
+		batch := make([]*payment.Payment, 0, batchSize)
+
+		for j := 0; j < batchSize && i+j < count; j++ {
+			p := &payment.Payment{
+				ID:             fmt.Sprintf("bench-payment-%d", i+j),
+				IdempotencyKey: fmt.Sprintf("bench-key-%d", i+j),
+				MerchantID:     merchant.ID,
+				Amount:         int64(1000 + (i+j)%10000),
+				Currency:       "USD",
+				Status:         getRandomStatus(i + j),
+				PaymentMethod:  "card",
+				CustomerID:     fmt.Sprintf("customer-%d", (i+j)%100),
+				CreatedAt:      time.Now().Add(-time.Duration(i+j) * time.Minute),
+				UpdatedAt:      time.Now(),
+				Version:        1,
+			}
+			batch = append(batch, p)
+		}
+
+		if err := db.Model(&payment.Payment{}).BatchCreate(batch); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

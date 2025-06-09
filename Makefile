@@ -4,7 +4,7 @@
 
 # Variables
 GOMOD := github.com/pay-theory/dynamorm
-PACKAGES := $(shell go list ./... | grep -v /vendor/)
+PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/)
 INTEGRATION_PACKAGES := $(shell go list ./tests/integration/...)
 
 # Default target
@@ -94,6 +94,10 @@ coverage: test
 	@echo "Generating coverage report..."
 	@go tool cover -html=coverage.out
 
+# Show coverage dashboard
+coverage-dashboard:
+	@./scripts/coverage-dashboard.sh
+
 # Quick test for development
 quick-test:
 	@echo "Running quick tests (no race detector)..."
@@ -109,6 +113,11 @@ team2-test:
 	@echo "Running Team 2 tests..."
 	@go test -v ./pkg/query/... ./internal/expr/... ./pkg/index/...
 
+# Test examples separately
+examples-test:
+	@echo "Running example tests..."
+	@go test -v ./examples/...
+
 # Help target
 help:
 	@echo "DynamORM Makefile Commands:"
@@ -122,10 +131,12 @@ help:
 	@echo "  make lint        - Run linters"
 	@echo "  make check       - Check for compilation errors"
 	@echo "  make coverage    - Show test coverage in browser"
+	@echo "  make coverage-dashboard - Show coverage dashboard in terminal"
 	@echo "  make docker-up   - Start DynamoDB Local"
 	@echo "  make docker-down - Stop DynamoDB Local"
 	@echo "  make team1-test  - Run Team 1 specific tests"
 	@echo "  make team2-test  - Run Team 2 specific tests"
+	@echo "  make examples-test - Run example tests"
 	@echo "  make lambda-build - Build Lambda function example"
 	@echo "  make lambda-test  - Test Lambda functionality"
 	@echo "  make lambda-bench - Run Lambda benchmarks"
