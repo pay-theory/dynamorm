@@ -302,17 +302,53 @@ func (m *Manager) processItems(ctx context.Context, items []map[string]types.Att
 		})
 	}
 
-	// Batch write to target table
+	// Batch write to target table with retry logic for unprocessed items
 	if len(writeRequests) > 0 {
-		batchInput := &dynamodb.BatchWriteItemInput{
-			RequestItems: map[string][]types.WriteRequest{
-				targetMetadata.TableName: writeRequests,
-			},
+		remainingRequests := writeRequests
+		retryCount := 0
+		maxRetries := 3
+
+		for len(remainingRequests) > 0 && retryCount < maxRetries {
+			batchInput := &dynamodb.BatchWriteItemInput{
+				RequestItems: map[string][]types.WriteRequest{
+					targetMetadata.TableName: remainingRequests,
+				},
+			}
+
+			result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
+			if err != nil {
+				return fmt.Errorf("failed to write items to target table: %w", err)
+			}
+
+			// Check for unprocessed items
+			if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
+				if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
+					remainingRequests = unprocessed
+					retryCount++
+
+					// Add exponential backoff
+					if retryCount < maxRetries {
+						backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
+						select {
+						case <-time.After(backoff):
+							// Continue with retry
+						case <-ctx.Done():
+							return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+						}
+					}
+				} else {
+					// No unprocessed items for our table
+					break
+				}
+			} else {
+				// All items processed successfully
+				break
+			}
 		}
 
-		_, err := m.session.Client().BatchWriteItem(ctx, batchInput)
-		if err != nil {
-			return fmt.Errorf("failed to write items to target table: %w", err)
+		// If we still have unprocessed items after retries, return an error
+		if len(remainingRequests) > 0 {
+			return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
 		}
 	}
 
@@ -323,15 +359,14 @@ func (m *Manager) processItems(ctx context.Context, items []map[string]types.Att
 func (m *Manager) applyTransform(item map[string]types.AttributeValue, transform interface{},
 	sourceMetadata, targetMetadata *model.Metadata) (map[string]types.AttributeValue, error) {
 
-	// This is a simplified implementation
-	// In a full implementation, we would:
-	// 1. Unmarshal the item to the source model type
-	// 2. Call the transform function
-	// 3. Marshal the result to AttributeValue map
+	// Create the appropriate transform function
+	transformFunc, err := CreateModelTransform(transform, sourceMetadata, targetMetadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transform function: %w", err)
+	}
 
-	// For now, return the item unchanged
-	// The actual implementation would use the converter to properly handle the transformation
-	return item, nil
+	// Apply the transform with validation
+	return TransformWithValidation(item, transformFunc, sourceMetadata, targetMetadata)
 }
 
 // copyTableData copies all data from source to target table
@@ -364,15 +399,52 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 				}
 			}
 
-			batchInput := &dynamodb.BatchWriteItemInput{
-				RequestItems: map[string][]types.WriteRequest{
-					targetTable: writeRequests,
-				},
+			// Batch write with retry logic for unprocessed items
+			remainingRequests := writeRequests
+			retryCount := 0
+			maxRetries := 3
+
+			for len(remainingRequests) > 0 && retryCount < maxRetries {
+				batchInput := &dynamodb.BatchWriteItemInput{
+					RequestItems: map[string][]types.WriteRequest{
+						targetTable: remainingRequests,
+					},
+				}
+
+				result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
+				if err != nil {
+					return fmt.Errorf("failed to write batch: %w", err)
+				}
+
+				// Check for unprocessed items
+				if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
+					if unprocessed, exists := result.UnprocessedItems[targetTable]; exists && len(unprocessed) > 0 {
+						remainingRequests = unprocessed
+						retryCount++
+
+						// Add exponential backoff
+						if retryCount < maxRetries {
+							backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
+							select {
+							case <-time.After(backoff):
+								// Continue with retry
+							case <-ctx.Done():
+								return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+							}
+						}
+					} else {
+						// No unprocessed items for our table
+						break
+					}
+				} else {
+					// All items processed successfully
+					break
+				}
 			}
 
-			_, err = m.session.Client().BatchWriteItem(ctx, batchInput)
-			if err != nil {
-				return fmt.Errorf("failed to write batch: %w", err)
+			// If we still have unprocessed items after retries, return an error
+			if len(remainingRequests) > 0 {
+				return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
 			}
 		}
 

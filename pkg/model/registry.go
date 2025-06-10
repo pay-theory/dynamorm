@@ -319,8 +319,12 @@ func parseFieldMetadata(field reflect.StructField, index int) (*FieldMetadata, e
 			switch part {
 			case "pk":
 				meta.IsPK = true
+				// Use lowercase field name for primary key fields
+				meta.DBName = strings.ToLower(field.Name)
 			case "sk":
 				meta.IsSK = true
+				// Use lowercase field name for sort key fields
+				meta.DBName = strings.ToLower(field.Name)
 			case "version":
 				meta.IsVersion = true
 			case "ttl":

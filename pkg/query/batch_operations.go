@@ -313,13 +313,8 @@ func (q *Query) executeDeleteBatch(batch []any, opts *BatchUpdateOptions) error 
 		})
 	}
 
-	// Execute batch write with retry
-	return q.executeWithRetry(func() error {
-		// This would need to be implemented through the executor
-		// For now, return an error indicating the feature needs implementation
-		_ = writeRequests // TODO: Use writeRequests when executor implementation is complete
-		return fmt.Errorf("batch delete execution not yet implemented in executor")
-	}, opts.RetryPolicy)
+	// Use the new executeBatchWriteWithRetries function for better retry handling
+	return q.executeBatchWriteWithRetries(q.metadata.TableName(), writeRequests, opts)
 }
 
 // extractKey extracts primary key values from an item
@@ -497,4 +492,173 @@ func (qc *QueryCanceler) Cancel() {
 	if qc.cancel != nil {
 		qc.cancel()
 	}
+}
+
+// executeBatchWriteWithRetries executes batch write operations with automatic retry for unprocessed items
+func (q *Query) executeBatchWriteWithRetries(tableName string, writeRequests []types.WriteRequest, opts *BatchUpdateOptions) error {
+	if len(writeRequests) == 0 {
+		return nil
+	}
+
+	batchExecutor, ok := q.executor.(BatchWriteItemExecutor)
+	if !ok {
+		return fmt.Errorf("executor does not support batch write operations")
+	}
+
+	remainingRequests := writeRequests
+	attempts := 0
+	maxAttempts := 5 // Maximum number of attempts for unprocessed items
+
+	for len(remainingRequests) > 0 && attempts < maxAttempts {
+		attempts++
+
+		// Execute batch write
+		result, err := batchExecutor.ExecuteBatchWriteItem(tableName, remainingRequests)
+		if err != nil {
+			return fmt.Errorf("batch write failed: %w", err)
+		}
+
+		// Check for unprocessed items
+		if len(result.UnprocessedItems) == 0 {
+			// All items processed successfully
+			return nil
+		}
+
+		// Collect unprocessed items for retry
+		var unprocessed []types.WriteRequest
+		for _, items := range result.UnprocessedItems {
+			unprocessed = append(unprocessed, items...)
+		}
+
+		if len(unprocessed) == 0 {
+			return nil
+		}
+
+		// Log or callback for unprocessed items
+		if opts != nil && opts.ProgressCallback != nil {
+			processed := len(writeRequests) - len(unprocessed)
+			opts.ProgressCallback(processed, len(writeRequests))
+		}
+
+		// Exponential backoff before retry
+		if attempts < maxAttempts {
+			backoffTime := time.Duration(attempts) * 100 * time.Millisecond
+			if backoffTime > 2*time.Second {
+				backoffTime = 2 * time.Second
+			}
+			time.Sleep(backoffTime)
+		}
+
+		remainingRequests = unprocessed
+	}
+
+	if len(remainingRequests) > 0 {
+		return fmt.Errorf("failed to process %d items after %d attempts", len(remainingRequests), attempts)
+	}
+
+	return nil
+}
+
+// BatchWrite performs mixed batch write operations (puts and deletes)
+func (q *Query) BatchWrite(putItems []any, deleteKeys []any) error {
+	return q.BatchWriteWithOptions(putItems, deleteKeys, DefaultBatchOptions())
+}
+
+// BatchWriteWithOptions performs mixed batch write operations with custom options
+func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *BatchUpdateOptions) error {
+	totalItems := len(putItems) + len(deleteKeys)
+	if totalItems == 0 {
+		return nil
+	}
+
+	// Validate batch size
+	if opts.MaxBatchSize <= 0 || opts.MaxBatchSize > 25 {
+		opts.MaxBatchSize = 25
+	}
+
+	// Prepare write requests
+	var allRequests []types.WriteRequest
+
+	// Add put requests
+	for _, item := range putItems {
+		itemAV, err := convertItemToAttributeValue(item)
+		if err != nil {
+			if opts.ErrorHandler != nil {
+				if handlerErr := opts.ErrorHandler(item, err); handlerErr != nil {
+					return handlerErr
+				}
+				continue
+			}
+			return fmt.Errorf("failed to marshal item: %w", err)
+		}
+
+		allRequests = append(allRequests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: itemAV,
+			},
+		})
+	}
+
+	// Add delete requests
+	for _, key := range deleteKeys {
+		keyAV, err := q.extractKeyAttributeValues(key)
+		if err != nil {
+			if opts.ErrorHandler != nil {
+				if handlerErr := opts.ErrorHandler(key, err); handlerErr != nil {
+					return handlerErr
+				}
+				continue
+			}
+			return fmt.Errorf("failed to extract key: %w", err)
+		}
+
+		allRequests = append(allRequests, types.WriteRequest{
+			DeleteRequest: &types.DeleteRequest{
+				Key: keyAV,
+			},
+		})
+	}
+
+	// Split into batches
+	batches := q.splitWriteRequests(allRequests, opts.MaxBatchSize)
+
+	// Execute batches
+	processed := 0
+	for _, batch := range batches {
+		err := q.executeBatchWriteWithRetries(q.metadata.TableName(), batch, opts)
+		if err != nil {
+			if opts.ErrorHandler != nil {
+				if handlerErr := opts.ErrorHandler(batch, err); handlerErr != nil {
+					return handlerErr
+				}
+			} else {
+				return err
+			}
+		}
+
+		processed += len(batch)
+		if opts.ProgressCallback != nil {
+			opts.ProgressCallback(processed, totalItems)
+		}
+	}
+
+	return nil
+}
+
+// splitWriteRequests splits write requests into batches
+func (q *Query) splitWriteRequests(requests []types.WriteRequest, batchSize int) [][]types.WriteRequest {
+	if batchSize <= 0 || batchSize > 25 {
+		batchSize = 25
+	}
+
+	var batches [][]types.WriteRequest
+	for i := 0; i < len(requests); i += batchSize {
+		end := i + batchSize
+		if end > len(requests) {
+			end = len(requests)
+		}
+		batches = append(batches, requests[i:end])
+	}
+
+	return batches
 }

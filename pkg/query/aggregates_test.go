@@ -360,7 +360,7 @@ func TestGroupBy(t *testing.T) {
 		ctx:      context.Background(),
 	}
 
-	results, err := q.GroupBy("Category")
+	results, err := q.GroupBy("Category").Execute()
 	require.NoError(t, err)
 
 	// Should have 2 groups
@@ -379,6 +379,107 @@ func TestGroupBy(t *testing.T) {
 			t.Errorf("Unexpected group key: %v", group.Key)
 		}
 	}
+}
+
+func TestGroupByWithAggregates(t *testing.T) {
+	items := []any{
+		AggregateTestItem{ID: "1", Category: "electronics", Price: 100.0, Quantity: 2},
+		AggregateTestItem{ID: "2", Category: "electronics", Price: 200.0, Quantity: 1},
+		AggregateTestItem{ID: "3", Category: "books", Price: 20.0, Quantity: 5},
+		AggregateTestItem{ID: "4", Category: "books", Price: 30.0, Quantity: 3},
+		AggregateTestItem{ID: "5", Category: "electronics", Price: 150.0, Quantity: 2},
+	}
+
+	q := &Query{
+		model:    AggregateTestItem{},
+		metadata: &TestMetadata{},
+		executor: &mockAggregateExecutor{items: items},
+		ctx:      context.Background(),
+	}
+
+	results, err := q.GroupBy("Category").
+		Count("item_count").
+		Sum("Price", "total_price").
+		Avg("Price", "avg_price").
+		Min("Price", "min_price").
+		Max("Price", "max_price").
+		Sum("Quantity", "total_quantity").
+		Execute()
+
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+
+	// Check aggregates for each group
+	for _, group := range results {
+		switch group.Key {
+		case "electronics":
+			assert.Equal(t, int64(3), group.Aggregates["item_count"].Count)
+			assert.InDelta(t, 450.0, group.Aggregates["total_price"].Sum, 0.001)
+			assert.InDelta(t, 150.0, group.Aggregates["avg_price"].Average, 0.001)
+			assert.Equal(t, 100.0, group.Aggregates["min_price"].Min)
+			assert.Equal(t, 200.0, group.Aggregates["max_price"].Max)
+			assert.InDelta(t, 5.0, group.Aggregates["total_quantity"].Sum, 0.001)
+		case "books":
+			assert.Equal(t, int64(2), group.Aggregates["item_count"].Count)
+			assert.InDelta(t, 50.0, group.Aggregates["total_price"].Sum, 0.001)
+			assert.InDelta(t, 25.0, group.Aggregates["avg_price"].Average, 0.001)
+			assert.Equal(t, 20.0, group.Aggregates["min_price"].Min)
+			assert.Equal(t, 30.0, group.Aggregates["max_price"].Max)
+			assert.InDelta(t, 8.0, group.Aggregates["total_quantity"].Sum, 0.001)
+		default:
+			t.Errorf("Unexpected group key: %v", group.Key)
+		}
+	}
+}
+
+func TestGroupByWithHaving(t *testing.T) {
+	items := []any{
+		AggregateTestItem{ID: "1", Category: "electronics", Price: 100.0},
+		AggregateTestItem{ID: "2", Category: "electronics", Price: 200.0},
+		AggregateTestItem{ID: "3", Category: "books", Price: 20.0},
+		AggregateTestItem{ID: "4", Category: "books", Price: 30.0},
+		AggregateTestItem{ID: "5", Category: "electronics", Price: 150.0},
+		AggregateTestItem{ID: "6", Category: "toys", Price: 10.0},
+	}
+
+	q := &Query{
+		model:    AggregateTestItem{},
+		metadata: &TestMetadata{},
+		executor: &mockAggregateExecutor{items: items},
+		ctx:      context.Background(),
+	}
+
+	// Test HAVING with COUNT
+	results, err := q.GroupBy("Category").
+		Count("count").
+		Having("COUNT(*)", ">", 2).
+		Execute()
+
+	require.NoError(t, err)
+	assert.Len(t, results, 1) // Only electronics has more than 2 items
+	assert.Equal(t, "electronics", results[0].Key)
+
+	// Test HAVING with SUM
+	results, err = q.GroupBy("Category").
+		Sum("Price", "total").
+		Having("total", ">", 100).
+		Execute()
+
+	require.NoError(t, err)
+	assert.Len(t, results, 1) // Only electronics has sum > 100
+	assert.Equal(t, "electronics", results[0].Key)
+
+	// Test multiple HAVING clauses
+	results, err = q.GroupBy("Category").
+		Count("count").
+		Sum("Price", "total").
+		Having("COUNT(*)", ">=", 2).
+		Having("total", "<", 100).
+		Execute()
+
+	require.NoError(t, err)
+	assert.Len(t, results, 1) // Only books matches both conditions
+	assert.Equal(t, "books", results[0].Key)
 }
 
 func TestExtractNumericValue(t *testing.T) {

@@ -344,3 +344,152 @@ func (m *mockMetadata) TableName() string                                      {
 func (m *mockMetadata) PrimaryKey() core.KeySchema                             { return m.primaryKey }
 func (m *mockMetadata) Indexes() []core.IndexSchema                            { return nil }
 func (m *mockMetadata) AttributeMetadata(field string) *core.AttributeMetadata { return nil }
+
+func TestUpdateBuilderReturnValues(t *testing.T) {
+	metadata := &mockMetadata{
+		tableName: "test-table",
+		primaryKey: core.KeySchema{
+			PartitionKey: "ID",
+			// No sort key for these tests
+		},
+	}
+
+	t.Run("ExecuteWithResult sets return values", func(t *testing.T) {
+		var capturedQuery *core.CompiledQuery
+
+		mockExecutor := &mockUpdateWithResultExecutor{
+			ExecuteUpdateItemWithResultFunc: func(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error) {
+				capturedQuery = input
+
+				// Return mock result
+				return &core.UpdateResult{
+					Attributes: map[string]types.AttributeValue{
+						"ID":    &types.AttributeValueMemberS{Value: "123"},
+						"Name":  &types.AttributeValueMemberS{Value: "Updated Name"},
+						"Value": &types.AttributeValueMemberN{Value: "100"},
+					},
+				}, nil
+			},
+		}
+
+		q := &Query{
+			metadata: metadata,
+			conditions: []Condition{
+				{Field: "ID", Operator: "=", Value: "123"},
+			},
+			executor: mockExecutor,
+		}
+
+		ub := q.UpdateBuilder()
+
+		// Build update
+		ub.Set("Name", "Updated Name").
+			Add("Value", 10).
+			ReturnValues("ALL_NEW")
+
+		// Execute with result
+		var result TestItem
+		err := ub.ExecuteWithResult(&result)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "ALL_NEW", capturedQuery.ReturnValues)
+		assert.Equal(t, "123", result.ID)
+		assert.Equal(t, "Updated Name", result.Name)
+		assert.Equal(t, 100, result.Value)
+	})
+
+	t.Run("ExecuteWithResult with default return values", func(t *testing.T) {
+		var capturedQuery *core.CompiledQuery
+
+		mockExecutor := &mockUpdateWithResultExecutor{
+			ExecuteUpdateItemWithResultFunc: func(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error) {
+				capturedQuery = input
+				return &core.UpdateResult{}, nil
+			},
+		}
+
+		q := &Query{
+			metadata: metadata,
+			conditions: []Condition{
+				{Field: "ID", Operator: "=", Value: "123"},
+			},
+			executor: mockExecutor,
+		}
+
+		ub := q.UpdateBuilder()
+		ub.Set("Name", "Updated")
+
+		var result TestItem
+		err := ub.ExecuteWithResult(&result)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "ALL_NEW", capturedQuery.ReturnValues) // Default when not set
+	})
+
+	t.Run("ExecuteWithResult validates result parameter", func(t *testing.T) {
+		q := &Query{
+			metadata: metadata,
+			conditions: []Condition{
+				{Field: "ID", Operator: "=", Value: "123"},
+			},
+			executor: &mockUpdateExecutor{},
+		}
+
+		ub := q.UpdateBuilder()
+		ub.Set("Name", "Updated")
+
+		// Test with nil
+		err := ub.ExecuteWithResult(nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "result must be a non-nil pointer")
+
+		// Test with non-pointer
+		var result TestItem
+		err = ub.ExecuteWithResult(result)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "result must be a non-nil pointer")
+	})
+
+	t.Run("ReturnValues options", func(t *testing.T) {
+		var capturedQuery *core.CompiledQuery
+
+		mockExecutor := new(mockUpdateExecutor)
+		mockExecutor.On("ExecuteUpdateItem", mock.MatchedBy(func(input *core.CompiledQuery) bool {
+			capturedQuery = input
+			return true
+		}), mock.Anything).Return(nil)
+
+		q := &Query{
+			metadata: metadata,
+			conditions: []Condition{
+				{Field: "ID", Operator: "=", Value: "123"},
+			},
+			executor: mockExecutor,
+		}
+
+		// Test different return value options
+		options := []string{"NONE", "ALL_OLD", "UPDATED_OLD", "ALL_NEW", "UPDATED_NEW"}
+
+		for _, option := range options {
+			ub := q.UpdateBuilder()
+			ub.Set("Name", "Updated").ReturnValues(option)
+
+			err := ub.Execute()
+			assert.NoError(t, err)
+			assert.Equal(t, option, capturedQuery.ReturnValues)
+		}
+	})
+}
+
+// mockUpdateWithResultExecutor implements UpdateItemWithResultExecutor for testing
+type mockUpdateWithResultExecutor struct {
+	mockUpdateExecutor
+	ExecuteUpdateItemWithResultFunc func(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error)
+}
+
+func (m *mockUpdateWithResultExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error) {
+	if m.ExecuteUpdateItemWithResultFunc != nil {
+		return m.ExecuteUpdateItemWithResultFunc(input, key)
+	}
+	return &core.UpdateResult{}, nil
+}

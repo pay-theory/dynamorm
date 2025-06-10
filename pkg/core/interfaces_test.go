@@ -420,6 +420,9 @@ func TestPaginatedResult(t *testing.T) {
 
 		assert.Empty(t, result.Items)
 		assert.Zero(t, result.Count)
+		assert.Zero(t, result.ScannedCount)
+		assert.Nil(t, result.LastEvaluatedKey)
+		assert.Empty(t, result.NextCursor)
 		assert.False(t, result.HasMore)
 	})
 }
@@ -475,8 +478,15 @@ func TestCompiledQuery(t *testing.T) {
 		assert.Equal(t, "Query", cq.Operation)
 		assert.Equal(t, "users", cq.TableName)
 		assert.Equal(t, "email-index", cq.IndexName)
+		assert.Equal(t, "email = :email", cq.KeyConditionExpression)
+		assert.Equal(t, "age > :age", cq.FilterExpression)
+		assert.Equal(t, "id, email, name", cq.ProjectionExpression)
+		assert.Equal(t, "name", cq.ExpressionAttributeNames["#name"])
+		assert.Equal(t, &types.AttributeValueMemberS{Value: "test@example.com"}, cq.ExpressionAttributeValues[":email"])
+		assert.Equal(t, &types.AttributeValueMemberN{Value: "18"}, cq.ExpressionAttributeValues[":age"])
 		assert.Equal(t, int32(10), *cq.Limit)
 		assert.True(t, *cq.ScanIndexForward)
+		assert.Equal(t, "SPECIFIC_ATTRIBUTES", cq.Select)
 		assert.Equal(t, 5, *cq.Offset)
 	})
 
@@ -496,6 +506,9 @@ func TestCompiledQuery(t *testing.T) {
 		}
 
 		assert.Equal(t, "Scan", cq.Operation)
+		assert.Equal(t, "products", cq.TableName)
+		assert.Equal(t, "price > :min_price", cq.FilterExpression)
+		assert.Equal(t, &types.AttributeValueMemberN{Value: "100"}, cq.ExpressionAttributeValues[":min_price"])
 		assert.Equal(t, int32(2), *cq.Segment)
 		assert.Equal(t, int32(4), *cq.TotalSegments)
 	})
@@ -516,8 +529,12 @@ func TestCompiledQuery(t *testing.T) {
 		}
 
 		assert.Equal(t, "UpdateItem", cq.Operation)
-		assert.NotEmpty(t, cq.UpdateExpression)
-		assert.NotEmpty(t, cq.ConditionExpression)
+		assert.Equal(t, "orders", cq.TableName)
+		assert.Equal(t, "SET #status = :status, updated_at = :now", cq.UpdateExpression)
+		assert.Equal(t, "attribute_exists(id)", cq.ConditionExpression)
+		assert.Equal(t, "status", cq.ExpressionAttributeNames["#status"])
+		assert.Equal(t, &types.AttributeValueMemberS{Value: "completed"}, cq.ExpressionAttributeValues[":status"])
+		assert.Equal(t, &types.AttributeValueMemberS{Value: "2023-06-15T10:30:00Z"}, cq.ExpressionAttributeValues[":now"])
 	})
 
 	t.Run("Empty compiled query", func(t *testing.T) {
@@ -584,7 +601,10 @@ func TestIndexSchema(t *testing.T) {
 			ProjectionType: "ALL",
 		}
 
+		assert.Equal(t, "status-index", idx.Name)
 		assert.Equal(t, "LSI", idx.Type)
+		assert.Equal(t, "id", idx.PartitionKey)
+		assert.Equal(t, "status", idx.SortKey)
 		assert.Equal(t, "ALL", idx.ProjectionType)
 		assert.Empty(t, idx.ProjectedFields)
 	})
@@ -619,6 +639,8 @@ func TestAttributeMetadata(t *testing.T) {
 		}
 
 		assert.Equal(t, "ID", attr.Name)
+		assert.Equal(t, "string", attr.Type)
+		assert.Equal(t, "id", attr.DynamoDBName)
 		assert.Nil(t, attr.Tags)
 	})
 }

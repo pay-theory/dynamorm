@@ -87,10 +87,22 @@ type UpdateItemExecutor interface {
 	ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error
 }
 
+// UpdateItemWithResultExecutor extends UpdateItemExecutor with result support
+type UpdateItemWithResultExecutor interface {
+	UpdateItemExecutor
+	ExecuteUpdateItemWithResult(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error)
+}
+
 // DeleteItemExecutor extends QueryExecutor with DeleteItem support
 type DeleteItemExecutor interface {
 	QueryExecutor
 	ExecuteDeleteItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error
+}
+
+// BatchWriteItemExecutor extends QueryExecutor with BatchWriteItem support
+type BatchWriteItemExecutor interface {
+	QueryExecutor
+	ExecuteBatchWriteItem(tableName string, writeRequests []types.WriteRequest) (*core.BatchWriteResult, error)
 }
 
 // New creates a new Query instance
@@ -734,28 +746,68 @@ func (q *Query) BatchCreate(items any) error {
 		return errors.New("BatchCreate supports maximum 25 items per request")
 	}
 
-	// Build batch write request
-	batchWrite := &CompiledBatchWrite{
-		TableName: q.metadata.TableName(),
-		Items:     make([]map[string]types.AttributeValue, 0, itemsValue.Len()),
-	}
+	// Try to use the new BatchWriteItemExecutor first
+	if batchWriteExecutor, ok := q.executor.(BatchWriteItemExecutor); ok {
+		// Convert items to write requests
+		writeRequests := make([]types.WriteRequest, 0, itemsValue.Len())
 
-	// Convert items to AttributeValues
-	for i := 0; i < itemsValue.Len(); i++ {
-		item := itemsValue.Index(i).Interface()
+		for i := 0; i < itemsValue.Len(); i++ {
+			item := itemsValue.Index(i).Interface()
 
-		// Convert item to map[string]types.AttributeValue
-		// This should be handled by a marshaler in Team 1's code
-		av, err := convertItemToAttributeValue(item)
-		if err != nil {
-			return fmt.Errorf("failed to convert item %d: %w", i, err)
+			// Convert item to AttributeValues
+			av, err := convertItemToAttributeValue(item)
+			if err != nil {
+				return fmt.Errorf("failed to convert item %d: %w", i, err)
+			}
+
+			writeRequests = append(writeRequests, types.WriteRequest{
+				PutRequest: &types.PutRequest{
+					Item: av,
+				},
+			})
 		}
 
-		batchWrite.Items = append(batchWrite.Items, av)
+		// Execute batch write
+		result, err := batchWriteExecutor.ExecuteBatchWriteItem(q.metadata.TableName(), writeRequests)
+		if err != nil {
+			return err
+		}
+
+		// Check for unprocessed items
+		if len(result.UnprocessedItems) > 0 {
+			unprocessedCount := 0
+			for _, items := range result.UnprocessedItems {
+				unprocessedCount += len(items)
+			}
+			if unprocessedCount > 0 {
+				return fmt.Errorf("%d items were not processed", unprocessedCount)
+			}
+		}
+
+		return nil
 	}
 
-	// Execute batch write through executor
+	// Fall back to old BatchExecutor for backward compatibility
 	if executor, ok := q.executor.(BatchExecutor); ok {
+		// Build batch write request
+		batchWrite := &CompiledBatchWrite{
+			TableName: q.metadata.TableName(),
+			Items:     make([]map[string]types.AttributeValue, 0, itemsValue.Len()),
+		}
+
+		// Convert items to AttributeValues
+		for i := 0; i < itemsValue.Len(); i++ {
+			item := itemsValue.Index(i).Interface()
+
+			// Convert item to map[string]types.AttributeValue
+			av, err := convertItemToAttributeValue(item)
+			if err != nil {
+				return fmt.Errorf("failed to convert item %d: %w", i, err)
+			}
+
+			batchWrite.Items = append(batchWrite.Items, av)
+		}
+
 		return executor.ExecuteBatchWrite(batchWrite)
 	}
 
@@ -1111,7 +1163,10 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		compiled.ScanIndexForward = &forward
 	}
 
-	compiled.ExclusiveStartKey = q.exclusive
+	// Handle cursor/exclusive start key
+	if q.exclusive != nil && len(q.exclusive) > 0 {
+		compiled.ExclusiveStartKey = q.exclusive
+	}
 
 	return compiled, nil
 }

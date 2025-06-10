@@ -227,6 +227,7 @@ type CompiledQuery struct {
 	ScanIndexForward  *bool
 	Select            string // "ALL_ATTRIBUTES", "COUNT", etc.
 	Offset            *int   // For pagination handling
+	ReturnValues      string // "NONE", "ALL_OLD", "UPDATED_OLD", "ALL_NEW", "UPDATED_NEW"
 
 	// Parallel scan parameters
 	Segment       *int32 // The segment number for parallel scan

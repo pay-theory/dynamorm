@@ -1797,9 +1797,80 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 // UpdateBuilder returns a builder for complex update operations
 func (q *query) UpdateBuilder() core.UpdateBuilder {
-	// TODO: Implement UpdateBuilder integration with query package
-	// For now, return a new UpdateBuilder instance from the query package
-	return nil
+	// Get metadata
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		// Return an error update builder
+		return &errorUpdateBuilder{err: err}
+	}
+
+	// Create metadata adapter
+	metadataAdapter := &metadataAdapter{metadata: metadata}
+
+	// Create a new query instance from the query package
+	queryInstance := queryPkg.New(q.model, metadataAdapter, &executor{
+		client: q.db.session.Client(),
+		ctx:    q.ctx,
+	})
+
+	// Copy conditions from current query and set context
+	for _, cond := range q.conditions {
+		queryInstance.Where(cond.field, cond.op, cond.value)
+	}
+
+	// Return the update builder from the query instance
+	return queryInstance.WithContext(q.ctx).UpdateBuilder()
+}
+
+// errorUpdateBuilder is an UpdateBuilder that always returns an error
+type errorUpdateBuilder struct {
+	err error
+}
+
+func (e *errorUpdateBuilder) Set(field string, value any) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) Add(field string, value any) core.UpdateBuilder              { return e }
+func (e *errorUpdateBuilder) Increment(field string) core.UpdateBuilder                   { return e }
+func (e *errorUpdateBuilder) Decrement(field string) core.UpdateBuilder                   { return e }
+func (e *errorUpdateBuilder) Remove(field string) core.UpdateBuilder                      { return e }
+func (e *errorUpdateBuilder) Delete(field string, value any) core.UpdateBuilder           { return e }
+func (e *errorUpdateBuilder) AppendToList(field string, values any) core.UpdateBuilder    { return e }
+func (e *errorUpdateBuilder) PrependToList(field string, values any) core.UpdateBuilder   { return e }
+func (e *errorUpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) ConditionExists(field string) core.UpdateBuilder          { return e }
+func (e *errorUpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder       { return e }
+func (e *errorUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) ReturnValues(option string) core.UpdateBuilder            { return e }
+func (e *errorUpdateBuilder) Execute() error                                           { return e.err }
+func (e *errorUpdateBuilder) ExecuteWithResult(result any) error                       { return e.err }
+
+// executor implements the query executor interface for the query package
+type executor struct {
+	client *dynamodb.Client
+	ctx    context.Context
+}
+
+func (e *executor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
+	// Implementation would go here
+	return fmt.Errorf("not implemented")
+}
+
+func (e *executor) ExecuteScan(input *core.CompiledQuery, dest any) error {
+	// Implementation would go here
+	return fmt.Errorf("not implemented")
+}
+
+func (e *executor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	// Implementation would go here
+	return fmt.Errorf("not implemented")
 }
 
 // ParallelScan configures parallel scanning with segment and total segments
@@ -1844,90 +1915,26 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 
 			// Clone the query for this segment
 			segmentQuery := &query{
-				// Only set fields that are actually used
-				ctx: q.ctx,
-				// The following fields are set but not used in the current implementation
-				// TODO: Consider refactoring to properly use segmentQuery throughout
-				// db:            q.db,
-				// model:         q.model,
-				// builder:       q.builder,
-				// conditions:    q.conditions,
-				// indexName:     q.indexName,
-				// filters:       q.filters,
-				// orderBy:       q.orderBy,
-				// limit:         q.limit,
-				// offset:        q.offset,
-				// fields:        q.fields,
-				// segment:       &segment,
-				// totalSegments: &totalSegments,
+				ctx:           q.ctx,
+				db:            q.db,
+				model:         q.model,
+				builder:       q.builder,
+				conditions:    q.conditions,
+				indexName:     q.indexName,
+				filters:       q.filters,
+				orderBy:       q.orderBy,
+				limit:         q.limit,
+				offset:        q.offset,
+				fields:        q.fields,
+				segment:       &segment,
+				totalSegments: &totalSegments,
 			}
 
-			// Execute scan for this segment
-			builder := expr.NewBuilder()
-
-			// Add filter conditions
-			var filterConditions []condition
-			for _, cond := range q.conditions {
-				fieldMeta, exists := metadata.Fields[cond.field]
-				if !exists || (!fieldMeta.IsPK && !fieldMeta.IsSK) {
-					filterConditions = append(filterConditions, cond)
-				}
-			}
-
-			for _, cond := range filterConditions {
-				fieldMeta, exists := metadata.Fields[cond.field]
-				if exists {
-					builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
-				} else {
-					builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
-				}
-			}
-
-			// Add projection
-			if len(q.fields) > 0 {
-				builder.AddProjection(q.fields...)
-			}
-
-			// Build expressions
-			components := builder.Build()
-
-			// Build Scan input
-			input := &dynamodb.ScanInput{
-				TableName:     aws.String(metadata.TableName),
-				Segment:       aws.Int32(segment),
-				TotalSegments: aws.Int32(totalSegments),
-			}
-
-			if components.FilterExpression != "" {
-				input.FilterExpression = aws.String(components.FilterExpression)
-			}
-			if components.ProjectionExpression != "" {
-				input.ProjectionExpression = aws.String(components.ProjectionExpression)
-			}
-			if len(components.ExpressionAttributeNames) > 0 {
-				input.ExpressionAttributeNames = components.ExpressionAttributeNames
-			}
-			if len(components.ExpressionAttributeValues) > 0 {
-				input.ExpressionAttributeValues = components.ExpressionAttributeValues
-			}
-
-			// Set index name if specified
-			if q.indexName != "" {
-				input.IndexName = aws.String(q.indexName)
-			}
-
-			// Execute scan and collect results
-			var items []map[string]types.AttributeValue
-			paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
-
-			for paginator.HasMorePages() {
-				output, err := paginator.NextPage(segmentQuery.ctx)
-				if err != nil {
-					resultsChan <- segmentResult{nil, fmt.Errorf("segment %d failed: %w", segment, err)}
-					return
-				}
-
-				items = append(items, output.Items...)
+			// Execute scan for this segment using the cloned query
+			items, err := segmentQuery.executeScanSegment(metadata, segment, totalSegments)
+			if err != nil {
+				resultsChan <- segmentResult{nil, fmt.Errorf("segment %d failed: %w", segment, err)}
+				return
 			}
 
 			resultsChan <- segmentResult{items, nil}
@@ -1959,6 +1966,89 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 	return nil
 }
 
+// executeScanSegment executes a scan for a specific segment
+func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegments int32) ([]map[string]types.AttributeValue, error) {
+	builder := expr.NewBuilder()
+
+	// Add filter conditions
+	var filterConditions []condition
+	for _, cond := range q.conditions {
+		fieldMeta, exists := metadata.Fields[cond.field]
+		if !exists || (!fieldMeta.IsPK && !fieldMeta.IsSK) {
+			filterConditions = append(filterConditions, cond)
+		}
+	}
+
+	for _, cond := range filterConditions {
+		fieldMeta, exists := metadata.Fields[cond.field]
+		if exists {
+			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+		} else {
+			builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+		}
+	}
+
+	// Add projection
+	if len(q.fields) > 0 {
+		builder.AddProjection(q.fields...)
+	}
+
+	// Build expressions
+	components := builder.Build()
+
+	// Build Scan input
+	input := &dynamodb.ScanInput{
+		TableName:     aws.String(metadata.TableName),
+		Segment:       aws.Int32(segment),
+		TotalSegments: aws.Int32(totalSegments),
+	}
+
+	if components.FilterExpression != "" {
+		input.FilterExpression = aws.String(components.FilterExpression)
+	}
+	if components.ProjectionExpression != "" {
+		input.ProjectionExpression = aws.String(components.ProjectionExpression)
+	}
+	if len(components.ExpressionAttributeNames) > 0 {
+		input.ExpressionAttributeNames = components.ExpressionAttributeNames
+	}
+	if len(components.ExpressionAttributeValues) > 0 {
+		input.ExpressionAttributeValues = components.ExpressionAttributeValues
+	}
+
+	// Set index name if specified
+	if q.indexName != "" {
+		input.IndexName = aws.String(q.indexName)
+	}
+
+	// Set limit if specified (but be careful with parallel scans)
+	if q.limit != nil && *q.limit > 0 {
+		// Distribute limit across segments
+		segmentLimit := (*q.limit + int(totalSegments) - 1) / int(totalSegments)
+		input.Limit = aws.Int32(int32(segmentLimit))
+	}
+
+	// Execute scan and collect results
+	var items []map[string]types.AttributeValue
+	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(q.ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		items = append(items, output.Items...)
+
+		// If we have a limit and reached it, stop
+		if q.limit != nil && len(items) >= *q.limit/int(totalSegments) {
+			break
+		}
+	}
+
+	return items, nil
+}
+
 // Cursor sets the pagination cursor for the query
 func (q *query) Cursor(cursor string) core.Query {
 	q.exclusiveStartKey = cursor
@@ -1969,4 +2059,65 @@ func (q *query) Cursor(cursor string) core.Query {
 func (q *query) SetCursor(cursor string) error {
 	q.exclusiveStartKey = cursor
 	return nil
+}
+
+// metadataAdapter adapts model.Metadata to core.ModelMetadata interface
+type metadataAdapter struct {
+	metadata *model.Metadata
+}
+
+// TableName returns the table name
+func (m *metadataAdapter) TableName() string {
+	return m.metadata.TableName
+}
+
+// PrimaryKey returns the primary key schema
+func (m *metadataAdapter) PrimaryKey() core.KeySchema {
+	if m.metadata.PrimaryKey == nil {
+		return core.KeySchema{}
+	}
+
+	pk := core.KeySchema{}
+	if m.metadata.PrimaryKey.PartitionKey != nil {
+		pk.PartitionKey = m.metadata.PrimaryKey.PartitionKey.Name
+	}
+	if m.metadata.PrimaryKey.SortKey != nil {
+		pk.SortKey = m.metadata.PrimaryKey.SortKey.Name
+	}
+
+	return pk
+}
+
+// Indexes returns the index schemas
+func (m *metadataAdapter) Indexes() []core.IndexSchema {
+	indexes := make([]core.IndexSchema, len(m.metadata.Indexes))
+	for i, idx := range m.metadata.Indexes {
+		indexes[i] = core.IndexSchema{
+			Name:            idx.Name,
+			Type:            string(idx.Type),
+			PartitionKey:    idx.PartitionKey.Name,
+			SortKey:         "",
+			ProjectionType:  idx.ProjectionType,
+			ProjectedFields: idx.ProjectedFields,
+		}
+		if idx.SortKey != nil {
+			indexes[i].SortKey = idx.SortKey.Name
+		}
+	}
+	return indexes
+}
+
+// AttributeMetadata returns metadata for a specific field
+func (m *metadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
+	fieldMeta, exists := m.metadata.Fields[field]
+	if !exists {
+		return nil
+	}
+
+	return &core.AttributeMetadata{
+		Name:         fieldMeta.Name,
+		Type:         fieldMeta.Type.String(),
+		DynamoDBName: fieldMeta.DBName,
+		Tags:         fieldMeta.Tags,
+	}
 }

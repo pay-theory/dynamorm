@@ -3,6 +3,7 @@ package query
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/internal/expr"
@@ -196,6 +197,7 @@ func (ub *UpdateBuilder) Execute() error {
 		ConditionExpression:       components.ConditionExpression,
 		ExpressionAttributeNames:  components.ExpressionAttributeNames,
 		ExpressionAttributeValues: components.ExpressionAttributeValues,
+		ReturnValues:              ub.returnValues,
 	}
 
 	// Convert key to AttributeValues
@@ -218,10 +220,93 @@ func (ub *UpdateBuilder) Execute() error {
 
 // ExecuteWithResult performs the update and returns the result
 func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
-	// Set return values to ALL_NEW to get the updated item
-	ub.returnValues = "ALL_NEW"
+	// Validate result is a pointer
+	resultValue := reflect.ValueOf(result)
+	if resultValue.Kind() != reflect.Ptr || resultValue.IsNil() {
+		return fmt.Errorf("result must be a non-nil pointer")
+	}
 
-	// For now, execute without returning values
-	// TODO: Enhance executor to support returning values
-	return ub.Execute()
+	// Set return values to ALL_NEW if not already set
+	if ub.returnValues == "NONE" {
+		ub.returnValues = "ALL_NEW"
+	}
+
+	// Validate we have key conditions
+	primaryKey := ub.query.metadata.PrimaryKey()
+
+	// Extract key values from query conditions
+	for _, cond := range ub.query.conditions {
+		if cond.Field == primaryKey.PartitionKey ||
+			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+			if cond.Operator != "=" {
+				return fmt.Errorf("key condition must use '=' operator")
+			}
+			ub.keyValues[cond.Field] = cond.Value
+		}
+	}
+
+	// Validate we have complete key
+	if _, ok := ub.keyValues[primaryKey.PartitionKey]; !ok {
+		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
+	}
+	if primaryKey.SortKey != "" {
+		if _, ok := ub.keyValues[primaryKey.SortKey]; !ok {
+			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
+		}
+	}
+
+	// Add conditions to expression builder
+	for _, cond := range ub.conditions {
+		err := ub.expr.AddConditionExpression(cond.field, cond.operator, cond.value)
+		if err != nil {
+			return fmt.Errorf("failed to add condition: %w", err)
+		}
+	}
+
+	// Build the expression components
+	components := ub.expr.Build()
+
+	// Compile the update query
+	compiled := &core.CompiledQuery{
+		Operation:                 "UpdateItem",
+		TableName:                 ub.query.metadata.TableName(),
+		UpdateExpression:          components.UpdateExpression,
+		ConditionExpression:       components.ConditionExpression,
+		ExpressionAttributeNames:  components.ExpressionAttributeNames,
+		ExpressionAttributeValues: components.ExpressionAttributeValues,
+		ReturnValues:              ub.returnValues,
+	}
+
+	// Convert key to AttributeValues
+	keyAV := make(map[string]types.AttributeValue)
+	for k, v := range ub.keyValues {
+		av, err := expr.ConvertToAttributeValue(v)
+		if err != nil {
+			return fmt.Errorf("failed to convert key value: %w", err)
+		}
+		keyAV[k] = av
+	}
+
+	// Check if executor supports returning results
+	if updateExecutor, ok := ub.query.executor.(UpdateItemWithResultExecutor); ok {
+		updateResult, err := updateExecutor.ExecuteUpdateItemWithResult(compiled, keyAV)
+		if err != nil {
+			return err
+		}
+
+		// Unmarshal the returned attributes to the result
+		if updateResult != nil && len(updateResult.Attributes) > 0 {
+			// Convert the map to a M type AttributeValue and then unmarshal
+			mapAV := &types.AttributeValueMemberM{Value: updateResult.Attributes}
+			return expr.ConvertFromAttributeValue(mapAV, result)
+		}
+		return nil
+	}
+
+	// Fallback to regular update without result
+	if updateExecutor, ok := ub.query.executor.(UpdateItemExecutor); ok {
+		return updateExecutor.ExecuteUpdateItem(compiled, keyAV)
+	}
+
+	return fmt.Errorf("executor does not support UpdateItem operation")
 }
