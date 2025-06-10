@@ -6,9 +6,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.15
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.26.6
 	github.com/dynamorm/dynamorm v0.0.0-00010101000000-000000000000
-	github.com/google/uuid v1.5.0
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
-	github.com/rs/cors v1.10.1
+	github.com/rs/cors v1.11.0
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.35.0
 )
@@ -29,7 +29,7 @@ require (
 	github.com/aws/smithy-go v1.22.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/pay-theory/dynamorm v0.0.0-20250607023348-343fee43e9d4 // indirect
+	github.com/pay-theory/dynamorm v0.0.0-20250610150154-c7c926073e48 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
