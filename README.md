@@ -25,6 +25,7 @@ DynamoDB is an incredible database - it's fast, cheap, and scales fantastically.
 - 🔒 **Type-Safe**: Full Go type safety with compile-time checks
 - 🎯 **Simple API**: Write 80% less code than AWS SDK
 - ⚡ **High Performance**: 20,000+ operations per second
+- 🧪 **Testable**: Interface-based design enables easy mocking (v0.2.0+)
 - 🌍 **Multi-Account**: Built-in cross-account support
 - 💰 **Cost Efficient**: Smart query optimization reduces DynamoDB costs
 - 🔄 **Transactions**: Full support for DynamoDB transactions
@@ -99,6 +100,32 @@ err := db.Model(&User{}).
     Where("ID", "=", "123").
     First(&user)
 ```
+
+### 🧪 Testable Design (v0.2.0+)
+
+DynamORM now uses interfaces, making it easy to mock for unit tests:
+
+```go
+// In your service
+type UserService struct {
+    db core.DB  // Use interface instead of concrete type
+}
+
+func NewUserService(db core.DB) *UserService {
+    return &UserService{db: db}
+}
+
+// In your tests - no DynamoDB required!
+func TestUserService(t *testing.T) {
+    mockDB := new(MockDB)
+    mockDB.On("Model", mock.Anything).Return(mockQuery)
+    
+    service := NewUserService(mockDB)
+    // Test your service logic without DynamoDB
+}
+```
+
+See our [Testing Guide](docs/guides/testing.md) for complete examples.
 
 ### Smart Query Builder
 
@@ -177,6 +204,7 @@ err := db.AutoMigrateWithOptions(&UserV1{},
 
 - [**Getting Started**](docs/getting-started/quickstart.md) - Get up and running in 5 minutes
 - [**API Reference**](docs/reference/api.md) - Complete API documentation
+- [**Testing Guide**](docs/guides/testing.md) - Write testable code with DynamORM
 - [**Examples**](examples/) - Real-world usage examples
 - [**Lambda Guide**](docs/guides/lambda-deployment.md) - Deploy to AWS Lambda
 - [**Architecture**](docs/architecture/overview.md) - Design decisions and internals

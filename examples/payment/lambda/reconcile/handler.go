@@ -33,15 +33,15 @@ type ReconciliationRecord struct {
 	SettlementDate time.Time
 }
 
-// Handler processes reconciliation files
-type Handler struct {
-	db           *dynamorm.DB
+// ReconcileHandler handles payment reconciliation
+type ReconcileHandler struct {
+	db           core.ExtendedDB
 	s3Client     *s3.S3
 	auditTracker *utils.AuditTracker
 }
 
 // NewReconcileHandler creates a new reconciliation handler
-func NewReconcileHandler() (*Handler, error) {
+func NewReconcileHandler() (*ReconcileHandler, error) {
 	// Initialize AWS session for S3
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String(os.Getenv("AWS_REGION")),
@@ -63,7 +63,7 @@ func NewReconcileHandler() (*Handler, error) {
 	db.Model(&payment.Transaction{})
 	db.Model(&payment.Payment{})
 
-	return &Handler{
+	return &ReconcileHandler{
 		db:           db,
 		s3Client:     s3.New(sess),
 		auditTracker: utils.NewAuditTracker(db),
@@ -71,7 +71,7 @@ func NewReconcileHandler() (*Handler, error) {
 }
 
 // HandleRequest processes S3 events for reconciliation files
-func (h *Handler) HandleRequest(ctx context.Context, event events.S3Event) error {
+func (h *ReconcileHandler) HandleRequest(ctx context.Context, event events.S3Event) error {
 	for _, record := range event.Records {
 		if err := h.processFile(ctx, record); err != nil {
 			// Log error but continue processing other files
@@ -83,7 +83,7 @@ func (h *Handler) HandleRequest(ctx context.Context, event events.S3Event) error
 }
 
 // processFile processes a single reconciliation file
-func (h *Handler) processFile(ctx context.Context, record events.S3EventRecord) error {
+func (h *ReconcileHandler) processFile(ctx context.Context, record events.S3EventRecord) error {
 	bucket := record.S3.Bucket.Name
 	key := record.S3.Object.Key
 
@@ -224,7 +224,7 @@ func (h *Handler) processFile(ctx context.Context, record events.S3EventRecord) 
 }
 
 // processBatch processes a batch of reconciliation records
-func (h *Handler) processBatch(ctx context.Context, batch []*ReconciliationRecord) error {
+func (h *ReconcileHandler) processBatch(ctx context.Context, batch []*ReconciliationRecord) error {
 	log.Printf("Processing batch of %d records", len(batch))
 
 	// Convert reconciliation records to settlement details

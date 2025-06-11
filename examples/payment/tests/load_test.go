@@ -14,6 +14,7 @@ import (
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/payment"
 	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	dynamormtests "github.com/pay-theory/dynamorm/tests"
 )
 
@@ -246,9 +247,9 @@ func TestMultiRegionSimulation(t *testing.T) {
 
 // Helper functions
 
-func runLoadTest(t *testing.T, db *dynamorm.DB, config LoadTestConfig,
+func runLoadTest(_ *testing.T, db core.ExtendedDB, config LoadTestConfig,
 	merchants []*payment.Merchant, customers []*payment.Customer,
-	idempotency *utils.IdempotencyMiddleware, auditTracker *utils.AuditTracker) *LoadTestMetrics {
+	_ *utils.IdempotencyMiddleware, _ *utils.AuditTracker) *LoadTestMetrics {
 
 	metrics := &LoadTestMetrics{}
 	paymentLatencies := make([]time.Duration, 0, 10000)
@@ -358,7 +359,7 @@ func runLoadTest(t *testing.T, db *dynamorm.DB, config LoadTestConfig,
 	return metrics
 }
 
-func createPayment(db *dynamorm.DB, merchantID, tag string) error {
+func createPayment(db core.ExtendedDB, merchantID, tag string) error {
 	payment := &payment.Payment{
 		ID:             fmt.Sprintf("%s-%s-%d", tag, uuid.New().String()[:8], time.Now().UnixNano()),
 		IdempotencyKey: uuid.New().String(),
@@ -375,7 +376,7 @@ func createPayment(db *dynamorm.DB, merchantID, tag string) error {
 	return db.Model(payment).Create()
 }
 
-func initLoadTestDB(t *testing.T) (*dynamorm.DB, error) {
+func initLoadTestDB(_ *testing.T) (core.ExtendedDB, error) {
 	config := dynamorm.Config{
 		Region:     "us-east-1",
 		Endpoint:   "http://localhost:8000",
@@ -395,7 +396,7 @@ func initLoadTestDB(t *testing.T) (*dynamorm.DB, error) {
 	return db, nil
 }
 
-func createLoadTestMerchants(t *testing.T, db *dynamorm.DB, count int) []*payment.Merchant {
+func createLoadTestMerchants(t *testing.T, db core.ExtendedDB, count int) []*payment.Merchant {
 	merchants := make([]*payment.Merchant, count)
 
 	for i := 0; i < count; i++ {
@@ -425,7 +426,7 @@ func createLoadTestMerchants(t *testing.T, db *dynamorm.DB, count int) []*paymen
 	return merchants
 }
 
-func createLoadTestCustomers(t *testing.T, db *dynamorm.DB, merchants []*payment.Merchant, perMerchant int) []*payment.Customer {
+func createLoadTestCustomers(t *testing.T, db core.ExtendedDB, merchants []*payment.Merchant, perMerchant int) []*payment.Customer {
 	var customers []*payment.Customer
 
 	for _, merchant := range merchants {

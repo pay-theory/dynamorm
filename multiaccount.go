@@ -164,8 +164,15 @@ func (mdb *MultiAccountDB) createPartnerDB(partnerID string, account AccountConf
 		return nil, fmt.Errorf("failed to create partner DB for %s: %w", partnerID, err)
 	}
 
+	// Type assert to get the concrete DB
+	concreteDB, ok := db.(*DB)
+	if !ok {
+		return nil, fmt.Errorf("failed to get concrete DB implementation for partner %s", partnerID)
+	}
+
 	lambdaDB := &LambdaDB{
-		DB:             db,
+		ExtendedDB:     db,
+		db:             concreteDB,
 		modelCache:     &sync.Map{},
 		isLambda:       IsLambdaEnvironment(),
 		lambdaMemoryMB: GetLambdaMemoryMB(),

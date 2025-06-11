@@ -466,7 +466,7 @@ func BenchmarkTransactionOperations(b *testing.B) {
 
 // Helper functions
 
-func initBenchDB(b *testing.B) (*dynamorm.DB, error) {
+func initBenchDB(_ *testing.B) (core.ExtendedDB, error) {
 	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
@@ -492,7 +492,7 @@ func initBenchDB(b *testing.B) (*dynamorm.DB, error) {
 	return db, nil
 }
 
-func createBenchMerchant(b *testing.B, db *dynamorm.DB) *payment.Merchant {
+func createBenchMerchant(b *testing.B, db core.ExtendedDB) *payment.Merchant {
 	merchant := &payment.Merchant{
 		ID:       fmt.Sprintf("bench-merchant-%d", time.Now().UnixNano()),
 		Name:     "Benchmark Merchant",
@@ -516,7 +516,7 @@ func createBenchMerchant(b *testing.B, db *dynamorm.DB) *payment.Merchant {
 	return merchant
 }
 
-func createBenchCustomer(b *testing.B, db *dynamorm.DB, merchantID string) *payment.Customer {
+func createBenchCustomer(b *testing.B, db core.ExtendedDB, merchantID string) *payment.Customer {
 	customer := &payment.Customer{
 		ID:         uuid.New().String(),
 		MerchantID: merchantID,
@@ -575,7 +575,7 @@ func createTestPayment() *payment.Payment {
 }
 
 // setupBenchmark initializes the benchmark environment
-func setupBenchmark(b *testing.B) *dynamorm.DB {
+func setupBenchmark(b *testing.B) core.ExtendedDB {
 	db, err := initBenchDB(b)
 	if err != nil {
 		b.Fatal(err)
@@ -584,14 +584,16 @@ func setupBenchmark(b *testing.B) *dynamorm.DB {
 }
 
 // teardownBenchmark cleans up after benchmarks
-func teardownBenchmark(_ *testing.B, db *dynamorm.DB) {
+func teardownBenchmark(b *testing.B, db core.ExtendedDB) {
 	// In production, you might want to clean up test data
 	// For benchmarks, we'll just close the connection
-	_ = db.Close()
+	if err := db.Close(); err != nil {
+		b.Logf("Failed to close database connection: %v", err)
+	}
 }
 
 // createBenchmarkData creates test data for benchmarks
-func createBenchmarkData(b *testing.B, db *dynamorm.DB, count int) {
+func createBenchmarkData(b *testing.B, db core.ExtendedDB, count int) {
 	// Create a test merchant
 	merchant := createBenchMerchant(b, db)
 
@@ -622,3 +624,5 @@ func createBenchmarkData(b *testing.B, db *dynamorm.DB, count int) {
 		}
 	}
 }
+
+// setupTestDB function removed - using initBenchDB for benchmarks

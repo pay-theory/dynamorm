@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-06-10
+
+### Added
+- Interface-based design for improved testability
+  - New `core.DB` interface for basic operations
+  - New `core.ExtendedDB` interface for full functionality
+  - `NewBasic()` function that returns `core.DB` for simpler use cases
+- Comprehensive testing documentation and examples
+- Mock implementation examples for unit testing
+- Runtime type checking for interface methods accepting `any` type
+
+### Changed
+- **BREAKING**: `dynamorm.New()` now returns `core.ExtendedDB` interface instead of `*dynamorm.DB`
+- All methods that accept specific option types now accept `...any` with runtime validation
+- Updated all examples and tests to use interfaces
+- Improved separation between core operations and schema management
+
+### Fixed
+- Lambda.go now properly handles interface types
+- Transaction callbacks properly use type assertions
+- All test helper functions updated to return interfaces
+
+### Migration Guide
+See [Release Notes v0.2.0](docs/releases/v0.2.0-interface-improvements.md) for detailed migration instructions.
+
+## [0.1.1] - 2025-06-10
+
 ### Added
 - Lambda-native optimizations with 11ms cold starts (91% faster than standard SDK)
 - Type-safe ORM interface for DynamoDB operations
@@ -29,7 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory optimization for large batch operations
 - Proper handling of DynamoDB limits
 
-## [0.1.0] - 2024-01-15
+## [0.1.0] - 2025-06-10
 
 ### Added
 - Initial release of DynamORM
@@ -41,5 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expression builder
 - Basic documentation
 
-[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/dynamorm/dynamorm/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dynamorm/dynamorm/releases/tag/v0.1.0 

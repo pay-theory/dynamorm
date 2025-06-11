@@ -19,7 +19,7 @@ import (
 
 type QueryIntegrationSuite struct {
 	suite.Suite
-	db     *dynamorm.DB
+	db     core.ExtendedDB
 	client *dynamodb.Client
 	tables []string
 }

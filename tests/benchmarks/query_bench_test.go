@@ -8,24 +8,26 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/tests/models"
 )
 
 var (
-	benchDB        *dynamorm.DB
-	benchClient    *dynamodb.Client
+	benchDB        core.ExtendedDB
+	benchDynamoDB  *dynamodb.Client
 	benchTableName = "BenchmarkTable"
 )
 
-func setupBenchDB(b *testing.B) (*dynamorm.DB, *dynamodb.Client) {
-	if benchDB != nil && benchClient != nil {
-		return benchDB, benchClient
+func setupBenchDB(b *testing.B) (core.ExtendedDB, *dynamodb.Client) {
+	if benchDB != nil && benchDynamoDB != nil {
+		return benchDB, benchDynamoDB
 	}
 
-	// Initialize AWS config
+	// Create AWS config
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
 		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
@@ -35,14 +37,16 @@ func setupBenchDB(b *testing.B) (*dynamorm.DB, *dynamodb.Client) {
 					SigningRegion: "us-east-1",
 				}, nil
 			})),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy", "")),
 	)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	// Initialize clients
-	benchClient = dynamodb.NewFromConfig(cfg)
+	// Create DynamoDB client
+	dynamoClient := dynamodb.NewFromConfig(cfg)
 
+	// Initialize DynamORM
 	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
@@ -50,7 +54,9 @@ func setupBenchDB(b *testing.B) (*dynamorm.DB, *dynamodb.Client) {
 	if err != nil {
 		b.Fatal(err)
 	}
+
 	benchDB = db
+	benchDynamoDB = dynamoClient
 
 	// Create test table
 	createBenchTable(b)
@@ -58,14 +64,14 @@ func setupBenchDB(b *testing.B) (*dynamorm.DB, *dynamodb.Client) {
 	// Seed initial data
 	seedBenchData(b)
 
-	return benchDB, benchClient
+	return benchDB, benchDynamoDB
 }
 
 func createBenchTable(b *testing.B) {
 	ctx := context.TODO()
 
 	// Delete existing table if it exists
-	_, _ = benchClient.DeleteTable(ctx, &dynamodb.DeleteTableInput{
+	_, _ = benchDynamoDB.DeleteTable(ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(benchTableName),
 	})
 
@@ -124,14 +130,14 @@ func createBenchTable(b *testing.B) {
 		},
 	}
 
-	_, err := benchClient.CreateTable(ctx, input)
+	_, err := benchDynamoDB.CreateTable(ctx, input)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	// Wait for table to be active
 	for i := 0; i < 30; i++ {
-		desc, err := benchClient.DescribeTable(ctx, &dynamodb.DescribeTableInput{
+		desc, err := benchDynamoDB.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 			TableName: aws.String(benchTableName),
 		})
 		if err == nil && desc.Table.TableStatus == "ACTIVE" {
@@ -166,7 +172,7 @@ func seedBenchData(b *testing.B) {
 			"CreatedAt": &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339)},
 		}
 
-		_, err := benchClient.PutItem(ctx, &dynamodb.PutItemInput{
+		_, err := benchDynamoDB.PutItem(ctx, &dynamodb.PutItemInput{
 			TableName: aws.String(benchTableName),
 			Item:      item,
 		})

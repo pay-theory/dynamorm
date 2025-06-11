@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/google/uuid"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
@@ -38,7 +39,7 @@ type Todo struct {
 
 // TodoApp manages our todo list operations
 type TodoApp struct {
-	db *dynamorm.DB
+	db core.DB
 }
 
 // NewTodoApp creates a new todo application instance
@@ -52,14 +53,20 @@ func NewTodoApp() (*TodoApp, error) {
 		},
 	}
 
-	// Create DynamORM client
-	db, err := dynamorm.New(*cfg)
+	// Create DynamORM client - now returns an interface
+	db, err := dynamorm.NewBasic(*cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DynamORM client: %v", err)
+	}
+
+	// For table creation, we need the extended interface
+	extDB, err := dynamorm.New(*cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create DynamORM client: %v", err)
 	}
 
 	// Create table if it doesn't exist
-	if err := db.CreateTable(&Todo{}); err != nil {
+	if err := extDB.CreateTable(&Todo{}); err != nil {
 		// It's okay if table already exists
 		if !strings.Contains(err.Error(), "ResourceInUseException") {
 			return nil, fmt.Errorf("failed to create table: %v", err)

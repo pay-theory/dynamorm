@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pay-theory/dynamorm/pkg/core"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
@@ -63,14 +65,14 @@ type ExportJob struct {
 	ExpiresAt  time.Time              `dynamorm:"ttl" json:"expires_at"`
 }
 
-// Handler processes query requests
-type Handler struct {
-	db           *dynamorm.DB
+// QueryHandler handles payment query requests
+type QueryHandler struct {
+	db           core.ExtendedDB
 	jwtValidator *utils.SimpleJWTValidator
 }
 
 // NewHandler creates a new query handler
-func NewHandler() (*Handler, error) {
+func NewHandler() (*QueryHandler, error) {
 	db, err := dynamorm.New(dynamorm.Config{
 		Region: os.Getenv("AWS_REGION"),
 	})
@@ -82,6 +84,7 @@ func NewHandler() (*Handler, error) {
 	db.Model(&payment.Payment{})
 	db.Model(&payment.Customer{})
 	db.Model(&payment.Transaction{})
+	db.Model(&payment.AuditEntry{})
 	db.Model(&ExportJob{})
 
 	// Initialize JWT validator
@@ -95,14 +98,14 @@ func NewHandler() (*Handler, error) {
 		os.Getenv("JWT_AUDIENCE"),
 	)
 
-	return &Handler{
+	return &QueryHandler{
 		db:           db,
 		jwtValidator: jwtValidator,
 	}, nil
 }
 
 // HandleRequest processes query requests
-func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+func (h *QueryHandler) HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Extract merchant ID from JWT
 	merchantID, err := h.extractMerchantID(request.Headers)
 	if err != nil {
@@ -131,7 +134,7 @@ func (h *Handler) HandleRequest(ctx context.Context, request events.APIGatewayPr
 }
 
 // queryPayments returns paginated payment results
-func (h *Handler) queryPayments(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
+func (h *QueryHandler) queryPayments(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
 	// Build query
 	query := h.db.Model(&payment.Payment{}).
 		Index("gsi-merchant").
@@ -190,7 +193,7 @@ func (h *Handler) queryPayments(_ context.Context, merchantID string, req *Query
 }
 
 // getPayment returns a single payment
-func (h *Handler) getPayment(_ context.Context, merchantID, paymentID string) (events.APIGatewayProxyResponse, error) {
+func (h *QueryHandler) getPayment(_ context.Context, merchantID, paymentID string) (events.APIGatewayProxyResponse, error) {
 	// Get payment details
 	var paymentRecord payment.Payment
 	err := h.db.Model(&payment.Payment{}).
@@ -231,7 +234,7 @@ func (h *Handler) getPayment(_ context.Context, merchantID, paymentID string) (e
 }
 
 // getPaymentSummary returns aggregated statistics
-func (h *Handler) getPaymentSummary(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
+func (h *QueryHandler) getPaymentSummary(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
 	// For large datasets, this would typically use DynamoDB Streams + aggregation
 	// For demo purposes, we'll do a simplified version
 
@@ -279,7 +282,7 @@ func (h *Handler) getPaymentSummary(_ context.Context, merchantID string, req *Q
 }
 
 // exportPayments creates an export job in the queue
-func (h *Handler) exportPayments(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
+func (h *QueryHandler) exportPayments(_ context.Context, merchantID string, req *QueryRequest) (events.APIGatewayProxyResponse, error) {
 	// Create export job
 	exportJob := &ExportJob{
 		ID:         fmt.Sprintf("export-%s-%d", merchantID, time.Now().Unix()),
@@ -322,7 +325,7 @@ func (h *Handler) exportPayments(_ context.Context, merchantID string, req *Quer
 
 // Helper functions
 
-func (h *Handler) extractMerchantID(headers map[string]string) (string, error) {
+func (h *QueryHandler) extractMerchantID(headers map[string]string) (string, error) {
 	auth := headers["Authorization"]
 	if auth == "" {
 		auth = headers["authorization"]

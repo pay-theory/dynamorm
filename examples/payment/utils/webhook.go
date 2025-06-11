@@ -14,17 +14,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // WebhookSender handles async webhook deliveries
 type WebhookSender struct {
-	db         *dynamorm.DB
-	httpClient *http.Client
-	workers    int
-	queue      chan *WebhookJob
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
+	db       core.ExtendedDB
+	client   *http.Client
+	workers  chan struct{}
+	retryMax int
+	queue    chan *WebhookJob
+	wg       sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // WebhookJob represents a webhook to be sent
@@ -44,18 +46,17 @@ type WebhookPayload struct {
 }
 
 // NewWebhookSender creates a new webhook sender
-func NewWebhookSender(db *dynamorm.DB, workers int) *WebhookSender {
+func NewWebhookSender(db core.ExtendedDB, workers int) *WebhookSender {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sender := &WebhookSender{
-		db: db,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		workers: workers,
-		queue:   make(chan *WebhookJob, 1000),
-		ctx:     ctx,
-		cancel:  cancel,
+		db:       db,
+		client:   &http.Client{Timeout: 30 * time.Second},
+		workers:  make(chan struct{}, workers),
+		retryMax: 3,
+		queue:    make(chan *WebhookJob, 1000),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 
 	// Start workers
@@ -176,7 +177,7 @@ func (w *WebhookSender) deliverWebhook(webhook *payment.Webhook, secret string) 
 		}
 
 		// Send request
-		resp, err := w.httpClient.Do(req)
+		resp, err := w.client.Do(req)
 		if err != nil {
 			webhook.Status = payment.WebhookStatusFailed
 			webhook.ResponseBody = fmt.Sprintf("Network error: %v", err)
