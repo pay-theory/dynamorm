@@ -1,6 +1,6 @@
 # DynamORM Interface Reference
 
-This document provides a complete reference for DynamORM's interfaces introduced in v0.2.0.
+This document provides a complete reference for DynamORM's interfaces introduced in v1.0.1.
 
 ## Core Interfaces
 
@@ -295,7 +295,7 @@ func New(db *dynamorm.DB) *Service {
 }
 ```
 
-### After (v0.2.0+):
+### After (v1.0.1+):
 ```go
 type Service struct {
     db core.DB  // or core.ExtendedDB

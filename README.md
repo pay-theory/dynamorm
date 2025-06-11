@@ -25,7 +25,7 @@ DynamoDB is an incredible database - it's fast, cheap, and scales fantastically.
 - 🔒 **Type-Safe**: Full Go type safety with compile-time checks
 - 🎯 **Simple API**: Write 80% less code than AWS SDK
 - ⚡ **High Performance**: 20,000+ operations per second
-- 🧪 **Testable**: Interface-based design enables easy mocking (v0.2.0+)
+- 🧪 **Testable**: Interface-based design enables easy mocking (v1.0.1+)
 - 🌍 **Multi-Account**: Built-in cross-account support
 - 💰 **Cost Efficient**: Smart query optimization reduces DynamoDB costs
 - 🔄 **Transactions**: Full support for DynamoDB transactions
@@ -101,9 +101,9 @@ err := db.Model(&User{}).
     First(&user)
 ```
 
-### 🧪 Testable Design (v0.2.0+)
+### 🧪 Testable Design (v1.0.1+)
 
-DynamORM now uses interfaces, making it easy to mock for unit tests:
+DynamORM uses interfaces and provides pre-built mocks (v1.0.2+), making it easy to test:
 
 ```go
 // In your service
@@ -116,9 +116,15 @@ func NewUserService(db core.DB) *UserService {
 }
 
 // In your tests - no DynamoDB required!
+import "github.com/pay-theory/dynamorm/pkg/mocks"
+
 func TestUserService(t *testing.T) {
-    mockDB := new(MockDB)
-    mockDB.On("Model", mock.Anything).Return(mockQuery)
+    mockDB := new(mocks.MockDB)
+    mockQuery := new(mocks.MockQuery)
+    
+    mockDB.On("Model", &User{}).Return(mockQuery)
+    mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
+    mockQuery.On("First", mock.Anything).Return(nil)
     
     service := NewUserService(mockDB)
     // Test your service logic without DynamoDB

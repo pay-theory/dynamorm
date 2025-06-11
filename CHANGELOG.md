@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2025-06-10
+## [1.0.2] - 2024-01-XX
+
+### Added
+- Pre-built mock implementations in `pkg/mocks` package
+  - `MockDB` - implements `core.DB` interface
+  - `MockQuery` - implements all 26+ methods of `core.Query` interface
+  - `MockUpdateBuilder` - implements `core.UpdateBuilder` interface
+- Comprehensive mocking documentation and examples
+- Interface segregation proposal for future improvements
+
+### Fixed
+- Teams no longer need to implement all Query interface methods manually for testing
+- Eliminates "trial and error" discovery of missing mock methods
+
+## [1.0.1] - 2025-06-10
 
 ### Added
 - Interface-based design for improved testability
@@ -30,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All test helper functions updated to return interfaces
 
 ### Migration Guide
-See [Release Notes v0.2.0](docs/releases/v0.2.0-interface-improvements.md) for detailed migration instructions.
+See [Release Notes v1.0.1](docs/releases/v1.0.1-interface-improvements.md) for detailed migration instructions.
 
 ## [0.1.1] - 2025-06-10
 
@@ -68,7 +82,8 @@ See [Release Notes v0.2.0](docs/releases/v0.2.0-interface-improvements.md) for d
 - Expression builder
 - Basic documentation
 
-[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/dynamorm/dynamorm/compare/v0.1.1...v0.2.0
+[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/dynamorm/dynamorm/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.1...v1.0.1
 [0.1.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dynamorm/dynamorm/releases/tag/v0.1.0 
