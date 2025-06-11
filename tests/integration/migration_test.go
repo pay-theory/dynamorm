@@ -6,12 +6,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/schema"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Helper function to create a properly configured DB instance
+func createTestDB() (core.ExtendedDB, error) {
+	sessionConfig := session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	return dynamorm.New(sessionConfig)
+}
 
 // Migration test models
 type UserV1 struct {
@@ -74,22 +95,18 @@ func (p *ProductV2) TableName() string {
 	return "products_v2"
 }
 
-func TestMigrationTransformFunction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
+func TestAutoMigrate(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
+	// Create DB with helper function
+	db, err := createTestDB()
 	require.NoError(t, err)
 
 	// Clean up any existing tables
 	_ = db.DeleteTable(&UserV1{})
 	_ = db.DeleteTable(&UserV2{})
+	_ = db.DeleteTable(&ProductV1{})
+	_ = db.DeleteTable(&ProductV2{})
 
 	t.Run("BasicDataTransformation", func(t *testing.T) {
 		// Create and populate V1 table
@@ -245,7 +262,7 @@ func TestMigrationTransformFunction(t *testing.T) {
 		}
 
 		// Define AttributeValue transformation function
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			target := make(map[string]types.AttributeValue)
 
 			// Copy all existing fields
@@ -352,10 +369,8 @@ func TestMigrationWithBackup(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
+	// Create DB with helper function
+	db, err := createTestDB()
 	require.NoError(t, err)
 
 	// Clean up any existing tables
@@ -423,10 +438,8 @@ func TestMigrationBatchProcessing(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
+	// Create DB with helper function
+	db, err := createTestDB()
 	require.NoError(t, err)
 
 	// Clean up any existing tables
@@ -510,10 +523,8 @@ func TestMigrationErrorHandling(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
+	// Create DB with helper function
+	db, err := createTestDB()
 	require.NoError(t, err)
 
 	// Clean up any existing tables
@@ -555,7 +566,7 @@ func TestMigrationErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Define a transform that will fail
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			return nil, fmt.Errorf("intentional transform error")
 		}
 
@@ -581,10 +592,8 @@ func TestMigrationDataIntegrity(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
+	// Create DB with helper function
+	db, err := createTestDB()
 	require.NoError(t, err)
 
 	// Clean up any existing tables

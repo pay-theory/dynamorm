@@ -363,6 +363,42 @@ func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, 
 		}
 		return &types.AttributeValueMemberM{Value: avMap}, nil
 
+	case reflect.Struct:
+		// Special handling for time.Time
+		if v.Type() == reflect.TypeOf(time.Time{}) {
+			t := v.Interface().(time.Time)
+			if t.IsZero() {
+				return &types.AttributeValueMemberNULL{Value: true}, nil
+			}
+			return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
+		}
+
+		// For other structs, marshal as a map
+		structMap := make(map[string]types.AttributeValue)
+		typ := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			field := typ.Field(i)
+			// Skip unexported fields
+			if field.PkgPath != "" {
+				continue
+			}
+
+			fieldValue := v.Field(i)
+			// Skip zero values for omitempty behavior
+			if fieldValue.IsZero() {
+				continue
+			}
+
+			av, err := m.marshalValue(fieldValue)
+			if err != nil {
+				return nil, fmt.Errorf("struct field %s: %w", field.Name, err)
+			}
+
+			// Use field name as key (could be enhanced with tag parsing)
+			structMap[field.Name] = av
+		}
+		return &types.AttributeValueMemberM{Value: structMap}, nil
+
 	default:
 		// For other types, use basic marshaling
 		return m.marshalValue(v)
@@ -394,8 +430,20 @@ func (m *Marshaler) marshalValue(v reflect.Value) (types.AttributeValue, error) 
 		return &types.AttributeValueMemberN{Value: strconv.FormatFloat(v.Float(), 'f', -1, 64)}, nil
 	case reflect.Bool:
 		return &types.AttributeValueMemberBOOL{Value: v.Bool()}, nil
-	default:
-		// Recursively handle complex types
+	case reflect.Struct:
+		// Handle structs through marshalComplexValue which has struct handling
 		return m.marshalComplexValue(v)
+	case reflect.Slice, reflect.Map:
+		// Handle slices and maps through marshalComplexValue
+		return m.marshalComplexValue(v)
+	case reflect.Interface:
+		// Handle interface by getting the concrete value
+		if v.IsNil() {
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		}
+		return m.marshalValue(v.Elem())
+	default:
+		// For unsupported types, return an error instead of recursing
+		return nil, fmt.Errorf("unsupported type: %v", v.Kind())
 	}
 }

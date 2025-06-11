@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
 	"github.com/stretchr/testify/suite"
@@ -43,11 +44,18 @@ func (s *QueryIntegrationSuite) SetupSuite() {
 	// Initialize DynamoDB client
 	s.client = dynamodb.NewFromConfig(cfg)
 
-	// Initialize DynamORM
-	s.db, err = dynamorm.New(dynamorm.Config{
+	// Initialize DynamORM with correct session.Config
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+	s.db, err = dynamorm.New(sessionConfig)
 	s.Require().NoError(err)
 
 	// Create test tables
@@ -72,6 +80,14 @@ func (s *QueryIntegrationSuite) TearDownSuite() {
 }
 
 func (s *QueryIntegrationSuite) createTestTables() {
+	// Delete existing tables first
+	_ = s.db.DeleteTable(&models.TestUser{})
+	_ = s.db.DeleteTable(&models.TestProduct{})
+	_ = s.db.DeleteTable(&models.TestOrder{})
+
+	// Give DynamoDB time to clean up
+	time.Sleep(2 * time.Second)
+
 	// Create tables for each test model
 	err := s.db.AutoMigrate(
 		&models.TestUser{},
@@ -161,16 +177,15 @@ func (s *QueryIntegrationSuite) seedTestData() {
 
 func (s *QueryIntegrationSuite) TestComplexQueryWithIndexSelection() {
 	// Test that queries automatically select the right index
-	var users []models.TestUser
+	var user models.TestUser
 
 	// This should use gsi-email index
 	err := s.db.Model(&models.TestUser{}).
 		Where("Email", "=", "john@example.com").
-		First(&users)
+		First(&user)
 
 	s.NoError(err)
-	s.Len(users, 1)
-	s.Equal("john@example.com", users[0].Email)
+	s.Equal("john@example.com", user.Email)
 
 	// Test with category index on products
 	var products []models.TestProduct

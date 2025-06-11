@@ -4,9 +4,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/schema"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/pkg/transaction"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
@@ -32,17 +35,25 @@ type Product struct {
 	Name       string
 	Price      float64
 	Stock      int
-	LastSold   time.Time `dynamorm:"lsi:last-sold-index,sk"`
+	LastSold   time.Time `dynamorm:"lsi:lsi-last-sold,sk"`
 }
 
 func TestCompleteWorkflow(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	// Initialize DB
-	db, err := dynamorm.New(dynamorm.Config{
+	// Initialize DB with correct session.Config
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	db, err := dynamorm.New(sessionConfig)
 	require.NoError(t, err)
 
 	// Clean up any existing tables
@@ -125,8 +136,8 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	t.Run("TransactionSupport", func(t *testing.T) {
 		// Create two users for fund transfer
-		user1 := &User{ID: "tx-user-1", Name: "Bob", Balance: 200.0}
-		user2 := &User{ID: "tx-user-2", Name: "Charlie", Balance: 50.0}
+		user1 := &User{ID: "tx-user-1", Name: "Bob", Email: "bob@example.com", Balance: 200.0}
+		user2 := &User{ID: "tx-user-2", Name: "Charlie", Email: "charlie@example.com", Balance: 50.0}
 
 		err = db.Model(user1).Create()
 		require.NoError(t, err)
@@ -172,6 +183,11 @@ func TestCompleteWorkflow(t *testing.T) {
 	})
 
 	t.Run("TransactionWithNewItems", func(t *testing.T) {
+		// Get the product before the transaction
+		var product Product
+		err := db.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&product)
+		require.NoError(t, err)
+
 		// Create order and update inventory atomically
 		err = db.TransactionFunc(func(tx any) error {
 			txTyped := tx.(*transaction.Transaction)
@@ -179,6 +195,7 @@ func TestCompleteWorkflow(t *testing.T) {
 			order := &User{
 				ID:      "order-1",
 				Name:    "Order for prod-1",
+				Email:   "order@example.com",
 				Balance: 999.99,
 				Status:  "pending",
 			}
@@ -187,12 +204,6 @@ func TestCompleteWorkflow(t *testing.T) {
 			}
 
 			// Update product stock
-			var product Product
-			err := db.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&product)
-			if err != nil {
-				return err
-			}
-
 			product.Stock -= 1
 			product.LastSold = time.Now()
 
@@ -207,10 +218,10 @@ func TestCompleteWorkflow(t *testing.T) {
 		assert.Equal(t, "pending", order.Status)
 
 		// Verify stock was updated
-		var product Product
-		err = db.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&product)
+		var updatedProduct Product
+		err = db.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&updatedProduct)
 		require.NoError(t, err)
-		assert.Equal(t, 9, product.Stock)
+		assert.Equal(t, 9, updatedProduct.Stock)
 	})
 
 	t.Run("ConditionalTransactionFailure", func(t *testing.T) {
@@ -268,10 +279,19 @@ func TestCompleteWorkflow(t *testing.T) {
 func TestEnsureTable(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
+	// Initialize DB with correct session.Config
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	db, err := dynamorm.New(sessionConfig)
 	require.NoError(t, err)
 
 	// Clean up
@@ -297,10 +317,19 @@ func TestEnsureTable(t *testing.T) {
 func TestBatchOperationsWithTransaction(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
+	// Initialize DB with correct session.Config
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	db, err := dynamorm.New(sessionConfig)
 	require.NoError(t, err)
 
 	// Ensure table exists
@@ -312,11 +341,11 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 	err = db.TransactionFunc(func(tx any) error {
 		txTyped := tx.(*transaction.Transaction)
 		users := []User{
-			{ID: "batch-1", Name: "User 1", Balance: 100},
-			{ID: "batch-2", Name: "User 2", Balance: 200},
-			{ID: "batch-3", Name: "User 3", Balance: 300},
-			{ID: "batch-4", Name: "User 4", Balance: 400},
-			{ID: "batch-5", Name: "User 5", Balance: 500},
+			{ID: "batch-1", Name: "User 1", Email: "user1@example.com", Balance: 100},
+			{ID: "batch-2", Name: "User 2", Email: "user2@example.com", Balance: 200},
+			{ID: "batch-3", Name: "User 3", Email: "user3@example.com", Balance: 300},
+			{ID: "batch-4", Name: "User 4", Email: "user4@example.com", Balance: 400},
+			{ID: "batch-5", Name: "User 5", Email: "user5@example.com", Balance: 500},
 		}
 
 		for _, u := range users {

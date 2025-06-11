@@ -164,7 +164,13 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		_ = q.BatchUpdateWithOptions(items, opts, "Name")
+		// Convert items to []any
+		anyItems := make([]any, len(items))
+		for i, item := range items {
+			anyItems[i] = item
+		}
+
+		_ = q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
 
 		// Should have been called at least once
 		assert.NotEmpty(t, progressCalls)
@@ -185,7 +191,13 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		_ = q.BatchUpdateWithOptions(items, opts, "Name")
+		// Convert items to []any
+		anyItems := make([]any, len(items))
+		for i, item := range items {
+			anyItems[i] = item
+		}
+
+		_ = q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
 
 		// Error handler should have been called due to execution failure
 		assert.True(t, errorHandlerCalled)
@@ -206,7 +218,13 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		err := q.BatchUpdateWithOptions(items, opts, "Name")
+		// Convert items to []any
+		anyItems := make([]any, len(items))
+		for i, item := range items {
+			anyItems[i] = item
+		}
+
+		err := q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
 		// Should not panic and should handle concurrency properly
 		// With error handler that ignores errors, this should complete without error
 		assert.NoError(t, err)

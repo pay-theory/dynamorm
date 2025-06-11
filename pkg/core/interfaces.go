@@ -120,6 +120,15 @@ type Query interface {
 	// BatchCreate creates multiple items
 	BatchCreate(items any) error
 
+	// BatchDelete deletes multiple items by their primary keys
+	BatchDelete(keys []any) error
+
+	// BatchWrite performs mixed batch write operations (puts and deletes)
+	BatchWrite(putItems []any, deleteKeys []any) error
+
+	// BatchUpdateWithOptions performs batch update operations with custom options
+	BatchUpdateWithOptions(items []any, fields []string, options ...any) error
+
 	// Cursor sets the pagination cursor for the query
 	Cursor(cursor string) Query
 

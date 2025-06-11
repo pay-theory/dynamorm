@@ -4,8 +4,10 @@ package session
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 )
@@ -72,7 +74,7 @@ func NewSession(cfg *Config) (*Session, error) {
 	}
 
 	// Build AWS config options
-	options := make([]func(*config.LoadOptions) error, 0, len(cfg.AWSConfigOptions)+3)
+	options := make([]func(*config.LoadOptions) error, 0, len(cfg.AWSConfigOptions)+5)
 
 	// Add region if specified
 	if cfg.Region != "" {
@@ -85,9 +87,15 @@ func NewSession(cfg *Config) (*Session, error) {
 	}
 
 	// Add retry configuration
-	if cfg.MaxRetries > 0 {
-		options = append(options, config.WithRetryMaxAttempts(cfg.MaxRetries))
+	maxAttempts := cfg.MaxRetries
+	if maxAttempts <= 0 {
+		maxAttempts = 3 // Default
 	}
+	options = append(options, config.WithRetryMode(aws.RetryModeStandard))
+	options = append(options, config.WithRetryMaxAttempts(maxAttempts))
+
+	// Add HTTP client
+	options = append(options, config.WithHTTPClient(&http.Client{}))
 
 	// Add custom options
 	options = append(options, cfg.AWSConfigOptions...)
@@ -98,24 +106,47 @@ func NewSession(cfg *Config) (*Session, error) {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Create DynamoDB client
-	clientOptions := &dynamodb.Options{
-		Region: awsConfig.Region,
+	// Ensure we have a valid retryer
+	if awsConfig.Retryer == nil {
+		awsConfig.Retryer = func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = maxAttempts
+			})
+		}
 	}
 
-	// Apply endpoint override if specified
-	if cfg.Endpoint != "" {
-		clientOptions.BaseEndpoint = aws.String(cfg.Endpoint)
+	// Create DynamoDB client options
+	clientOptions := []func(*dynamodb.Options){
+		func(o *dynamodb.Options) {
+			o.Region = awsConfig.Region
+
+			// Apply endpoint override if specified
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+
+			// Ensure retryer is set
+			if o.Retryer == nil {
+				o.Retryer = awsConfig.Retryer()
+			}
+
+			// Ensure HTTP client is set
+			if o.HTTPClient == nil {
+				o.HTTPClient = &http.Client{}
+			}
+		},
 	}
+
+	// Add custom DynamoDB options
+	clientOptions = append(clientOptions, cfg.DynamoDBOptions...)
 
 	// Create client with options
-	client := dynamodb.NewFromConfig(awsConfig, func(o *dynamodb.Options) {
-		*o = *clientOptions
-		// Apply custom DynamoDB options
-		for _, opt := range cfg.DynamoDBOptions {
-			opt(o)
-		}
-	})
+	client := dynamodb.NewFromConfig(awsConfig, clientOptions...)
+
+	// Ensure client is not nil
+	if client == nil {
+		return nil, fmt.Errorf("failed to create DynamoDB client")
+	}
 
 	return &Session{
 		config:    cfg,
@@ -126,6 +157,12 @@ func NewSession(cfg *Config) (*Session, error) {
 
 // Client returns the DynamoDB client
 func (s *Session) Client() *dynamodb.Client {
+	if s == nil {
+		panic("session is nil")
+	}
+	if s.client == nil {
+		panic("DynamoDB client is nil")
+	}
 	return s.client
 }
 

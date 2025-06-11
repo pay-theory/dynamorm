@@ -304,51 +304,64 @@ func (m *Manager) processItems(ctx context.Context, items []map[string]types.Att
 
 	// Batch write to target table with retry logic for unprocessed items
 	if len(writeRequests) > 0 {
-		remainingRequests := writeRequests
-		retryCount := 0
-		maxRetries := 3
-
-		for len(remainingRequests) > 0 && retryCount < maxRetries {
-			batchInput := &dynamodb.BatchWriteItemInput{
-				RequestItems: map[string][]types.WriteRequest{
-					targetMetadata.TableName: remainingRequests,
-				},
+		// Process in batches of 25 (DynamoDB limit)
+		const maxBatchSize = 25
+		for i := 0; i < len(writeRequests); i += maxBatchSize {
+			end := i + maxBatchSize
+			if end > len(writeRequests) {
+				end = len(writeRequests)
 			}
 
-			result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
-			if err != nil {
-				return fmt.Errorf("failed to write items to target table: %w", err)
-			}
+			batch := writeRequests[i:end]
+			remainingRequests := batch
+			retryCount := 0
+			maxRetries := 3
+			allProcessed := false
 
-			// Check for unprocessed items
-			if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
-				if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
-					remainingRequests = unprocessed
-					retryCount++
+			for len(remainingRequests) > 0 && retryCount < maxRetries {
+				batchInput := &dynamodb.BatchWriteItemInput{
+					RequestItems: map[string][]types.WriteRequest{
+						targetMetadata.TableName: remainingRequests,
+					},
+				}
 
-					// Add exponential backoff
-					if retryCount < maxRetries {
-						backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
-						select {
-						case <-time.After(backoff):
-							// Continue with retry
-						case <-ctx.Done():
-							return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+				result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
+				if err != nil {
+					return fmt.Errorf("failed to write items to target table: %w", err)
+				}
+
+				// Check for unprocessed items
+				if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
+					if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
+						remainingRequests = unprocessed
+						retryCount++
+
+						// Add exponential backoff
+						if retryCount < maxRetries {
+							backoff := time.Duration(retryCount*retryCount) * 500 * time.Millisecond
+							select {
+							case <-time.After(backoff):
+								// Continue with retry
+							case <-ctx.Done():
+								return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+							}
 						}
+					} else {
+						// No unprocessed items for our table
+						allProcessed = true
+						break
 					}
 				} else {
-					// No unprocessed items for our table
+					// All items processed successfully
+					allProcessed = true
 					break
 				}
-			} else {
-				// All items processed successfully
-				break
 			}
-		}
 
-		// If we still have unprocessed items after retries, return an error
-		if len(remainingRequests) > 0 {
-			return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
+			// If we still have unprocessed items after retries, return an error
+			if !allProcessed && len(remainingRequests) > 0 {
+				return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
+			}
 		}
 	}
 
@@ -424,7 +437,7 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 
 						// Add exponential backoff
 						if retryCount < maxRetries {
-							backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
+							backoff := time.Duration(retryCount*retryCount) * 500 * time.Millisecond
 							select {
 							case <-time.After(backoff):
 								// Continue with retry

@@ -5,8 +5,9 @@ import (
 	"reflect"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm/internal/expr"
+	"github.com/pay-theory/dynamorm/pkg/marshal"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 // TransformFunc defines a function that transforms data during migration
@@ -112,11 +113,28 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 	// If it's already an AttributeValue transform, return it directly
 	if transformType.NumIn() == 1 && transformType.NumOut() == 2 {
 		inputType := transformType.In(0)
-		expectedType := reflect.TypeOf(map[string]types.AttributeValue{})
-		if inputType == expectedType {
-			return transformFunc.(TransformFunc), nil
+		outputType := transformType.Out(0)
+		errorType := transformType.Out(1)
+
+		expectedInputType := reflect.TypeOf(map[string]types.AttributeValue{})
+		expectedOutputType := reflect.TypeOf(map[string]types.AttributeValue{})
+		expectedErrorType := reflect.TypeOf((*error)(nil)).Elem()
+
+		if inputType == expectedInputType && outputType == expectedOutputType && errorType == expectedErrorType {
+			// Create a wrapper to ensure proper type
+			return func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+				results := transformValue.Call([]reflect.Value{reflect.ValueOf(source)})
+				if results[1].IsNil() {
+					return results[0].Interface().(map[string]types.AttributeValue), nil
+				}
+				return results[0].Interface().(map[string]types.AttributeValue), results[1].Interface().(error)
+			}, nil
 		}
 	}
+
+	// Import the marshal package for proper field name mapping
+	marshaler := marshal.New()
+	converter := pkgTypes.NewConverter()
 
 	// Create a wrapper for model-to-model transforms
 	return func(sourceItem map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
@@ -125,33 +143,45 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 		if sourceModelType.Kind() == reflect.Ptr {
 			sourceModelType = sourceModelType.Elem()
 		}
-		sourceModel := reflect.New(sourceModelType).Interface()
+		sourceModel := reflect.New(sourceModelType).Elem()
 
-		// Unmarshal source item to model using expr converter
-		if err := expr.ConvertFromAttributeValue(&types.AttributeValueMemberM{Value: sourceItem}, sourceModel); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal source item: %w", err)
+		// Unmarshal source item to model using field-by-field conversion
+		// This ensures field names are mapped correctly according to struct tags
+		for attrName, attrValue := range sourceItem {
+			// Find the corresponding field in metadata
+			field, exists := sourceMetadata.FieldsByDBName[attrName]
+			if !exists {
+				continue // Skip unknown fields
+			}
+
+			// Get the struct field
+			structField := sourceModel.FieldByIndex([]int{field.Index})
+			if !structField.CanSet() {
+				continue
+			}
+
+			// Convert and set the value
+			if err := converter.FromAttributeValue(attrValue, structField.Addr().Interface()); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal field %s: %w", field.Name, err)
+			}
 		}
 
 		// Call transform function
-		results := transformValue.Call([]reflect.Value{reflect.ValueOf(sourceModel).Elem()})
+		results := transformValue.Call([]reflect.Value{sourceModel})
 		if len(results) != 1 {
 			return nil, fmt.Errorf("transform function must return exactly one value")
 		}
 
 		targetModel := results[0].Interface()
 
-		// Marshal target model to AttributeValue map using expr converter
-		targetAV, err := expr.ConvertToAttributeValue(targetModel)
+		// Use DynamORM marshaler to convert target model to AttributeValue map
+		// This ensures field names are mapped correctly according to struct tags
+		targetMap, err := marshaler.MarshalItem(targetModel, targetMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal target item: %w", err)
 		}
 
-		// Extract the map from the AttributeValue
-		if targetMap, ok := targetAV.(*types.AttributeValueMemberM); ok {
-			return targetMap.Value, nil
-		}
-
-		return nil, fmt.Errorf("target model did not marshal to a map")
+		return targetMap, nil
 	}, nil
 }
 

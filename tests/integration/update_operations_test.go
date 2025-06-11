@@ -4,8 +4,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +21,7 @@ type UpdateProduct struct {
 	Name         string    `dynamorm:"attr:product_name"`
 	Price        float64   `dynamorm:"attr:price"`
 	Stock        int       `dynamorm:"attr:stock_count"`
-	Tags         []string  `dynamorm:"attr:tags,set"`
+	Tags         []string  `dynamorm:"attr:tags,set,omitempty"`
 	Features     []string  `dynamorm:"attr:features"`
 	Ratings      []float64 `dynamorm:"attr:ratings"`
 	Description  string    `dynamorm:"attr:description,omitempty"`
@@ -865,11 +868,21 @@ func TestUpdateOperations_ErrorCases(t *testing.T) {
 func setupTestDB(t *testing.T) (core.ExtendedDB, func()) {
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
+	// Fixed initialization with session.Config
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	db, err := dynamorm.New(sessionConfig)
 	require.NoError(t, err)
+	defer db.Close()
 
 	cleanup := func() {
 		// Clean up tables

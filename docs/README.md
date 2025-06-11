@@ -1,124 +1,135 @@
 # DynamORM Documentation
 
-Welcome to the DynamORM documentation! This guide will help you get started with DynamORM and make the most of its features.
+## ⚠️ CRITICAL: v1.0.2 Issues
 
-## 📚 Documentation Structure
+**DynamORM v1.0.2 has critical issues that affect all users:**
 
-### 🚀 For Users
+1. **[Nil Pointer Dereference](./troubleshooting/nil-pointer-fix.md)** - Occurs on any DynamoDB operation
+2. **Integration tests have never been run** - The library was released without proper testing
+3. **Documentation shows non-working examples** - Many examples use incorrect initialization
 
-#### [Getting Started](getting-started/)
-New to DynamORM? Start here!
-- [**Installation**](getting-started/installation.md) - Install DynamORM in your project
-- [**Quickstart**](getting-started/quickstart.md) - Get up and running in 5 minutes
-- [**Basic Usage**](getting-started/basic-usage.md) - Learn the core concepts
-- [**Migration Guide**](getting-started/migration-guide.md) - Migrate from AWS SDK
-
-#### [Guides](guides/)
-How-to guides for common tasks:
-- [**Lambda Deployment**](guides/lambda-deployment.md) - Deploy DynamORM in AWS Lambda
-- [**Multi-Account Setup**](guides/multi-account.md) - Configure cross-account access
-- [**Testing**](guides/testing.md) - Write tests for your DynamORM code
-- [**Performance Tuning**](guides/performance-tuning.md) - Optimize for speed and cost
-- [**Troubleshooting**](guides/troubleshooting.md) - Common issues and solutions
-- [**Best Practices**](guides/best-practices.md) - Recommended patterns and practices
-
-#### [Reference](reference/)
-Complete API and configuration reference:
-- [**API Reference**](reference/api.md) - Complete API documentation
-- [**Struct Tags**](reference/struct-tags.md) - Model configuration with tags
-- [**Configuration**](reference/configuration.md) - All configuration options
-- [**Errors**](reference/errors.md) - Error types and handling
-- [**Changelog**](reference/changelog.md) - Detailed version history
-
-#### [Examples](../examples/)
-Real-world examples:
-- [**Basic CRUD**](../examples/basic/) - Simple create, read, update, delete
-- [**Lambda Function**](../examples/lambda/) - Serverless function example
-- [**Payment System**](../examples/payment/) - Complex payment processing system
-- [**Multi-Account**](../examples/multi-account/) - Cross-account operations
-
-### 🛠️ For Contributors
-
-#### [Architecture](architecture/)
-Design and implementation details:
-- [**Overview**](architecture/overview.md) - High-level architecture
-- [**Internals**](architecture/internals.md) - Implementation details
-- [**Comparison**](architecture/comparison.md) - DynamORM vs other solutions
-- [**Roadmap**](architecture/roadmap.md) - Future plans and features
-
-#### [Development](development/)
-Contributing to DynamORM:
-- [**Setup**](development/setup.md) - Development environment setup
-- [**Contributing**](../CONTRIBUTING.md) - Contribution guidelines
-- [**Testing**](development/testing.md) - Running and writing tests
-- [**Releasing**](development/releasing.md) - Release process
-- [**Session History**](development/session-history/) - Development history
-
-### 🏢 For Pay Theory
-
-#### [Pay Theory Guide](pay-theory/)
-Specific features and optimizations:
-- [**Overview**](pay-theory/overview.md) - Pay Theory-specific features
-- [**Optimizations**](pay-theory/optimizations.md) - Performance optimizations
-- [**Lambda Guide**](pay-theory/lambda-guide.md) - Lambda deployment guide
-- [**Deployment**](pay-theory/deployment.md) - Production deployment
-
-## 🔍 Quick Links
-
-### Most Popular
-- 📖 [5-Minute Quickstart](getting-started/quickstart.md)
-- 🚀 [Lambda Deployment](guides/lambda-deployment.md)
-- 📚 [API Reference](reference/api.md)
-- 🏗️ [Examples](../examples/)
-- 🔧 [Struct Tags](reference/struct-tags.md)
-
-### Common Tasks
-- [Create a Model](getting-started/basic-usage.md#defining-models)
-- [Query Data](reference/api.md#querying)
-- [Update Records](reference/api.md#updating)
-- [Use Transactions](reference/api.md#transactions)
-- [Handle Errors](reference/errors.md)
-
-### Getting Help
-- 💬 [GitHub Discussions](https://github.com/dynamorm/dynamorm/discussions)
-- 🐛 [Report a Bug](https://github.com/dynamorm/dynamorm/issues/new?template=bug_report.md)
-- 💡 [Request a Feature](https://github.com/dynamorm/dynamorm/issues/new?template=feature_request.md)
-- 📧 [Contact Support](mailto:support@dynamorm.io)
-
-## 📖 How to Use This Documentation
-
-1. **New Users**: Start with [Getting Started](getting-started/) to learn the basics
-2. **Migrating**: Check the [Migration Guide](getting-started/migration-guide.md) if coming from AWS SDK
-3. **Reference**: Use the [API Reference](reference/api.md) for detailed method documentation
-4. **Examples**: Browse [Examples](../examples/) for real-world usage patterns
-5. **Contributing**: Read [Contributing](../CONTRIBUTING.md) to help improve DynamORM
-
-## 🔄 Documentation Versions
-
-- **Latest** (main branch) - Current development version
-- **v1.0** - Stable release (coming soon)
-- **v0.1** - Initial release
-
-## 📝 Documentation Standards
-
-Our documentation follows these principles:
-- **Clear**: Simple language, avoid jargon
-- **Complete**: Cover all features and edge cases
-- **Current**: Always up-to-date with the code
-- **Practical**: Include real-world examples
-- **Accessible**: Easy to navigate and search
-
-## 🤝 Improving Documentation
-
-Found an error or have a suggestion? We'd love your help!
-
-1. **Quick Fix**: Click "Edit this page" on any documentation page
-2. **Issue**: [Open a documentation issue](https://github.com/dynamorm/dynamorm/issues/new?labels=documentation)
-3. **PR**: Submit a pull request with improvements
-4. **Discussion**: Start a [discussion](https://github.com/dynamorm/dynamorm/discussions)
+**If you're experiencing issues, please read:**
+- 🚨 **[Critical Issues Summary](./releases/v1.0.2-critical-issues.md)** - Complete list of known issues
+- 🔧 **[Nil Pointer Fix Guide](./troubleshooting/nil-pointer-fix.md)** - Comprehensive fix for the most common issue
+- 🧪 **[Integration Testing Guide](./testing/integration-test-guide.md)** - How to properly test DynamORM
 
 ---
 
-<p align="center">
-  📚 Happy coding with DynamORM!
-</p> 
+Welcome to the DynamORM documentation! This guide will help you get started with DynamORM and master its features.
+
+## 🚨 Important Notes for v1.0.2
+
+- **[Migration Guide from v0.x](./migration/v0-to-v1.md)** - Breaking changes and migration steps
+- **[Composite Keys Guide](./guides/composite-keys.md)** - Composite key syntax has changed
+
+## 📚 Documentation Structure
+
+### Getting Started
+- **[Installation & Initialization](./getting-started/installation.md)** ⭐ Start here!
+- [Quick Start Guide](./getting-started/quickstart.md)
+- [Basic Usage](./getting-started/basic-usage.md)
+
+### Core Guides
+- **[Atomic Operations](./guides/atomic-operations.md)** - Rate limiting, counters, and more
+- **[Composite Keys](./guides/composite-keys.md)** - PK/SK patterns and best practices
+- [Testing with Mocks](./guides/testing.md) - Unit testing with pre-built mocks
+- [Query Patterns](./guides/queries.md) - Advanced querying techniques
+- [Working with Indexes](./guides/indexes.md) - GSI and LSI usage
+
+### Migration & Troubleshooting
+- **[v0.x to v1.0.2 Migration](./migration/v0-to-v1.md)** - Step-by-step migration guide
+- **[Nil Pointer Fix](./troubleshooting/nil-pointer-fix.md)** - Common initialization issues
+- [Common Errors](./troubleshooting/common-errors.md) - Error solutions
+
+### Architecture & Design
+- [Architecture Overview](./architecture/overview.md)
+- [Interface Design](./architecture/interfaces.md)
+- [Performance Optimization](./architecture/performance.md)
+- [Interface Segregation Proposal](./architecture/interface-segregation-proposal.md)
+
+### API Reference
+- [Core Interfaces](./reference/interfaces.md)
+- [Query Builder API](./reference/query-builder.md)
+- [Update Builder API](./reference/update-builder.md)
+- [Configuration Options](./reference/configuration.md)
+
+### Examples
+- [Basic CRUD Operations](../examples/basic/)
+- [E-commerce Application](../examples/ecommerce/)
+- [Multi-tenant System](../examples/multi-tenant/)
+- [Payment Processing](../examples/payment/)
+- [Testing Examples](../examples/testing/)
+
+### Release Notes
+- [v1.0.2 - Mocks Package](./releases/v1.0.2-mocks-package.md)
+- [v1.0.1 - Interface Improvements](./releases/v1.0.1-interface-improvements.md)
+
+## 🎯 Quick Links by Use Case
+
+### "I'm getting a nil pointer error"
+→ Read [Nil Pointer Fix Guide](./troubleshooting/nil-pointer-fix.md)
+
+### "I'm upgrading from v0.x"
+→ Follow [Migration Guide](./migration/v0-to-v1.md)
+
+### "I need composite keys"
+→ See [Composite Keys Guide](./guides/composite-keys.md)
+
+### "I need atomic operations"
+→ Check [Atomic Operations Guide](./guides/atomic-operations.md)
+
+### "I want to write tests"
+→ Use [Testing with Mocks](./guides/testing.md)
+
+### "I'm new to DynamORM"
+→ Start with [Installation](./getting-started/installation.md)
+
+## 📋 Common Code Patterns
+
+### Correct Initialization (v1.0.2)
+```go
+import (
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/session"
+)
+
+config := session.Config{
+    Region: "us-east-1",
+}
+db, err := dynamorm.New(config)
+```
+
+### PK/SK Pattern for Composite Keys
+```go
+type Model struct {
+    PK string `dynamorm:"pk"`
+    SK string `dynamorm:"sk"`
+    // other fields
+}
+
+func (m *Model) SetKeys() {
+    m.PK = m.Field1
+    m.SK = m.Field2
+}
+```
+
+### Atomic Operations
+```go
+db.Model(&Counter{ID: "123"}).
+    UpdateBuilder().
+    Increment("Count").
+    Execute()
+```
+
+## 🤝 Contributing
+
+Found an issue or want to contribute? Check our [Contributing Guide](../CONTRIBUTING.md).
+
+## 📞 Support
+
+- GitHub Issues: [Report bugs or request features](https://github.com/pay-theory/dynamorm/issues)
+- Discussions: [Ask questions](https://github.com/pay-theory/dynamorm/discussions)
+
+---
+
+*Last updated for DynamORM v1.0.2* 

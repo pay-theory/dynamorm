@@ -1,233 +1,272 @@
-# Installation
+# DynamORM Installation & Initialization Guide
 
-This guide will help you install DynamORM and set up your development environment.
-
-## Prerequisites
-
-Before installing DynamORM, ensure you have:
-
-- **Go 1.21 or higher** installed ([Download Go](https://golang.org/dl/))
-- **AWS credentials** configured (if using AWS DynamoDB)
-- **Docker** (optional, for local development with DynamoDB Local)
-
-## Installing DynamORM
-
-### Standard Installation
+## Installation
 
 Install DynamORM using Go modules:
 
 ```bash
-go get github.com/dynamorm/dynamorm
+go get github.com/pay-theory/dynamorm@v1.0.2
 ```
 
-This will add DynamORM to your `go.mod` file and download the package.
+## Important: Correct Import Pattern
 
-### Specific Version
+DynamORM requires specific imports for initialization. The examples in some documentation may be outdated.
 
-To install a specific version:
+### Required Imports
 
-```bash
-go get github.com/dynamorm/dynamorm@v1.0.0
+```go
+import (
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/session"
+    "github.com/pay-theory/dynamorm/pkg/core"
+)
 ```
 
-### Latest Development Version
+## Initialization
 
-To get the latest development version:
+### ❌ INCORRECT (Outdated Examples)
 
-```bash
-go get github.com/dynamorm/dynamorm@main
+```go
+// This will NOT work - causes nil pointer dereference
+db := dynamorm.New()
+
+// This will also NOT work - incorrect type
+db, err := dynamorm.New(dynamorm.Config{
+    Region: "us-east-1",
+})
 ```
 
-## Verifying Installation
-
-Create a simple test file to verify the installation:
+### ✅ CORRECT Initialization
 
 ```go
 package main
 
 import (
-    "fmt"
-    "github.com/dynamorm/dynamorm"
+    "log"
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/session"
 )
 
 func main() {
-    fmt.Println("DynamORM version:", dynamorm.Version)
-}
-```
-
-Run the file:
-
-```bash
-go run main.go
-```
-
-## Setting Up AWS Credentials
-
-DynamORM uses the AWS SDK, which requires credentials. Set them up using one of these methods:
-
-### 1. AWS CLI (Recommended)
-
-```bash
-aws configure
-```
-
-### 2. Environment Variables
-
-```bash
-export AWS_ACCESS_KEY_ID=your_access_key
-export AWS_SECRET_ACCESS_KEY=your_secret_key
-export AWS_REGION=us-east-1
-```
-
-### 3. IAM Role (For EC2/Lambda)
-
-If running on AWS infrastructure, IAM roles are automatically used.
-
-## Local Development Setup
-
-For local development, we recommend using DynamoDB Local:
-
-### Using Docker (Recommended)
-
-```bash
-# Pull and run DynamoDB Local
-docker run -p 8000:8000 amazon/dynamodb-local
-
-# Or using docker-compose (see docker-compose.yml in repo)
-docker-compose up -d dynamodb-local
-```
-
-### Using JAR File
-
-```bash
-# Download DynamoDB Local
-wget https://s3.us-west-2.amazonaws.com/dynamodb-local/dynamodb_local_latest.zip
-unzip dynamodb_local_latest.zip
-
-# Run DynamoDB Local
-java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb
-```
-
-## IDE Setup
-
-### VS Code
-
-Install the Go extension:
-
-```bash
-code --install-extension golang.go
-```
-
-### GoLand
-
-DynamORM works out of the box with GoLand. Enable Go modules support in settings.
-
-### Vim/Neovim
-
-Install `gopls` for Go language server support:
-
-```bash
-go install golang.org/x/tools/gopls@latest
-```
-
-## Project Structure
-
-Recommended project structure for DynamORM:
-
-```
-myapp/
-├── main.go
-├── go.mod
-├── go.sum
-├── models/
-│   ├── user.go
-│   ├── product.go
-│   └── order.go
-├── repositories/
-│   ├── user_repository.go
-│   └── product_repository.go
-├── config/
-│   └── database.go
-└── migrations/
-    └── 001_initial_schema.go
-```
-
-## Configuration File
-
-Create a configuration file for your database connection:
-
-```go
-// config/database.go
-package config
-
-import (
-    "github.com/dynamorm/dynamorm"
-)
-
-func NewDB() (*dynamorm.DB, error) {
-    config := dynamorm.Config{
+    // Method 1: Basic configuration
+    config := session.Config{
         Region: "us-east-1",
-        // For local development:
-        // Endpoint: "http://localhost:8000",
     }
     
-    return dynamorm.New(config)
+    db, err := dynamorm.New(config)
+    if err != nil {
+        log.Fatal("Failed to initialize DynamORM:", err)
+    }
+    defer db.Close()
+    
+    // Your code here
 }
 ```
 
-## Dependencies
+## Configuration Options
 
-DynamORM has minimal dependencies:
+### Basic Configuration
 
-- `github.com/aws/aws-sdk-go-v2` - AWS SDK for Go
-- `github.com/google/uuid` - UUID generation
-- Standard library packages
-
-## Troubleshooting Installation
-
-### Module Errors
-
-If you encounter module errors:
-
-```bash
-# Clear module cache
-go clean -modcache
-
-# Download dependencies again
-go mod download
+```go
+config := session.Config{
+    Region:     "us-east-1",
+    MaxRetries: 3,  // Default: 3
+    DefaultRCU: 5,  // Default read capacity units
+    DefaultWCU: 5,  // Default write capacity units
+}
 ```
 
-### Permission Errors
+### Local Development (DynamoDB Local)
 
-On Unix systems, you might need to set proper permissions:
-
-```bash
-# Fix permissions for Go module cache
-chmod -R 755 ~/go/pkg/mod
+```go
+config := session.Config{
+    Region:   "us-east-1",
+    Endpoint: "http://localhost:8000",
+}
 ```
 
-### Proxy Issues
+### Using AWS Profile
 
-If behind a corporate proxy:
+```go
+import (
+    "github.com/aws/aws-sdk-go-v2/config"
+)
 
-```bash
-# Set Go proxy
-export GOPROXY=https://proxy.golang.org,direct
-export GOSUMDB=off
+config := session.Config{
+    Region: "us-east-1",
+    AWSConfigOptions: []func(*config.LoadOptions) error{
+        config.WithSharedConfigProfile("my-profile"),
+    },
+}
+```
+
+### Lambda Environment
+
+```go
+import "os"
+
+config := session.Config{
+    Region: os.Getenv("AWS_REGION"),
+    // AWS credentials are automatically loaded in Lambda
+}
+
+db, err := dynamorm.New(config)
+if err != nil {
+    return err
+}
+
+// Optional: Enable Lambda timeout handling
+ctx := context.Background()
+db = db.WithLambdaTimeout(ctx)
+```
+
+### Using Existing AWS Config
+
+```go
+import (
+    "context"
+    "github.com/aws/aws-sdk-go-v2/config"
+)
+
+// Load your AWS config
+awsCfg, err := config.LoadDefaultConfig(context.Background())
+if err != nil {
+    log.Fatal(err)
+}
+
+// Use it with DynamORM
+sessionConfig := session.Config{
+    Region:              awsCfg.Region,
+    CredentialsProvider: awsCfg.Credentials,
+}
+
+db, err := dynamorm.New(sessionConfig)
+```
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+    
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/core"
+    "github.com/pay-theory/dynamorm/pkg/session"
+)
+
+// Define your model
+type User struct {
+    ID        string    `dynamorm:"pk" json:"id"`
+    Email     string    `dynamorm:"sk" json:"email"`
+    Name      string    `json:"name"`
+    Active    bool      `json:"active"`
+    CreatedAt time.Time `dynamorm:"created_at" json:"created_at"`
+    UpdatedAt time.Time `dynamorm:"updated_at" json:"updated_at"`
+}
+
+func main() {
+    // Initialize with proper configuration
+    config := session.Config{
+        Region: "us-east-1",
+    }
+    
+    db, err := dynamorm.New(config)
+    if err != nil {
+        log.Fatal("Failed to initialize:", err)
+    }
+    defer db.Close()
+    
+    // Ensure table exists (development only)
+    if err := db.EnsureTable(&User{}); err != nil {
+        log.Printf("Warning: Could not ensure table: %v", err)
+    }
+    
+    // Create a user
+    user := &User{
+        ID:     "user-123",
+        Email:  "john@example.com",
+        Name:   "John Doe",
+        Active: true,
+    }
+    
+    if err := db.Model(user).Create(); err != nil {
+        log.Printf("Create failed: %v", err)
+        return
+    }
+    
+    fmt.Println("User created successfully")
+    
+    // Query the user
+    var fetchedUser User
+    err = db.Model(&User{}).
+        Where("ID", "=", "user-123").
+        Where("Email", "=", "john@example.com").
+        First(&fetchedUser)
+    
+    if err != nil {
+        log.Printf("Query failed: %v", err)
+        return
+    }
+    
+    fmt.Printf("Found user: %+v\n", fetchedUser)
+}
+```
+
+## Common Initialization Errors
+
+### 1. Nil Pointer Dereference
+
+**Symptom**: `panic: runtime error: invalid memory address or nil pointer dereference`
+
+**Cause**: Using incorrect initialization syntax or missing configuration
+
+**Solution**: Use `session.Config` with proper initialization as shown above
+
+### 2. Table Not Found
+
+**Symptom**: `ResourceNotFoundException: Requested resource not found`
+
+**Cause**: Table doesn't exist in DynamoDB
+
+**Solution**: 
+```go
+// For development - create table if it doesn't exist
+err := db.EnsureTable(&YourModel{})
+
+// For production - use Infrastructure as Code (Terraform, CDK, CloudFormation)
+```
+
+### 3. Missing Credentials
+
+**Symptom**: `NoCredentialProviders: no valid providers in chain`
+
+**Solution**: Ensure AWS credentials are configured:
+- Set `AWS_PROFILE` environment variable
+- Use IAM roles (in EC2/Lambda)
+- Configure credentials file (`~/.aws/credentials`)
+- Pass credentials explicitly in config
+
+## Type Aliases
+
+DynamORM provides type aliases for convenience, but it's clearer to use the full import path:
+
+```go
+// These are equivalent:
+config := session.Config{...}        // Recommended - clear origin
+config := dynamorm.Config{...}       // Works via type alias
+
+// Type alias definition (in dynamorm.go):
+type Config = session.Config
 ```
 
 ## Next Steps
 
-Now that you have DynamORM installed:
-
-1. Read the [Quickstart Guide](quickstart.md) to build your first application
-2. Learn about [Basic Usage](basic-usage.md) patterns
-3. Check out the [Examples](../../examples/) directory
-
-## Getting Help
-
-If you run into issues:
-
-- Check our [Troubleshooting Guide](../guides/troubleshooting.md)
-- Visit [GitHub Issues](https://github.com/dynamorm/dynamorm/issues)
-- Join our [Discord Community](https://discord.gg/dynamorm) 
+- [Define Your Models](./models.md)
+- [Basic CRUD Operations](./crud.md)
+- [Query Patterns](./queries.md)
+- [Working with Indexes](./indexes.md) 

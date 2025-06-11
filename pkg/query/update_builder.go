@@ -164,16 +164,34 @@ func (ub *UpdateBuilder) Execute() error {
 			if cond.Operator != "=" {
 				return fmt.Errorf("key condition must use '=' operator")
 			}
-			ub.keyValues[cond.Field] = cond.Value
+			// Get the DynamoDB attribute name for this field
+			attrMeta := ub.query.metadata.AttributeMetadata(cond.Field)
+			if attrMeta != nil {
+				ub.keyValues[attrMeta.DynamoDBName] = cond.Value
+			} else {
+				ub.keyValues[cond.Field] = cond.Value
+			}
 		}
 	}
 
-	// Validate we have complete key
-	if _, ok := ub.keyValues[primaryKey.PartitionKey]; !ok {
+	// Validate we have complete key using DynamoDB attribute names
+	pkAttrMeta := ub.query.metadata.AttributeMetadata(primaryKey.PartitionKey)
+	pkName := primaryKey.PartitionKey
+	if pkAttrMeta != nil {
+		pkName = pkAttrMeta.DynamoDBName
+	}
+
+	if _, ok := ub.keyValues[pkName]; !ok {
 		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
 	}
+
 	if primaryKey.SortKey != "" {
-		if _, ok := ub.keyValues[primaryKey.SortKey]; !ok {
+		skAttrMeta := ub.query.metadata.AttributeMetadata(primaryKey.SortKey)
+		skName := primaryKey.SortKey
+		if skAttrMeta != nil {
+			skName = skAttrMeta.DynamoDBName
+		}
+		if _, ok := ub.keyValues[skName]; !ok {
 			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
 		}
 	}

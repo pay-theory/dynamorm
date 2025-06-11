@@ -332,6 +332,7 @@ func TestPaymentErrorScenarios(t *testing.T) {
 	// Test Case 4: Recovery procedures
 	// Create a payment in pending state
 	paymentID := uuid.New().String()
+	//nolint:unusedwrite // Fields are used in assertions below
 	pendingPayment := &payment.Payment{
 		ID:             paymentID,
 		IdempotencyKey: uuid.New().String(),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -150,10 +151,24 @@ func (tx *Transaction) Update(model any) error {
 
 	// Handle updated_at field
 	if metadata.UpdatedAtField != nil {
-		updateExpression += fmt.Sprintf(", #upd = :updTime")
-		expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
-		av, _ := tx.converter.ToAttributeValue(reflect.ValueOf(metadata.UpdatedAtField.Type).Interface())
-		expressionAttributeValues[":updTime"] = av
+		// Check if we already have updated_at in the update expression
+		alreadyUpdated := false
+		for _, fieldMeta := range metadata.Fields {
+			if fieldMeta.DBName == metadata.UpdatedAtField.DBName {
+				fieldValue := modelValue.Field(fieldMeta.Index)
+				if fieldValue.IsValid() && !fieldValue.IsZero() {
+					alreadyUpdated = true
+					break
+				}
+			}
+		}
+
+		if !alreadyUpdated {
+			updateExpression += fmt.Sprintf(", #upd = :updTime")
+			expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
+			av, _ := tx.converter.ToAttributeValue(time.Now())
+			expressionAttributeValues[":updTime"] = av
+		}
 	}
 
 	// Build update item

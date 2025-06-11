@@ -47,7 +47,9 @@ package main
 
 import (
     "context"
-    "github.com/dynamorm/dynamorm"
+    "log"
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/session"
 )
 
 // Define your model
@@ -59,8 +61,17 @@ type User struct {
 }
 
 func main() {
-    // Initialize DynamORM
-    db := dynamorm.New()
+    // Initialize DynamORM with proper configuration
+    config := session.Config{
+        Region: "us-east-1",
+        // For local development:
+        // Endpoint: "http://localhost:8000",
+    }
+    
+    db, err := dynamorm.New(config)
+    if err != nil {
+        log.Fatal("Failed to initialize DynamORM:", err)
+    }
 
     // Create a user
     user := &User{
@@ -69,13 +80,19 @@ func main() {
         Name:  "John Doe",
     }
     
-    err := db.Model(user).Create()
+    err = db.Model(user).Create()
+    if err != nil {
+        log.Printf("Create error: %v", err)
+    }
     
     // Query users
     var users []User
     err = db.Model(&User{}).
         Where("ID", "=", "user123").
         All(&users)
+    if err != nil {
+        log.Printf("Query error: %v", err)
+    }
 }
 ```
 
@@ -107,6 +124,8 @@ DynamORM uses interfaces and provides pre-built mocks (v1.0.2+), making it easy 
 
 ```go
 // In your service
+import "github.com/pay-theory/dynamorm/pkg/core"
+
 type UserService struct {
     db core.DB  // Use interface instead of concrete type
 }
@@ -116,7 +135,11 @@ func NewUserService(db core.DB) *UserService {
 }
 
 // In your tests - no DynamoDB required!
-import "github.com/pay-theory/dynamorm/pkg/mocks"
+import (
+    "testing"
+    "github.com/pay-theory/dynamorm/pkg/mocks"
+    "github.com/stretchr/testify/mock"
+)
 
 func TestUserService(t *testing.T) {
     mockDB := new(mocks.MockDB)

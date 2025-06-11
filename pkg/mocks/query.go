@@ -163,6 +163,12 @@ func (m *MockQuery) BatchCreate(items any) error {
 	return args.Error(0)
 }
 
+// BatchDelete deletes multiple items by their primary keys
+func (m *MockQuery) BatchDelete(keys []any) error {
+	args := m.Called(keys)
+	return args.Error(0)
+}
+
 // Cursor sets the pagination cursor
 func (m *MockQuery) Cursor(cursor string) core.Query {
 	args := m.Called(cursor)
@@ -179,4 +185,16 @@ func (m *MockQuery) SetCursor(cursor string) error {
 func (m *MockQuery) WithContext(ctx context.Context) core.Query {
 	args := m.Called(ctx)
 	return args.Get(0).(core.Query)
+}
+
+// BatchWrite performs mixed batch write operations
+func (m *MockQuery) BatchWrite(putItems []any, deleteKeys []any) error {
+	args := m.Called(putItems, deleteKeys)
+	return args.Error(0)
+}
+
+// BatchUpdateWithOptions performs batch update operations with custom options
+func (m *MockQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	args := m.Called(items, fields, options)
+	return args.Error(0)
 }

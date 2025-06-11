@@ -154,9 +154,41 @@ type IndexRole struct {
 
 // parseMetadata parses model metadata from struct tags
 func parseMetadata(modelType reflect.Type) (*Metadata, error) {
+	// First check if the model has a TableName method
+	tableName := ""
+
+	// Check for TableName method on value receiver
+	modelValue := reflect.New(modelType).Elem()
+	if method := modelValue.MethodByName("TableName"); method.IsValid() {
+		if method.Type().NumIn() == 0 && method.Type().NumOut() == 1 {
+			results := method.Call(nil)
+			if len(results) > 0 && results[0].Kind() == reflect.String {
+				tableName = results[0].String()
+			}
+		}
+	}
+
+	// If not found on value, check pointer receiver
+	if tableName == "" {
+		modelPtr := reflect.New(modelType)
+		if method := modelPtr.MethodByName("TableName"); method.IsValid() {
+			if method.Type().NumIn() == 0 && method.Type().NumOut() == 1 {
+				results := method.Call(nil)
+				if len(results) > 0 && results[0].Kind() == reflect.String {
+					tableName = results[0].String()
+				}
+			}
+		}
+	}
+
+	// If no TableName method or it returned empty, use default
+	if tableName == "" {
+		tableName = getTableName(modelType)
+	}
+
 	metadata := &Metadata{
 		Type:           modelType,
-		TableName:      getTableName(modelType),
+		TableName:      tableName,
 		Fields:         make(map[string]*FieldMetadata),
 		FieldsByDBName: make(map[string]*FieldMetadata),
 		Indexes:        make([]IndexSchema, 0),
@@ -221,9 +253,18 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 		for indexName, role := range fieldMeta.IndexInfo {
 			index, exists := indexMap[indexName]
 			if !exists {
+				// Check if this is an LSI based on field tags
+				indexType := GlobalSecondaryIndex
+				if _, isLSI := fieldMeta.Tags["lsi:"+indexName]; isLSI {
+					indexType = LocalSecondaryIndex
+				} else {
+					// Fall back to name-based detection for backward compatibility
+					indexType = determineIndexType(indexName)
+				}
+
 				index = &IndexSchema{
 					Name: indexName,
-					Type: determineIndexType(indexName),
+					Type: indexType,
 				}
 				indexMap[indexName] = index
 			}
@@ -305,10 +346,30 @@ func parseFieldMetadata(field reflect.StructField, index int) (*FieldMetadata, e
 					return nil, err
 				}
 			case "lsi":
-				meta.IndexInfo[value] = IndexRole{
-					IndexName: value,
-					IsSK:      true,
+				// Parse LSI tag similar to index tag to support modifiers
+				parts := strings.Split(value, ",")
+				indexName := strings.TrimSpace(parts[0])
+
+				role := IndexRole{IndexName: indexName}
+
+				// LSI fields are sort keys by default
+				if len(parts) == 1 {
+					role.IsSK = true
+				} else {
+					for i := 1; i < len(parts); i++ {
+						part := strings.TrimSpace(parts[i])
+						switch part {
+						case "sk":
+							role.IsSK = true
+						default:
+							return nil, fmt.Errorf("%w: unknown lsi tag modifier '%s'", errors.ErrInvalidTag, part)
+						}
+					}
 				}
+
+				meta.IndexInfo[indexName] = role
+				// Mark this index as LSI explicitly
+				meta.Tags["lsi:"+indexName] = "true"
 			case "project":
 				meta.Tags["project"] = value
 			default:
@@ -319,12 +380,10 @@ func parseFieldMetadata(field reflect.StructField, index int) (*FieldMetadata, e
 			switch part {
 			case "pk":
 				meta.IsPK = true
-				// Use lowercase field name for primary key fields
-				meta.DBName = strings.ToLower(field.Name)
+				// Don't change the DBName, keep the field name as is
 			case "sk":
 				meta.IsSK = true
-				// Use lowercase field name for sort key fields
-				meta.DBName = strings.ToLower(field.Name)
+				// Don't change the DBName, keep the field name as is
 			case "version":
 				meta.IsVersion = true
 			case "ttl":
@@ -439,7 +498,7 @@ func getTableName(modelType reflect.Type) string {
 
 // determineIndexType determines if an index is GSI or LSI based on naming convention
 func determineIndexType(indexName string) IndexType {
-	if strings.HasPrefix(indexName, "lsi-") || strings.HasPrefix(indexName, "lsi:") {
+	if strings.HasPrefix(indexName, "lsi-") || strings.HasPrefix(indexName, "lsi_") {
 		return LocalSecondaryIndex
 	}
 	return GlobalSecondaryIndex

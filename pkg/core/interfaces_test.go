@@ -168,6 +168,21 @@ func (m *MockQuery) BatchCreate(items any) error {
 	return args.Error(0)
 }
 
+func (m *MockQuery) BatchDelete(keys []any) error {
+	args := m.Called(keys)
+	return args.Error(0)
+}
+
+func (m *MockQuery) BatchWrite(putItems []any, deleteKeys []any) error {
+	args := m.Called(putItems, deleteKeys)
+	return args.Error(0)
+}
+
+func (m *MockQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	args := m.Called(items, fields, options)
+	return args.Error(0)
+}
+
 func (m *MockQuery) Cursor(cursor string) Query {
 	args := m.Called(cursor)
 	return args.Get(0).(Query)
@@ -613,6 +628,7 @@ func TestIndexSchema(t *testing.T) {
 // TestAttributeMetadata tests the AttributeMetadata struct
 func TestAttributeMetadata(t *testing.T) {
 	t.Run("Basic attribute", func(t *testing.T) {
+		//nolint:unusedwrite // Fields are used in assertions below
 		attr := &AttributeMetadata{
 			Name:         "UserEmail",
 			Type:         "string",
@@ -632,6 +648,7 @@ func TestAttributeMetadata(t *testing.T) {
 	})
 
 	t.Run("Attribute without tags", func(t *testing.T) {
+		//nolint:unusedwrite // Fields are used in assertions below
 		attr := &AttributeMetadata{
 			Name:         "ID",
 			Type:         "string",

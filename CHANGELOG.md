@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2024-12-20
+
+### Added
+- Full implementation of core DynamoDB operations that were previously stubs:
+  - `ExecuteQuery` and `ExecuteScan` with complete pagination, filtering, and projection support
+  - `ExecuteQueryWithPagination` and `ExecuteScanWithPagination` for paginated results with metadata
+  - `ExecuteBatchGet` and `ExecuteBatchWrite` with automatic retry logic for unprocessed items
+  - Helper functions for unmarshaling DynamoDB items to Go structs
+- Core API methods to the Query interface:
+  - `BatchDelete` - Delete multiple items by their keys with support for various key formats
+  - `BatchWrite` - Mixed batch operations supporting both puts and deletes in a single request
+  - `BatchUpdateWithOptions` - Batch update operations with customizable options
+- Fully functional `UpdateBuilder` implementation with fluent API:
+  - Support for Set, Add, Remove operations
+  - List manipulation methods (AppendToList, PrependToList, RemoveFromListAt, SetListElement)
+  - Conditional update support with ConditionExists, ConditionNotExists, ConditionVersion
+  - ReturnValues option support
+
+### Changed
+- `UpdateBuilder()` method now returns a functional builder instead of nil
+- Improved error messages to follow Go conventions (lowercase)
+
+### Fixed
+- Circular dependencies between core and query packages
+- Interface signature mismatches for `BatchUpdateWithOptions` across packages
+- Missing mock implementations for `BatchWrite` and `BatchUpdateWithOptions` in test helpers
+- Stress test compilation error by properly creating DynamoDB client from config
+- Batch operations test to use the correct interface signatures
+- All staticcheck warnings including:
+  - Removed unused types (`executor`, `metadataAdapter`, `filter`)
+  - Fixed error string capitalization
+  - Removed unnecessary blank identifier assignments
+
+### Removed
+- Unused `executor` type and methods from dynamorm.go (functionality exists elsewhere)
+- Unused `metadataAdapter` type and methods 
+- Unused `filter` struct definition
+
 ## [1.0.2] - 2024-01-XX
 
 ### Added
@@ -82,7 +120,8 @@ See [Release Notes v1.0.1](docs/releases/v1.0.1-interface-improvements.md) for d
 - Expression builder
 - Basic documentation
 
-[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/dynamorm/dynamorm/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/dynamorm/dynamorm/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.1...v1.0.1
 [0.1.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.0...v0.1.1

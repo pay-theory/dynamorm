@@ -54,11 +54,27 @@ func DefaultBatchOptions() *BatchUpdateOptions {
 
 // BatchUpdate performs batch update operations
 func (q *Query) BatchUpdate(items any, fields ...string) error {
-	return q.BatchUpdateWithOptions(items, DefaultBatchOptions(), fields...)
+	return q.batchUpdateWithOptionsInternal(items, DefaultBatchOptions(), fields...)
 }
 
-// BatchUpdateWithOptions performs batch update with custom options
-func (q *Query) BatchUpdateWithOptions(items any, opts *BatchUpdateOptions, fields ...string) error {
+// BatchUpdateWithOptions implements core.Query interface with the expected signature
+func (q *Query) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	// Default options
+	opts := DefaultBatchOptions()
+
+	// Override with provided options if any
+	if len(options) > 0 {
+		if batchOpts, ok := options[0].(*BatchUpdateOptions); ok {
+			opts = batchOpts
+		}
+	}
+
+	// Delegate to the internal implementation
+	return q.batchUpdateWithOptionsInternal(items, opts, fields...)
+}
+
+// batchUpdateWithOptionsInternal is the actual implementation with the internal signature
+func (q *Query) batchUpdateWithOptionsInternal(items any, opts *BatchUpdateOptions, fields ...string) error {
 	// Validate input
 	itemsValue := reflect.ValueOf(items)
 	if itemsValue.Kind() != reflect.Slice {
