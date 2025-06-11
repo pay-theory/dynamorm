@@ -2415,36 +2415,21 @@ func (ub *updateBuilder) executeInternal(result any) error {
 		}
 	} else {
 		// We have OR conditions, need to build custom expression
-		// We'll build the expression and then override it after builder.Build()
-		// For now, add a dummy condition to ensure the builder generates attribute names/values
-		if len(ub.conditions) > 0 {
-			// Add the first condition normally to initialize the builder
-			cond := ub.conditions[0]
-			if cond.operator == "attribute_exists" {
-				builder.AddConditionExpression(cond.field, "attribute_exists", nil)
-			} else if cond.operator == "attribute_not_exists" {
-				builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
-			} else {
-				fieldMeta, exists := metadata.Fields[cond.field]
-				if exists {
-					builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
-				} else {
-					builder.AddConditionExpression(cond.field, cond.operator, cond.value)
-				}
-			}
-		}
+		// Don't add any conditions to the builder yet - we'll handle them all in the custom expression
 	}
 
 	// Build the update expression
 	components := builder.Build()
 
-	// If we have OR conditions, rebuild the condition expression
+	// If we have OR conditions, build the condition expression from scratch
 	if hasOrConditions && len(ub.conditions) > 0 {
 		// Build custom condition expression with OR support
 		var conditionExprs []string
+		condNameCounter := 0
+		condValueCounter := 0
 
-		// Extract name and value mappings from components
-		for i, cond := range ub.conditions {
+		// Process ALL conditions (not just from index 1)
+		for _, cond := range ub.conditions {
 			var expr string
 			var fieldName string
 
@@ -2455,31 +2440,24 @@ func (ub *updateBuilder) executeInternal(result any) error {
 				fieldName = cond.field
 			}
 
-			// Find the name placeholder for this field
-			var nameRef string
-			for placeholder, name := range components.ExpressionAttributeNames {
-				if name == fieldName {
-					nameRef = placeholder
-					break
-				}
-			}
+			// Create name placeholder
+			nameRef := fmt.Sprintf("#cond%d", condNameCounter)
+			condNameCounter++
 
-			// If no placeholder found, create one
-			if nameRef == "" {
-				nameRef = fmt.Sprintf("#or%d", i)
-				if components.ExpressionAttributeNames == nil {
-					components.ExpressionAttributeNames = make(map[string]string)
-				}
-				components.ExpressionAttributeNames[nameRef] = fieldName
+			if components.ExpressionAttributeNames == nil {
+				components.ExpressionAttributeNames = make(map[string]string)
 			}
+			components.ExpressionAttributeNames[nameRef] = fieldName
 
 			if cond.operator == "attribute_exists" {
 				expr = fmt.Sprintf("attribute_exists(%s)", nameRef)
 			} else if cond.operator == "attribute_not_exists" {
 				expr = fmt.Sprintf("attribute_not_exists(%s)", nameRef)
 			} else {
-				// Find the value placeholder
-				valueRef := fmt.Sprintf(":orv%d", i)
+				// Regular condition with value
+				valueRef := fmt.Sprintf(":condv%d", condValueCounter)
+				condValueCounter++
+
 				if components.ExpressionAttributeValues == nil {
 					components.ExpressionAttributeValues = make(map[string]types.AttributeValue)
 				}
@@ -2515,7 +2493,8 @@ func (ub *updateBuilder) executeInternal(result any) error {
 					if !ok || len(values) != 2 {
 						return fmt.Errorf("BETWEEN operator requires two values")
 					}
-					valueRef2 := fmt.Sprintf(":orv%db", i)
+					valueRef2 := fmt.Sprintf(":condv%d", condValueCounter)
+					condValueCounter++
 					av2, err := ub.query.db.converter.ToAttributeValue(values[1])
 					if err != nil {
 						return fmt.Errorf("failed to convert BETWEEN value: %w", err)
@@ -2542,7 +2521,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 				finalExpr.WriteString(conditionExprs[i])
 			}
 
-			// Override the condition expression
+			// Set the condition expression
 			components.ConditionExpression = finalExpr.String()
 		}
 	}
