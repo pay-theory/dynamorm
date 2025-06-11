@@ -115,6 +115,29 @@ err = db.Model(user).
     Create()
 ```
 
+### Create or Update (Upsert)
+
+```go
+// CreateOrUpdate will create a new item or completely overwrite an existing one
+user := &User{
+    ID:     "user-123",
+    Email:  "john@example.com",
+    Name:   "John Doe",
+    Active: true,
+}
+
+// This will succeed whether the user exists or not
+err := db.Model(user).CreateOrUpdate()
+
+// Useful for idempotent operations where you want to ensure
+// a record exists with specific values
+config := &Config{
+    Key:   "app.settings",
+    Value: "production",
+}
+err = db.Model(config).CreateOrUpdate()
+```
+
 ### Read (Query)
 
 ```go

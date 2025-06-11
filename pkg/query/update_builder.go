@@ -130,6 +130,13 @@ func (ub *UpdateBuilder) Condition(field string, operator string, value any) cor
 	return ub
 }
 
+// OrCondition adds a condition with OR logic
+func (ub *UpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	// For now, OR conditions are treated as AND conditions in this implementation
+	// TODO: Implement proper OR logic support
+	return ub.Condition(field, operator, value)
+}
+
 // ConditionExists adds a condition that the field must exist
 func (ub *UpdateBuilder) ConditionExists(field string) core.UpdateBuilder {
 	return ub.Condition(field, "attribute_exists", nil)

@@ -85,8 +85,14 @@ func (m *MockUpdateBuilder) SetListElement(field string, index int, value any) c
 
 // Condition adds a condition that must be met for the update to succeed
 func (m *MockUpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
-	args := m.Called(field, operator, value)
-	return args.Get(0).(core.UpdateBuilder)
+	m.Called(field, operator, value)
+	return m
+}
+
+// OrCondition adds a condition with OR logic
+func (m *MockUpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	m.Called(field, operator, value)
+	return m
 }
 
 // ConditionExists adds a condition that the field must exist

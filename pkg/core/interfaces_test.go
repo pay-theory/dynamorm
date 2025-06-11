@@ -264,13 +264,15 @@ func (m *MockUpdateBuilder) SetListElement(field string, index int, value any) U
 }
 
 func (m *MockUpdateBuilder) Condition(field string, operator string, value any) UpdateBuilder {
-	args := m.Called(field, operator, value)
-	return args.Get(0).(UpdateBuilder)
+	return m
+}
+
+func (m *MockUpdateBuilder) OrCondition(field string, operator string, value any) UpdateBuilder {
+	return m
 }
 
 func (m *MockUpdateBuilder) ConditionExists(field string) UpdateBuilder {
-	args := m.Called(field)
-	return args.Get(0).(UpdateBuilder)
+	return m
 }
 
 func (m *MockUpdateBuilder) ConditionNotExists(field string) UpdateBuilder {

@@ -196,6 +196,97 @@ err := db.Model(&Order{ID: "order-123"}).
     Execute()
 ```
 
+### OR Conditions (New Feature)
+
+DynamORM now supports OR logic in condition expressions, allowing for more complex business rules:
+
+```go
+// Simple OR condition
+err := db.Model(&Item{ID: "item-123"}).
+    UpdateBuilder().
+    Set("ProcessedAt", time.Now()).
+    Condition("Status", "=", "pending").      // if status = pending
+    OrCondition("Priority", "=", "high").     // OR priority = high
+    Execute()
+```
+
+#### Mixed AND/OR Conditions
+
+```go
+// Complex condition: (status = 'pending' AND region = 'US') OR priority = 'urgent'
+err := db.Model(&Order{ID: "order-456"}).
+    UpdateBuilder().
+    Add("ProcessCount", 1).
+    Condition("Status", "=", "pending").      // status = pending
+    Condition("Region", "=", "US").           // AND region = US  
+    OrCondition("Priority", "=", "urgent").   // OR priority = urgent
+    Execute()
+```
+
+#### Rate Limiting with OR Conditions
+
+```go
+// Allow request if: under limit OR premium user OR whitelisted
+func CheckRateLimitWithPrivileges(db core.DB, userID string, limit int64) (bool, int64, error) {
+    rateLimit := &RateLimit{}
+    rateLimit.SetKeys(userID, time.Now().UTC().Truncate(time.Hour))
+    
+    err := db.Model(rateLimit).
+        UpdateBuilder().
+        Add("RequestCount", 1).                           // Atomic increment
+        SetIfNotExists("RequestCount", 1, 1).             // Initialize if new
+        Condition("RequestCount", "<", limit).            // Under regular limit
+        OrCondition("UserType", "=", "premium").          // OR is premium user
+        OrCondition("Whitelisted", "=", true).            // OR is whitelisted
+        ExecuteWithResult(rateLimit)
+    
+    if err != nil {
+        if errors.Is(err, customerrors.ErrConditionFailed) {
+            // Over limit and not premium/whitelisted
+            return false, limit, nil
+        }
+        return false, 0, err
+    }
+    
+    // Allowed - either under limit or has special access
+    return true, rateLimit.RequestCount, nil
+}
+```
+
+#### Multiple OR Conditions
+
+```go
+// Process if any status matches
+err := db.Model(&Task{ID: "task-789"}).
+    UpdateBuilder().
+    Set("Status", "processing").
+    Set("StartedAt", time.Now()).
+    Condition("Status", "=", "new").          // status = new
+    OrCondition("Status", "=", "retry").      // OR status = retry
+    OrCondition("Status", "=", "failed").     // OR status = failed
+    Execute()
+```
+
+#### OR with Attribute Existence
+
+```go
+// Update if field doesn't exist OR needs retry
+err := db.Model(&Job{ID: "job-123"}).
+    UpdateBuilder().
+    Set("ProcessedBy", "worker-1").
+    ConditionNotExists("ProcessedBy").        // if not already processed
+    OrCondition("Status", "=", "failed").     // OR needs retry
+    Execute()
+```
+
+#### Important Notes on Precedence
+
+When mixing AND and OR conditions, operations are evaluated left-to-right:
+- `A AND B OR C` evaluates as `(A AND B) OR C`
+- `A OR B AND C` evaluates as `(A OR B) AND C`
+
+For complex logic requiring different grouping, consider restructuring your conditions or using multiple operations.
+
 ## Complex Atomic Updates
 
 ### Multiple Operations in Single Request

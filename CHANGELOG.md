@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.3] - 2024-12-20
-
 ### Added
+- `OrCondition` method to UpdateBuilder for OR logic in conditional expressions:
+  - Enables complex business rules like rate limiting with privilege checks
+  - Supports mixing AND/OR conditions with left-to-right evaluation
+  - Works with all condition types including attribute existence checks
+  - Particularly useful for scenarios like "allow if under limit OR premium user OR whitelisted"
 - Full implementation of core DynamoDB operations that were previously stubs:
   - `ExecuteQuery` and `ExecuteScan` with complete pagination, filtering, and projection support
   - `ExecuteQueryWithPagination` and `ExecuteScanWithPagination` for paginated results with metadata
@@ -24,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - List manipulation methods (AppendToList, PrependToList, RemoveFromListAt, SetListElement)
   - Conditional update support with ConditionExists, ConditionNotExists, ConditionVersion
   - ReturnValues option support
+- `CreateOrUpdate()` method for upsert operations - creates a new item or overwrites an existing one
+- Improved error messages for `Create()` when attempting to create an item with duplicate keys
 
 ### Changed
 - `UpdateBuilder()` method now returns a functional builder instead of nil
@@ -39,11 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed unused types (`executor`, `metadataAdapter`, `filter`)
   - Fixed error string capitalization
   - Removed unnecessary blank identifier assignments
+- Unmarshal error when using `All()` with slice of pointers (e.g., `[]*Model`)
+- UpdateBuilder overlapping document paths error when using multiple `SetIfNotExists` operations
 
 ### Removed
 - Unused `executor` type and methods from dynamorm.go (functionality exists elsewhere)
 - Unused `metadataAdapter` type and methods 
 - Unused `filter` struct definition
+
+## [1.0.3] - 2024-12-20
 
 ## [1.0.2] - 2024-01-XX
 

@@ -180,6 +180,9 @@ type UpdateBuilder interface {
 	// Condition adds a condition that must be met for the update to succeed
 	Condition(field string, operator string, value any) UpdateBuilder
 
+	// OrCondition adds a condition with OR logic
+	OrCondition(field string, operator string, value any) UpdateBuilder
+
 	// ConditionExists adds a condition that the field must exist
 	ConditionExists(field string) UpdateBuilder
 

@@ -2122,9 +2122,10 @@ type updateBuilder struct {
 }
 
 type updateCondition struct {
-	field    string
-	operator string
-	value    any
+	field     string
+	operator  string
+	value     any
+	logicalOp string // "AND" or "OR"
 }
 
 func (ub *updateBuilder) Set(field string, value any) core.UpdateBuilder {
@@ -2186,9 +2187,20 @@ func (ub *updateBuilder) SetListElement(field string, index int, value any) core
 
 func (ub *updateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
 	ub.conditions = append(ub.conditions, updateCondition{
-		field:    field,
-		operator: operator,
-		value:    value,
+		field:     field,
+		operator:  operator,
+		value:     value,
+		logicalOp: "AND",
+	})
+	return ub
+}
+
+func (ub *updateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	ub.conditions = append(ub.conditions, updateCondition{
+		field:     field,
+		operator:  operator,
+		value:     value,
+		logicalOp: "OR",
 	})
 	return ub
 }
@@ -2228,6 +2240,15 @@ func (ub *updateBuilder) executeInternal(result any) error {
 	metadata, err := ub.query.db.registry.GetMetadata(ub.query.model)
 	if err != nil {
 		return err
+	}
+
+	// Check if we have OR conditions
+	var hasOrConditions bool
+	for _, cond := range ub.conditions {
+		if cond.logicalOp == "OR" {
+			hasOrConditions = true
+			break
+		}
 	}
 
 	// Extract primary key from conditions
@@ -2372,24 +2393,159 @@ func (ub *updateBuilder) executeInternal(result any) error {
 	}
 
 	// Add conditions from the builder
-	for _, cond := range ub.conditions {
-		if cond.operator == "attribute_exists" {
-			builder.AddConditionExpression(cond.field, "attribute_exists", nil)
-		} else if cond.operator == "attribute_not_exists" {
-			builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
-		} else {
-			// For regular conditions, check if we need to use DB name
-			fieldMeta, exists := metadata.Fields[cond.field]
-			if exists {
-				builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
+	// First, add conditions using the standard method to ensure the first condition works
+	// Then we'll build a custom expression for OR support
+
+	if !hasOrConditions {
+		// All conditions are AND, use the standard approach
+		for _, cond := range ub.conditions {
+			if cond.operator == "attribute_exists" {
+				builder.AddConditionExpression(cond.field, "attribute_exists", nil)
+			} else if cond.operator == "attribute_not_exists" {
+				builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
 			} else {
-				builder.AddConditionExpression(cond.field, cond.operator, cond.value)
+				// For regular conditions, check if we need to use DB name
+				fieldMeta, exists := metadata.Fields[cond.field]
+				if exists {
+					builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
+				} else {
+					builder.AddConditionExpression(cond.field, cond.operator, cond.value)
+				}
+			}
+		}
+	} else {
+		// We have OR conditions, need to build custom expression
+		// We'll build the expression and then override it after builder.Build()
+		// For now, add a dummy condition to ensure the builder generates attribute names/values
+		if len(ub.conditions) > 0 {
+			// Add the first condition normally to initialize the builder
+			cond := ub.conditions[0]
+			if cond.operator == "attribute_exists" {
+				builder.AddConditionExpression(cond.field, "attribute_exists", nil)
+			} else if cond.operator == "attribute_not_exists" {
+				builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
+			} else {
+				fieldMeta, exists := metadata.Fields[cond.field]
+				if exists {
+					builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
+				} else {
+					builder.AddConditionExpression(cond.field, cond.operator, cond.value)
+				}
 			}
 		}
 	}
 
 	// Build the update expression
 	components := builder.Build()
+
+	// If we have OR conditions, rebuild the condition expression
+	if hasOrConditions && len(ub.conditions) > 0 {
+		// Build custom condition expression with OR support
+		var conditionExprs []string
+
+		// Extract name and value mappings from components
+		for i, cond := range ub.conditions {
+			var expr string
+			var fieldName string
+
+			// Get the correct field name (DB name if available)
+			if fieldMeta, exists := metadata.Fields[cond.field]; exists {
+				fieldName = fieldMeta.DBName
+			} else {
+				fieldName = cond.field
+			}
+
+			// Find the name placeholder for this field
+			var nameRef string
+			for placeholder, name := range components.ExpressionAttributeNames {
+				if name == fieldName {
+					nameRef = placeholder
+					break
+				}
+			}
+
+			// If no placeholder found, create one
+			if nameRef == "" {
+				nameRef = fmt.Sprintf("#or%d", i)
+				if components.ExpressionAttributeNames == nil {
+					components.ExpressionAttributeNames = make(map[string]string)
+				}
+				components.ExpressionAttributeNames[nameRef] = fieldName
+			}
+
+			if cond.operator == "attribute_exists" {
+				expr = fmt.Sprintf("attribute_exists(%s)", nameRef)
+			} else if cond.operator == "attribute_not_exists" {
+				expr = fmt.Sprintf("attribute_not_exists(%s)", nameRef)
+			} else {
+				// Find the value placeholder
+				valueRef := fmt.Sprintf(":orv%d", i)
+				if components.ExpressionAttributeValues == nil {
+					components.ExpressionAttributeValues = make(map[string]types.AttributeValue)
+				}
+
+				// Convert value to AttributeValue
+				av, err := ub.query.db.converter.ToAttributeValue(cond.value)
+				if err != nil {
+					return fmt.Errorf("failed to convert condition value: %w", err)
+				}
+				components.ExpressionAttributeValues[valueRef] = av
+
+				// Build the condition expression
+				switch cond.operator {
+				case "=":
+					expr = fmt.Sprintf("%s = %s", nameRef, valueRef)
+				case "<":
+					expr = fmt.Sprintf("%s < %s", nameRef, valueRef)
+				case ">":
+					expr = fmt.Sprintf("%s > %s", nameRef, valueRef)
+				case "<=":
+					expr = fmt.Sprintf("%s <= %s", nameRef, valueRef)
+				case ">=":
+					expr = fmt.Sprintf("%s >= %s", nameRef, valueRef)
+				case "!=", "<>":
+					expr = fmt.Sprintf("%s <> %s", nameRef, valueRef)
+				case "BEGINS_WITH":
+					expr = fmt.Sprintf("begins_with(%s, %s)", nameRef, valueRef)
+				case "CONTAINS":
+					expr = fmt.Sprintf("contains(%s, %s)", nameRef, valueRef)
+				case "BETWEEN":
+					// Handle BETWEEN operator
+					values, ok := cond.value.([]any)
+					if !ok || len(values) != 2 {
+						return fmt.Errorf("BETWEEN operator requires two values")
+					}
+					valueRef2 := fmt.Sprintf(":orv%db", i)
+					av2, err := ub.query.db.converter.ToAttributeValue(values[1])
+					if err != nil {
+						return fmt.Errorf("failed to convert BETWEEN value: %w", err)
+					}
+					components.ExpressionAttributeValues[valueRef2] = av2
+					expr = fmt.Sprintf("%s BETWEEN %s AND %s", nameRef, valueRef, valueRef2)
+				default:
+					return fmt.Errorf("unsupported operator: %s", cond.operator)
+				}
+			}
+
+			conditionExprs = append(conditionExprs, expr)
+		}
+
+		// Build final condition expression with OR/AND logic
+		if len(conditionExprs) > 0 {
+			var finalExpr strings.Builder
+			finalExpr.WriteString(conditionExprs[0])
+
+			for i := 1; i < len(conditionExprs); i++ {
+				finalExpr.WriteString(" ")
+				finalExpr.WriteString(ub.conditions[i].logicalOp)
+				finalExpr.WriteString(" ")
+				finalExpr.WriteString(conditionExprs[i])
+			}
+
+			// Override the condition expression
+			components.ConditionExpression = finalExpr.String()
+		}
+	}
 
 	// Build UpdateItem input
 	input := &dynamodb.UpdateItemInput{
