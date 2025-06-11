@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pay-theory/dynamorm"
 	payment "github.com/pay-theory/dynamorm/examples/payment"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
@@ -18,12 +18,12 @@ var ErrDuplicateRequest = errors.New("duplicate request")
 
 // IdempotencyMiddleware handles idempotent request processing
 type IdempotencyMiddleware struct {
-	db  *dynamorm.DB
+	db  core.ExtendedDB
 	ttl time.Duration
 }
 
 // NewIdempotencyMiddleware creates a new idempotency middleware
-func NewIdempotencyMiddleware(db *dynamorm.DB, ttl time.Duration) *IdempotencyMiddleware {
+func NewIdempotencyMiddleware(db core.ExtendedDB, ttl time.Duration) *IdempotencyMiddleware {
 	return &IdempotencyMiddleware{
 		db:  db,
 		ttl: ttl,
@@ -32,13 +32,8 @@ func NewIdempotencyMiddleware(db *dynamorm.DB, ttl time.Duration) *IdempotencyMi
 
 // Process executes a function with idempotency protection
 func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key string, fn func() (any, error)) (any, error) {
-	// Check if request already exists
-	var existing payment.IdempotencyRecord
-	err := m.db.Model(&payment.IdempotencyRecord{}).
-		Where("Key", "=", key).
-		Where("MerchantID", "=", merchantID).
-		First(&existing)
-
+	// Use the getRecord method to check if request already exists
+	existing, err := m.getRecord(ctx, merchantID, key)
 	if err == nil {
 		// Request already exists
 		if existing.Response != "" {
@@ -53,7 +48,8 @@ func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key str
 		return nil, fmt.Errorf("request is still being processed")
 	}
 
-	if err != customerrors.ErrItemNotFound {
+	// Only proceed if record not found, otherwise return the error
+	if !errors.Is(err, customerrors.ErrItemNotFound) && err.Error() != "idempotency record not found" {
 		return nil, fmt.Errorf("failed to check idempotency: %w", err)
 	}
 
@@ -118,6 +114,9 @@ func (m *IdempotencyMiddleware) GenerateKey(merchantID string, data any) string 
 
 // getRecord retrieves an existing idempotency record
 func (m *IdempotencyMiddleware) getRecord(ctx context.Context, merchantID, key string) (*payment.IdempotencyRecord, error) {
+	// Context could be used here for request cancellation in the future
+	_ = ctx
+
 	var record payment.IdempotencyRecord
 	err := m.db.Model(&payment.IdempotencyRecord{}).
 		Where("Key", "=", key).
@@ -141,6 +140,8 @@ func (m *IdempotencyMiddleware) getRecord(ctx context.Context, merchantID, key s
 
 // CleanupExpired removes expired idempotency records
 func (m *IdempotencyMiddleware) CleanupExpired(ctx context.Context) error {
+	// Context could be used here for request cancellation in the future
+	_ = ctx
 	// DynamoDB TTL will handle this automatically
 	// This method is for manual cleanup if needed
 	return nil

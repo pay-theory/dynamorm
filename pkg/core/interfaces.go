@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
@@ -26,6 +27,40 @@ type DB interface {
 
 	// WithContext returns a new DB instance with the given context
 	WithContext(ctx context.Context) DB
+}
+
+// ExtendedDB represents the full database interface with all available methods
+// This interface includes schema management and Lambda-specific features
+type ExtendedDB interface {
+	DB
+
+	// AutoMigrateWithOptions performs enhanced auto-migration with data copy support
+	// opts should be of type schema.AutoMigrateOption
+	AutoMigrateWithOptions(model any, opts ...any) error
+
+	// CreateTable creates a DynamoDB table for the given model
+	// opts should be of type schema.TableOption
+	CreateTable(model any, opts ...any) error
+
+	// EnsureTable checks if a table exists for the model and creates it if not
+	EnsureTable(model any) error
+
+	// DeleteTable deletes the DynamoDB table for the given model
+	DeleteTable(model any) error
+
+	// DescribeTable returns the table description for the given model
+	// Returns *types.TableDescription
+	DescribeTable(model any) (any, error)
+
+	// WithLambdaTimeout sets a deadline based on Lambda context
+	WithLambdaTimeout(ctx context.Context) DB
+
+	// WithLambdaTimeoutBuffer sets a custom timeout buffer for Lambda execution
+	WithLambdaTimeoutBuffer(buffer time.Duration) DB
+
+	// TransactionFunc executes a function within a full transaction context
+	// tx should be of type *transaction.Transaction
+	TransactionFunc(fn func(tx any) error) error
 }
 
 // Query represents a chainable query builder interface

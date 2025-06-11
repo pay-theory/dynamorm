@@ -11,7 +11,7 @@ import (
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/query"
-	"github.com/pay-theory/dynamorm/pkg/session"
+	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -363,27 +363,26 @@ func (e *testBatchExecutor) ExecuteBatchWriteItem(tableName string, writeRequest
 }
 
 // Helper functions
-func setupBatchTestDB(t *testing.T) (*dynamorm.DB, func()) {
-	config := session.Config{
+func setupBatchTestDB(t *testing.T) (core.ExtendedDB, func()) {
+	tests.RequireDynamoDBLocal(t)
+
+	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000", // DynamoDB Local
-	}
-
-	db, err := dynamorm.New(config)
+		Endpoint: "http://localhost:8000",
+	})
 	require.NoError(t, err)
 
-	// Create test table
-	t.Logf("Creating test table for batch operations")
-	err = db.CreateTable(&BatchTestItem{})
+	// Create test tables
+	err = db.AutoMigrate(&BatchTestItem{})
 	require.NoError(t, err)
 
-	// Wait for table to be active
-	time.Sleep(500 * time.Millisecond)
-
+	// Cleanup function
 	cleanup := func() {
-		err := db.DeleteTable(&BatchTestItem{})
-		if err != nil {
-			t.Logf("Failed to delete test table: %v", err)
+		// Clean up test data
+		var items []BatchTestItem
+		db.Model(&BatchTestItem{}).Scan(&items)
+		for _, item := range items {
+			db.Model(&item).Delete()
 		}
 	}
 

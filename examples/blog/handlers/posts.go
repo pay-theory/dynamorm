@@ -22,7 +22,7 @@ import (
 
 // PostHandler handles blog post operations
 type PostHandler struct {
-	db *dynamorm.DB
+	db core.ExtendedDB
 }
 
 // NewPostHandler creates a new post handler

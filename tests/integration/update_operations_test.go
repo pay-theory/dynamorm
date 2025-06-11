@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -861,7 +862,7 @@ func TestUpdateOperations_ErrorCases(t *testing.T) {
 }
 
 // Helper function to setup test database
-func setupTestDB(t *testing.T) (*dynamorm.DB, func()) {
+func setupTestDB(t *testing.T) (core.ExtendedDB, func()) {
 	tests.RequireDynamoDBLocal(t)
 
 	db, err := dynamorm.New(dynamorm.Config{

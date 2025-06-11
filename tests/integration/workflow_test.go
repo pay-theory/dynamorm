@@ -63,11 +63,11 @@ func TestCompleteWorkflow(t *testing.T) {
 		// Verify tables exist
 		desc, err := db.DescribeTable(&User{})
 		assert.NoError(t, err)
-		assert.Equal(t, types.TableStatusActive, desc.TableStatus)
+		assert.Equal(t, types.TableStatusActive, desc.(*types.TableDescription).TableStatus)
 
 		desc, err = db.DescribeTable(&Product{})
 		assert.NoError(t, err)
-		assert.Equal(t, types.TableStatusActive, desc.TableStatus)
+		assert.Equal(t, types.TableStatusActive, desc.(*types.TableDescription).TableStatus)
 	})
 
 	t.Run("BasicCRUDOperations", func(t *testing.T) {
@@ -135,7 +135,8 @@ func TestCompleteWorkflow(t *testing.T) {
 
 		// Perform atomic fund transfer
 		transferAmount := 25.0
-		err = db.TransactionFunc(func(tx *transaction.Transaction) error {
+		err = db.TransactionFunc(func(tx any) error {
+			txTyped := tx.(*transaction.Transaction)
 			// Fetch current balances
 			var u1, u2 User
 			err := db.Model(&User{ID: "tx-user-1"}).First(&u1)
@@ -152,10 +153,10 @@ func TestCompleteWorkflow(t *testing.T) {
 			u2.Balance += transferAmount
 
 			// Add updates to transaction
-			if err := tx.Update(&u1); err != nil {
+			if err := txTyped.Update(&u1); err != nil {
 				return err
 			}
-			return tx.Update(&u2)
+			return txTyped.Update(&u2)
 		})
 		require.NoError(t, err)
 
@@ -172,7 +173,8 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	t.Run("TransactionWithNewItems", func(t *testing.T) {
 		// Create order and update inventory atomically
-		err = db.TransactionFunc(func(tx *transaction.Transaction) error {
+		err = db.TransactionFunc(func(tx any) error {
+			txTyped := tx.(*transaction.Transaction)
 			// Create a new order
 			order := &User{
 				ID:      "order-1",
@@ -180,7 +182,7 @@ func TestCompleteWorkflow(t *testing.T) {
 				Balance: 999.99,
 				Status:  "pending",
 			}
-			if err := tx.Create(order); err != nil {
+			if err := txTyped.Create(order); err != nil {
 				return err
 			}
 
@@ -194,7 +196,7 @@ func TestCompleteWorkflow(t *testing.T) {
 			product.Stock -= 1
 			product.LastSold = time.Now()
 
-			return tx.Update(&product)
+			return txTyped.Update(&product)
 		})
 		require.NoError(t, err)
 
@@ -213,12 +215,13 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	t.Run("ConditionalTransactionFailure", func(t *testing.T) {
 		// Try to create a user that already exists
-		err = db.TransactionFunc(func(tx *transaction.Transaction) error {
+		err = db.TransactionFunc(func(tx any) error {
+			txTyped := tx.(*transaction.Transaction)
 			duplicate := &User{
 				ID:   "user-1",
 				Name: "Duplicate User",
 			}
-			return tx.Create(duplicate)
+			return txTyped.Create(duplicate)
 		})
 		// Should fail due to conditional check
 		assert.Error(t, err)
@@ -306,7 +309,8 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create multiple users in a transaction
-	err = db.TransactionFunc(func(tx *transaction.Transaction) error {
+	err = db.TransactionFunc(func(tx any) error {
+		txTyped := tx.(*transaction.Transaction)
 		users := []User{
 			{ID: "batch-1", Name: "User 1", Balance: 100},
 			{ID: "batch-2", Name: "User 2", Balance: 200},
@@ -316,7 +320,7 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 		}
 
 		for _, u := range users {
-			if err := tx.Create(&u); err != nil {
+			if err := txTyped.Create(&u); err != nil {
 				return err
 			}
 		}

@@ -240,4 +240,217 @@ func BenchmarkYourOperation(b *testing.B) {
 | `make docker-up` | Start DynamoDB Local |
 | `make docker-down` | Stop DynamoDB Local |
 | `make lint` | Run linters |
+| `make fmt` | Format code |
+
+# Testing with DynamORM
+
+This guide explains how to write testable code with DynamORM using interfaces and mocking.
+
+## The Problem
+
+Previously, DynamORM's `New()` function returned a concrete `*dynamorm.DB` type, making it impossible to mock for unit testing. This forced developers to use integration tests with real DynamoDB instances.
+
+## The Solution
+
+DynamORM now provides interfaces that make mocking straightforward:
+
+- **`core.DB`** - Basic interface with core functionality
+- **`core.ExtendedDB`** - Full interface with all features including schema management
+
+## Using Interfaces for Testability
+
+### 1. Basic Usage (Recommended for Most Cases)
+
+For most applications, use the `core.DB` interface:
+
+```go
+package service
+
+import (
+    "github.com/pay-theory/dynamorm/pkg/core"
+)
+
+type UserService struct {
+    db core.DB  // Use interface, not concrete type
+}
+
+func NewUserService(db core.DB) *UserService {
+    return &UserService{db: db}
+}
+
+func (s *UserService) GetUser(id string) (*User, error) {
+    var user User
+    err := s.db.Model(&User{}).Where("ID", "=", id).First(&user)
+    if err != nil {
+        return nil, err
+    }
+    return &user, nil
+}
+```
+
+In your main application:
+
+```go
+func main() {
+    // Use NewBasic for cleaner interface
+    db, err := dynamorm.NewBasic(dynamorm.Config{
+        Region: "us-east-1",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    userService := service.NewUserService(db)
+    // ... use the service
+}
+```
+
+### 2. Extended Features
+
+If you need schema management or Lambda features, use `core.ExtendedDB`:
+
+```go
+type AdminService struct {
+    db core.ExtendedDB  // Extended interface
+}
+
+func (s *AdminService) CreateUserTable() error {
+    return s.db.CreateTable(&User{})
+}
+```
+
+### 3. Writing Unit Tests with Mocks
+
+Now you can easily mock the database for unit tests:
+
+```go
+package service_test
+
+import (
+    "testing"
+    "github.com/stretchr/testify/mock"
+    "github.com/pay-theory/dynamorm/pkg/core"
+)
+
+// MockDB implements core.DB interface
+type MockDB struct {
+    mock.Mock
+}
+
+func (m *MockDB) Model(model any) core.Query {
+    args := m.Called(model)
+    return args.Get(0).(core.Query)
+}
+
+func (m *MockDB) Transaction(fn func(tx *core.Tx) error) error {
+    args := m.Called(fn)
+    return args.Error(0)
+}
+
+// ... implement other methods
+
+// MockQuery implements core.Query interface
+type MockQuery struct {
+    mock.Mock
+}
+
+func (m *MockQuery) Where(field string, op string, value any) core.Query {
+    args := m.Called(field, op, value)
+    return args.Get(0).(core.Query)
+}
+
+func (m *MockQuery) First(dest any) error {
+    args := m.Called(dest)
+    // Populate the destination with test data
+    if user, ok := dest.(*User); ok {
+        user.ID = "123"
+        user.Name = "Test User"
+    }
+    return args.Error(0)
+}
+
+// ... implement other methods
+
+func TestUserService_GetUser(t *testing.T) {
+    // Create mocks
+    mockDB := new(MockDB)
+    mockQuery := new(MockQuery)
+    
+    // Setup expectations
+    mockDB.On("Model", &User{}).Return(mockQuery)
+    mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
+    mockQuery.On("First", mock.Anything).Return(nil)
+    
+    // Create service with mock
+    service := NewUserService(mockDB)
+    
+    // Test
+    user, err := service.GetUser("123")
+    
+    // Assert
+    assert.NoError(t, err)
+    assert.Equal(t, "123", user.ID)
+    assert.Equal(t, "Test User", user.Name)
+    
+    // Verify expectations
+    mockDB.AssertExpectations(t)
+    mockQuery.AssertExpectations(t)
+}
+```
+
+## Using Pre-built Mocks
+
+DynamORM provides pre-built mock implementations in the test package:
+
+```go
+import "github.com/pay-theory/dynamorm/pkg/core"
+
+func TestWithPrebuiltMocks(t *testing.T) {
+    // The core package includes MockDB and MockQuery in its test files
+    // You can copy these or create your own
+}
+```
+
+## Best Practices
+
+1. **Always use interfaces** in your service/repository layers:
+   ```go
+   type Repository struct {
+       db core.DB  // ✅ Good - uses interface
+   }
+   
+   // Not:
+   type Repository struct {
+       db *dynamorm.DB  // ❌ Bad - uses concrete type
+   }
+   ```
+
+2. **Choose the right interface**:
+   - Use `core.DB` for most cases
+   - Use `core.ExtendedDB` only when you need schema management
+
+3. **Inject dependencies**:
+   ```go
+   // ✅ Good - dependency injection
+   func NewService(db core.DB) *Service {
+       return &Service{db: db}
+   }
+   
+   // ❌ Bad - creates dependency internally
+   func NewService() *Service {
+       db, _ := dynamorm.New(config)
+       return &Service{db: db}
+   }
+   ```
+
+4. **Mock at the right level**:
+   - Mock the `DB` interface for repository tests
+   - Mock your repository interface for service tests
+   - Use integration tests for complex query logic
+
+## Integration Tests
+
+For integration tests, you can still use the concrete implementation:
+
+```go
 | `make fmt` | Format code | 

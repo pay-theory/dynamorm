@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // AuditLog represents an audit log entry
@@ -28,11 +28,11 @@ type AuditLog struct {
 
 // AuditTracker provides audit trail functionality
 type AuditTracker struct {
-	db *dynamorm.DB
+	db core.ExtendedDB
 }
 
 // NewAuditTracker creates a new audit tracker
-func NewAuditTracker(db *dynamorm.DB) *AuditTracker {
+func NewAuditTracker(db core.ExtendedDB) *AuditTracker {
 	return &AuditTracker{db: db}
 }
 

@@ -33,7 +33,7 @@ type ProcessPaymentRequest struct {
 
 // Handler processes payment requests
 type Handler struct {
-	db            *dynamorm.DB
+	db            core.ExtendedDB
 	idempotency   *utils.IdempotencyMiddleware
 	webhookSender *utils.WebhookSender
 	jwtValidator  *utils.SimpleJWTValidator

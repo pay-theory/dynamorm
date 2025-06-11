@@ -11,6 +11,7 @@ import (
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/payment"
 	"github.com/pay-theory/dynamorm/examples/payment/utils"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -305,7 +306,7 @@ func TestExtractTokenFromHeader(t *testing.T) {
 
 // Helper functions
 
-func setupTestDB(t *testing.T) (*dynamorm.DB, error) {
+func setupTestDB(_ *testing.T) (core.ExtendedDB, error) {
 	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
@@ -329,13 +330,19 @@ func setupTestDB(t *testing.T) (*dynamorm.DB, error) {
 }
 
 // createTestToken creates a test JWT token with the simple validator format
-func createTestToken(_ string, _ string, _ time.Time) string {
+func createTestToken(merchantID string, email string, expiry time.Time) string {
 	// This is a simplified version - in real tests you'd use the same
 	// HMAC signing method as the validator
+	// For now, returning a pre-generated token for merchant-123
+	_ = merchantID
+	_ = email
+	_ = expiry
 	return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtZXJjaGFudF9pZCI6Im1lcmNoYW50LTEyMyIsImVtYWlsIjoidGVzdEBleGFtcGxlLmNvbSIsImV4cCI6OTk5OTk5OTk5OX0.ZjhmMjVmZWU4NzM2YWE1ZmQ5ZGFmNzUwZjM4MjU0ZWU4MWYzMTI1YzQzYzJhZGE0YWI1MmU5OGQzZGFkYzM5ZQ"
 }
 
-func createTestTokenWithoutMerchant(_ string, _ time.Time) string {
+func createTestTokenWithoutMerchant(email string, expiry time.Time) string {
 	// Token without merchant_id claim
+	_ = email
+	_ = expiry
 	return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20iLCJleHAiOjk5OTk5OTk5OTl9.YjQzNDRkYjY3OGI0NTY3OGIzNDU2Nzg5MzQ1Njc4OTM0NTY3ODkzNDU2Nzg5MzQ1Njc4OTM0NTY3ODkzNDU2"
 }

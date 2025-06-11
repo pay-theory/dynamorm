@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
 	"github.com/stretchr/testify/assert"
@@ -380,7 +381,7 @@ func TestMemoryStability(t *testing.T) {
 
 // Helper functions
 
-func setupStressDB(t *testing.T) (*dynamorm.DB, error) {
+func setupStressDB(t *testing.T) (core.ExtendedDB, error) {
 	// Initialize AWS config
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
@@ -432,7 +433,7 @@ func setupStressDB(t *testing.T) (*dynamorm.DB, error) {
 	return db, nil
 }
 
-func seedStressData(t *testing.T, db *dynamorm.DB, count int) {
+func seedStressData(t *testing.T, db core.ExtendedDB, count int) {
 	for i := 0; i < count; i++ {
 		user := models.TestUser{
 			ID:        fmt.Sprintf("stress-user-%d", i),

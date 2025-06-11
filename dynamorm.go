@@ -37,7 +37,7 @@ type DB struct {
 }
 
 // New creates a new DynamORM instance with the given configuration
-func New(config session.Config) (*DB, error) {
+func New(config session.Config) (core.ExtendedDB, error) {
 	sess, err := session.NewSession(&config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -50,6 +50,12 @@ func New(config session.Config) (*DB, error) {
 		marshaler: marshal.New(),
 		ctx:       context.Background(),
 	}, nil
+}
+
+// NewBasic creates a new DynamORM instance that returns the basic DB interface
+// Use this when you only need core functionality and want easier mocking
+func NewBasic(config session.Config) (core.DB, error) {
+	return New(config)
 }
 
 // Model returns a new query builder for the given model
@@ -107,20 +113,40 @@ func (db *DB) AutoMigrate(models ...any) error {
 }
 
 // AutoMigrateWithOptions performs enhanced auto-migration with data copy support
-func (db *DB) AutoMigrateWithOptions(model any, opts ...schema.AutoMigrateOption) error {
+func (db *DB) AutoMigrateWithOptions(model any, opts ...any) error {
+	// Convert opts to the expected type
+	var options []schema.AutoMigrateOption
+	for _, opt := range opts {
+		if option, ok := opt.(schema.AutoMigrateOption); ok {
+			options = append(options, option)
+		} else {
+			return fmt.Errorf("invalid option type: expected schema.AutoMigrateOption, got %T", opt)
+		}
+	}
+
 	manager := schema.NewManager(db.session, db.registry)
-	return manager.AutoMigrateWithOptions(model, opts...)
+	return manager.AutoMigrateWithOptions(model, options...)
 }
 
 // CreateTable creates a DynamoDB table for the given model
-func (db *DB) CreateTable(model any, opts ...schema.TableOption) error {
+func (db *DB) CreateTable(model any, opts ...any) error {
 	// Register model first
 	if err := db.registry.Register(model); err != nil {
 		return fmt.Errorf("failed to register model %T: %w", model, err)
 	}
 
+	// Convert opts to the expected type
+	var options []schema.TableOption
+	for _, opt := range opts {
+		if option, ok := opt.(schema.TableOption); ok {
+			options = append(options, option)
+		} else {
+			return fmt.Errorf("invalid option type: expected schema.TableOption, got %T", opt)
+		}
+	}
+
 	manager := schema.NewManager(db.session, db.registry)
-	return manager.CreateTable(model, opts...)
+	return manager.CreateTable(model, options...)
 }
 
 // EnsureTable checks if a table exists for the model and creates it if not
@@ -160,7 +186,7 @@ func (db *DB) DeleteTable(model any) error {
 }
 
 // DescribeTable returns the table description for the given model
-func (db *DB) DescribeTable(model any) (*types.TableDescription, error) {
+func (db *DB) DescribeTable(model any) (any, error) {
 	// Register model first
 	if err := db.registry.Register(model); err != nil {
 		return nil, fmt.Errorf("failed to register model %T: %w", model, err)
@@ -200,7 +226,7 @@ func (db *DB) WithContext(ctx context.Context) core.DB {
 }
 
 // WithLambdaTimeout sets a deadline based on Lambda context
-func (db *DB) WithLambdaTimeout(ctx context.Context) *DB {
+func (db *DB) WithLambdaTimeout(ctx context.Context) core.DB {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return db
@@ -228,7 +254,7 @@ func (db *DB) WithLambdaTimeout(ctx context.Context) *DB {
 }
 
 // WithLambdaTimeoutBuffer sets a custom timeout buffer for Lambda execution
-func (db *DB) WithLambdaTimeoutBuffer(buffer time.Duration) *DB {
+func (db *DB) WithLambdaTimeoutBuffer(buffer time.Duration) core.DB {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	db.lambdaTimeoutBuffer = buffer
@@ -1579,7 +1605,7 @@ var (
 
 // TransactionFunc executes a function within a database transaction
 // This is the actual implementation that uses our sophisticated transaction support
-func (db *DB) TransactionFunc(fn func(tx *transaction.Transaction) error) error {
+func (db *DB) TransactionFunc(fn func(tx any) error) error {
 	// Create a new transaction
 	tx := transaction.NewTransaction(db.session, db.registry, db.converter)
 	tx = tx.WithContext(db.ctx)

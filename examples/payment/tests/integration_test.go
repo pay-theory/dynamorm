@@ -331,10 +331,9 @@ func TestPaymentErrorScenarios(t *testing.T) {
 
 	// Test Case 4: Recovery procedures
 	// Create a payment in pending state
+	paymentID := uuid.New().String()
 	pendingPayment := &payment.Payment{
-		// All fields must be set to create a valid database record
-		// even if not all are used in assertions
-		ID:             uuid.New().String(),
+		ID:             paymentID,
 		IdempotencyKey: uuid.New().String(),
 		MerchantID:     merchant.ID,
 		Amount:         5000,
@@ -347,6 +346,23 @@ func TestPaymentErrorScenarios(t *testing.T) {
 
 	err = db.Model(pendingPayment).Create()
 	require.NoError(t, err)
+
+	// Verify the payment was created correctly by reading it back
+	var savedPayment payment.Payment
+	err = db.Model(&payment.Payment{}).
+		Where("ID", "=", paymentID).
+		First(&savedPayment)
+	require.NoError(t, err)
+
+	assert.Equal(t, pendingPayment.ID, savedPayment.ID)
+	assert.Equal(t, pendingPayment.IdempotencyKey, savedPayment.IdempotencyKey)
+	assert.Equal(t, pendingPayment.Amount, savedPayment.Amount)
+	assert.Equal(t, pendingPayment.Currency, savedPayment.Currency)
+	assert.Equal(t, pendingPayment.Status, savedPayment.Status)
+	assert.Equal(t, pendingPayment.MerchantID, savedPayment.MerchantID)
+	assert.WithinDuration(t, pendingPayment.CreatedAt, savedPayment.CreatedAt, 5*time.Second)
+	assert.WithinDuration(t, pendingPayment.UpdatedAt, savedPayment.UpdatedAt, 5*time.Second)
+	assert.Equal(t, pendingPayment.Version, savedPayment.Version)
 
 	// Recovery: Find and process old pending payments
 	var oldPendingPayments []*payment.Payment
@@ -372,7 +388,7 @@ func TestPaymentErrorScenarios(t *testing.T) {
 
 // Helper functions
 
-func initTestDB(t *testing.T) (*dynamorm.DB, error) {
+func initTestDB(t *testing.T) (core.ExtendedDB, error) {
 	// Skip if no AWS credentials or DynamoDB Local not available
 	if os.Getenv("AWS_ACCESS_KEY_ID") == "" && os.Getenv("AWS_PROFILE") == "" {
 		return nil, fmt.Errorf("AWS credentials not available")
@@ -413,7 +429,7 @@ func initTestDB(t *testing.T) (*dynamorm.DB, error) {
 	return db, nil
 }
 
-func createTestMerchant(t *testing.T, db *dynamorm.DB, id, name string) *payment.Merchant {
+func createTestMerchant(t *testing.T, db core.ExtendedDB, id, name string) *payment.Merchant {
 	merchant := &payment.Merchant{
 		ID:       id,
 		Name:     name,
@@ -436,7 +452,7 @@ func createTestMerchant(t *testing.T, db *dynamorm.DB, id, name string) *payment
 	return merchant
 }
 
-func createTestCustomer(t *testing.T, db *dynamorm.DB, merchantID, email string) *payment.Customer {
+func createTestCustomer(t *testing.T, db core.ExtendedDB, merchantID, email string) *payment.Customer {
 	customer := &payment.Customer{
 		ID:         uuid.New().String(),
 		MerchantID: merchantID,

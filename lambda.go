@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
@@ -59,7 +60,8 @@ var (
 
 // LambdaDB wraps DB with Lambda-specific optimizations
 type LambdaDB struct {
-	*DB
+	core.ExtendedDB
+	db             *DB       // Internal reference to concrete DB
 	modelCache     *sync.Map // Cache pre-registered models
 	isLambda       bool
 	lambdaMemoryMB int
@@ -136,8 +138,15 @@ func createLambdaDB() (*LambdaDB, error) {
 		return nil, err
 	}
 
+	// Type assert to get the concrete DB
+	concreteDB, ok := db.(*DB)
+	if !ok {
+		return nil, fmt.Errorf("failed to get concrete DB implementation")
+	}
+
 	ldb := &LambdaDB{
-		DB:             db,
+		ExtendedDB:     db,
+		db:             concreteDB,
 		modelCache:     &sync.Map{},
 		isLambda:       isLambda,
 		lambdaMemoryMB: memoryMB,
@@ -150,7 +159,7 @@ func createLambdaDB() (*LambdaDB, error) {
 // PreRegisterModels registers models at init time to reduce cold starts
 func (ldb *LambdaDB) PreRegisterModels(models ...any) error {
 	for _, model := range models {
-		if err := ldb.registry.Register(model); err != nil {
+		if err := ldb.db.registry.Register(model); err != nil {
 			return err
 		}
 		// Cache the model type for fast lookup
@@ -184,15 +193,17 @@ func (ldb *LambdaDB) WithLambdaTimeout(ctx context.Context) *LambdaDB {
 	adjustedDeadline := deadline.Add(-1 * time.Second)
 
 	newDB := &DB{
-		session:        ldb.session,
-		registry:       ldb.registry,
-		converter:      ldb.converter,
+		session:        ldb.db.session,
+		registry:       ldb.db.registry,
+		converter:      ldb.db.converter,
+		marshaler:      ldb.db.marshaler,
 		ctx:            ctx,
 		lambdaDeadline: adjustedDeadline,
 	}
 
 	return &LambdaDB{
-		DB:             newDB,
+		ExtendedDB:     newDB,
+		db:             newDB,
 		modelCache:     ldb.modelCache, // Share the same model cache pointer
 		isLambda:       ldb.isLambda,
 		lambdaMemoryMB: ldb.lambdaMemoryMB,
@@ -223,7 +234,7 @@ func (ldb *LambdaDB) OptimizeForMemory(memoryMB int) {
 // adjustConnectionPool updates the HTTP transport settings
 func (ldb *LambdaDB) adjustConnectionPool(maxConns int) {
 	// Get the current DynamoDB client configuration
-	if ldb.session == nil || ldb.session.Client() == nil {
+	if ldb.db == nil || ldb.db.session == nil || ldb.db.session.Client() == nil {
 		return
 	}
 
@@ -267,7 +278,7 @@ func (ldb *LambdaDB) OptimizeForColdStart() {
 		defer cancel()
 
 		// Perform a lightweight operation to establish connection
-		_, _ = ldb.session.Client().ListTables(ctx, &dynamodb.ListTablesInput{
+		_, _ = ldb.db.session.Client().ListTables(ctx, &dynamodb.ListTablesInput{
 			Limit: aws.Int32(1),
 		})
 	}()
