@@ -115,6 +115,12 @@ func (m *MockQuery) Create() error {
 	return args.Error(0)
 }
 
+// CreateOrUpdate creates a new item or updates an existing one (upsert)
+func (m *MockQuery) CreateOrUpdate() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 // Update updates the matching items
 func (m *MockQuery) Update(fields ...string) error {
 	args := m.Called(fields)

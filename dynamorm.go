@@ -556,14 +556,60 @@ func (q *query) Create() error {
 		return err
 	}
 
-	// Get model metadata
+	// Get metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
 		return err
 	}
 
-	// Use PutItem to create the item
-	return q.putItem(metadata)
+	// Put item
+	err = q.putItem(metadata)
+	if err != nil {
+		// Provide a more helpful error message for duplicate key errors
+		if errors.Is(err, customerrors.ErrConditionFailed) {
+			return fmt.Errorf("%w: item with the same key already exists", customerrors.ErrConditionFailed)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// CreateOrUpdate creates a new item or updates an existing one (upsert)
+func (q *query) CreateOrUpdate() error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
+	// Get metadata
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		return err
+	}
+
+	// Marshal the model to DynamoDB item
+	item, err := q.marshalItem(q.model, metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal item: %w", err)
+	}
+
+	// Build PutItem input without condition expression (allowing overwrites)
+	input := &dynamodb.PutItemInput{
+		TableName: aws.String(metadata.TableName),
+		Item:      item,
+	}
+
+	// Execute PutItem
+	_, err = q.db.session.Client().PutItem(q.ctx, input)
+	if err != nil {
+		return fmt.Errorf("failed to put item: %w", err)
+	}
+
+	// Update timestamp fields in the original model
+	q.updateTimestampsInModel(metadata)
+
+	return nil
 }
 
 // Update updates the matching items
@@ -1437,15 +1483,27 @@ func (q *query) unmarshalItems(items []map[string]types.AttributeValue, dest any
 
 	// Unmarshal each item
 	for i, item := range items {
-		elem := reflect.New(elemType)
+		var elem reflect.Value
+
+		// Check if element type is already a pointer
+		if elemType.Kind() == reflect.Ptr {
+			// For []*Type, create a new instance of Type (not *Type)
+			elem = reflect.New(elemType.Elem())
+		} else {
+			// For []Type, create a new instance of *Type
+			elem = reflect.New(elemType)
+		}
+
 		if err := q.unmarshalItem(item, elem.Interface(), metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal item %d: %w", i, err)
 		}
 
 		// Set the element in the slice
 		if elemType.Kind() == reflect.Ptr {
+			// For []*Type, elem is already a pointer, just set it
 			newSlice.Index(i).Set(elem)
 		} else {
+			// For []Type, dereference the pointer
 			newSlice.Index(i).Set(elem.Elem())
 		}
 	}
@@ -1792,6 +1850,7 @@ func (e *errorQuery) First(dest any) error                              { return
 func (e *errorQuery) All(dest any) error                                { return e.err }
 func (e *errorQuery) Count() (int64, error)                             { return 0, e.err }
 func (e *errorQuery) Create() error                                     { return e.err }
+func (e *errorQuery) CreateOrUpdate() error                             { return e.err }
 func (e *errorQuery) Update(fields ...string) error                     { return e.err }
 func (e *errorQuery) Delete() error                                     { return e.err }
 func (e *errorQuery) Scan(dest any) error                               { return e.err }

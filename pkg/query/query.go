@@ -271,6 +271,68 @@ func (q *Query) Create() error {
 	return fmt.Errorf("executor does not support PutItem operation")
 }
 
+// CreateOrUpdate creates a new item or updates an existing one (upsert)
+func (q *Query) CreateOrUpdate() error {
+	// Build the item to put
+	item := make(map[string]types.AttributeValue)
+
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+	modelType := modelValue.Type()
+
+	// Convert all fields to AttributeValues
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+
+		// Skip unexported fields
+		if !field.IsExported() {
+			continue
+		}
+
+		// Parse dynamorm tags
+		tag := field.Tag.Get("dynamorm")
+		if tag == "-" {
+			continue
+		}
+
+		// Get field value
+		fieldValue := modelValue.Field(i)
+		if !fieldValue.IsValid() {
+			continue
+		}
+
+		// Skip zero values if omitempty is set
+		if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
+			continue
+		}
+
+		// Convert to AttributeValue
+		av, err := expr.ConvertToAttributeValue(fieldValue.Interface())
+		if err != nil {
+			return fmt.Errorf("failed to convert field %s: %w", field.Name, err)
+		}
+
+		// Use field name as key
+		item[field.Name] = av
+	}
+
+	// Compile the query for PutItem (without condition expression)
+	compiled := &core.CompiledQuery{
+		Operation: "PutItem",
+		TableName: q.metadata.TableName(),
+	}
+
+	// Execute through a specialized PutItem executor
+	if putExecutor, ok := q.executor.(PutItemExecutor); ok {
+		return putExecutor.ExecutePutItem(compiled, item)
+	}
+
+	// Fallback: return error if executor doesn't support PutItem
+	return fmt.Errorf("executor does not support PutItem operation")
+}
+
 // isZeroValue checks if a reflect.Value is the zero value for its type
 func isZeroValue(v reflect.Value) bool {
 	switch v.Kind() {

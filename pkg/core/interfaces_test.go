@@ -128,6 +128,11 @@ func (m *MockQuery) Create() error {
 	return args.Error(0)
 }
 
+func (m *MockQuery) CreateOrUpdate() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 func (m *MockQuery) Update(fields ...string) error {
 	args := m.Called(fields)
 	return args.Error(0)

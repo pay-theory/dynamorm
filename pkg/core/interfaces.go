@@ -96,6 +96,9 @@ type Query interface {
 	// Create creates a new item
 	Create() error
 
+	// CreateOrUpdate creates a new item or updates an existing one (upsert)
+	CreateOrUpdate() error
+
 	// Update updates the matching items
 	Update(fields ...string) error
 
