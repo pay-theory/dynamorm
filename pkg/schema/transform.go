@@ -81,7 +81,7 @@ func (v *TransformValidator) ValidateTransform(transform interface{}) error {
 }
 
 // validateModelType validates that a reflect.Type matches the expected model metadata
-func (v *TransformValidator) validateModelType(modelType reflect.Type, metadata *model.Metadata, role string) error {
+func (v *TransformValidator) validateModelType(modelType reflect.Type, _ *model.Metadata, role string) error {
 	// Handle pointer types
 	if modelType.Kind() == reflect.Ptr {
 		modelType = modelType.Elem()

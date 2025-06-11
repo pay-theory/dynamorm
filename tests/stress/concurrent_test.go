@@ -514,22 +514,6 @@ func setupStressDB(t *testing.T) (core.ExtendedDB, error) {
 	return db, nil
 }
 
-func seedStressData(t *testing.T, db core.ExtendedDB, count int) {
-	for i := 0; i < count; i++ {
-		user := models.TestUser{
-			ID:        fmt.Sprintf("stress-user-%d", i),
-			Email:     fmt.Sprintf("stress%d@example.com", i),
-			CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour),
-			Status:    "active",
-			Age:       20 + (i % 50),
-			Tags:      []string{"stress", fmt.Sprintf("group%d", i%10)},
-			Name:      fmt.Sprintf("Stress User %d", i),
-		}
-		err := db.Model(&user).Create()
-		require.NoError(t, err)
-	}
-}
-
 func generateLargeString(size int) string {
 	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, size)

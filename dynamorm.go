@@ -2074,8 +2074,8 @@ func (ub *updateBuilder) Set(field string, value any) core.UpdateBuilder {
 }
 
 func (ub *updateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
-	// For now, just set the default value
-	ub.updates[field] = defaultValue
+	// Store with special marker for SetIfNotExists operation
+	ub.updates["SETIFNOTEXISTS:"+field] = defaultValue
 	return ub
 }
 
@@ -2201,6 +2201,9 @@ func (ub *updateBuilder) executeInternal(result any) error {
 	// Build update expression
 	builder := expr.NewBuilder()
 
+	// Track which fields we've already processed to avoid duplicates
+	processedFields := make(map[string]bool)
+
 	// Process updates
 	for field, value := range ub.updates {
 		// Handle special operation markers
@@ -2211,6 +2214,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 				continue
 			}
 			builder.AddUpdateAdd(fieldMeta.DBName, value)
+			processedFields[fieldName] = true
 		} else if strings.HasPrefix(field, "REMOVE:") {
 			fieldName := field[7:]
 			// Check if it's an indexed remove like "Tags[1]"
@@ -2229,6 +2233,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 					continue
 				}
 				builder.AddUpdateRemove(fieldMeta.DBName)
+				processedFields[fieldName] = true
 			}
 		} else if strings.HasPrefix(field, "DELETE:") {
 			fieldName := field[7:]
@@ -2237,6 +2242,23 @@ func (ub *updateBuilder) executeInternal(result any) error {
 				continue
 			}
 			builder.AddUpdateDelete(fieldMeta.DBName, value)
+			processedFields[fieldName] = true
+		} else if strings.HasPrefix(field, "SETIFNOTEXISTS:") {
+			fieldName := field[15:]
+			fieldMeta, exists := metadata.Fields[fieldName]
+			if !exists {
+				continue
+			}
+			// Skip if we've already processed this field with a regular SET
+			if processedFields[fieldName] {
+				continue
+			}
+			// Use AddUpdateFunction for if_not_exists
+			err := builder.AddUpdateFunction(fieldMeta.DBName, "if_not_exists", fieldMeta.DBName, value)
+			if err != nil {
+				return fmt.Errorf("failed to add if_not_exists for %s: %w", fieldName, err)
+			}
+			processedFields[fieldName] = true
 		} else if strings.HasPrefix(field, "APPEND:") {
 			fieldName := field[7:]
 			fieldMeta, exists := metadata.Fields[fieldName]
@@ -2248,6 +2270,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			if err != nil {
 				return fmt.Errorf("failed to add list append: %w", err)
 			}
+			processedFields[fieldName] = true
 		} else if strings.HasPrefix(field, "PREPEND:") {
 			fieldName := field[8:]
 			fieldMeta, exists := metadata.Fields[fieldName]
@@ -2259,6 +2282,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			if err != nil {
 				return fmt.Errorf("failed to add list prepend: %w", err)
 			}
+			processedFields[fieldName] = true
 		} else if strings.Contains(field, "[") && strings.Contains(field, "]") {
 			// Handle list element update like "Features[1]"
 			idx := strings.Index(field, "[")
@@ -2274,12 +2298,17 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			if !exists {
 				continue
 			}
+			// Skip if we've already processed this field
+			if processedFields[field] {
+				continue
+			}
 			builder.AddUpdateSet(fieldMeta.DBName, value)
+			processedFields[field] = true
 		}
 	}
 
-	// Always update updated_at if it exists
-	if metadata.UpdatedAtField != nil {
+	// Only update updated_at if it hasn't been explicitly set by the user
+	if metadata.UpdatedAtField != nil && !processedFields[metadata.UpdatedAtField.Name] {
 		builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now())
 	}
 

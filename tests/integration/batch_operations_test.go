@@ -451,12 +451,6 @@ func setupBatchTestDB(t *testing.T) (core.ExtendedDB, func()) {
 	return db, cleanup
 }
 
-func getTestDynamoDBClient(t *testing.T) *dynamodb.Client {
-	// This would be properly configured in a real test
-	// For now, return nil as this is just a test structure
-	return nil
-}
-
 // TestBatchOperationsErrorHandling tests error scenarios
 // COMMENTED OUT: This test uses query.New directly which is not supported in integration tests
 /*
