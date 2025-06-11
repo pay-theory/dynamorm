@@ -8,6 +8,7 @@
 
 DynamORM is a **Lambda-native**, type-safe ORM for Amazon DynamoDB written in Go. Designed specifically for serverless architectures, it provides lightweight wrappers around DynamoDB operations while maintaining compatibility with Infrastructure as Code patterns.
 
+
 ## 🎯 Project Vision
 
 DynamoDB is an incredible database - it's fast, cheap, and scales fantastically. However, its verbose API and complex data structures make it challenging to work with. DynamORM aims to provide developers with an intuitive, Go-idiomatic interface for DynamoDB without sacrificing any of its power.
