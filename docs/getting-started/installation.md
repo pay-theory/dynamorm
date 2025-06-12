@@ -5,14 +5,10 @@
 Install DynamORM using Go modules:
 
 ```bash
-go get github.com/pay-theory/dynamorm@v1.0.2
+go get github.com/pay-theory/dynamorm@v1.0.9
 ```
 
-## Important: Correct Import Pattern
-
-DynamORM requires specific imports for initialization. The examples in some documentation may be outdated.
-
-### Required Imports
+## Required Imports
 
 ```go
 import (
@@ -24,19 +20,7 @@ import (
 
 ## Initialization
 
-### ❌ INCORRECT (Outdated Examples)
-
-```go
-// This will NOT work - causes nil pointer dereference
-db := dynamorm.New()
-
-// This will also NOT work - incorrect type
-db, err := dynamorm.New(dynamorm.Config{
-    Region: "us-east-1",
-})
-```
-
-### ✅ CORRECT Initialization
+### Basic Initialization
 
 ```go
 package main
@@ -48,7 +32,7 @@ import (
 )
 
 func main() {
-    // Method 1: Basic configuration
+    // Basic configuration
     config := session.Config{
         Region: "us-east-1",
     }
@@ -183,7 +167,7 @@ func main() {
     
     // Ensure table exists (development only)
     if err := db.EnsureTable(&User{}); err != nil {
-        log.Printf("Warning: Could not ensure table: %v", err)
+        log.Printf("Could not ensure table: %v", err)
     }
     
     // Create a user

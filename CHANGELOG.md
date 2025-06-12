@@ -52,6 +52,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unused `metadataAdapter` type and methods 
 - Unused `filter` struct definition
 
+## [1.0.9] - 2025-01-02
+
+### Added
+- Significant performance improvements achieving near-parity with AWS SDK
+- Comprehensive documentation updates
+
+### Changed
+- Primary key recognition now properly uses `GetItem` for single lookups instead of `Query`
+- API refinements for consistency:
+  - `Where()` consistently uses 3 parameters: `(field, operator, value)`
+  - Replaced `Find()` with `All()` for retrieving multiple results
+  - `First()` now requires destination parameter
+
+### Fixed
+- Fixed primary key recognition for DynamoDB attribute names vs Go field names
+- Resolved index query compilation issues
+- Corrected field mapping for models with custom attribute names
+- Memory usage reduced by 77% (from 179KB to 42KB per operation)
+- Allocations reduced by 77% (from 2,416 to 566 per operation)
+
+### Performance
+- Single lookup operations: ~5x faster (from 2.5ms to 0.52ms)
+- Now only 1.01x slower than raw AWS SDK (essentially negligible)
+
 ## [1.0.3] - 2024-12-20
 
 ## [1.0.2] - 2024-01-XX
@@ -129,7 +153,8 @@ See [Release Notes v1.0.1](docs/releases/v1.0.1-interface-improvements.md) for d
 - Expression builder
 - Basic documentation
 
-[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/dynamorm/dynamorm/compare/v1.0.3...v1.0.9
 [1.0.3]: https://github.com/dynamorm/dynamorm/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/dynamorm/dynamorm/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.1...v1.0.1

@@ -196,7 +196,9 @@ type TransactItem struct {
 
 Each model acts as a repository:
 ```go
-db.Model(&User{}).Where("ID", "=", id).First()
+// Simple, intuitive API
+var user User
+err := db.Model(&User{}).Where("ID", "=", id).First(&user)
 ```
 
 ### 2. Unit of Work

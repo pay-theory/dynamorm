@@ -1,4 +1,4 @@
-# DynamORM v1.0.2 - Nil Pointer Dereference Fix
+# DynamORM - Nil Pointer Dereference Fix
 
 ## Issue
 After applying the recommended fix to use `session.Config` instead of `dynamorm.Config`, users still experience nil pointer dereference errors when attempting any DynamoDB operation.

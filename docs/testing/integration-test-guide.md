@@ -1,8 +1,8 @@
-# DynamORM v1.0.2 - Integration Testing Guide
+# DynamORM Integration Testing Guide
 
-## Critical Issues Found
+## Overview
 
-**The existing integration tests have never been run** because they use incorrect initialization patterns (`dynamorm.Config` instead of `session.Config`). This explains why the nil pointer dereference and other issues weren't caught before release.
+This guide covers best practices for integration testing with DynamORM, including setup with DynamoDB Local and common testing patterns.
 
 ## Prerequisites
 
@@ -35,19 +35,10 @@ export DYNAMODB_ENDPOINT="http://localhost:8000"
 export AWS_REGION="us-east-1"
 ```
 
-## Fix Integration Tests First
+## Writing Integration Tests
 
-Before running tests, we need to fix the initialization code. Here's an example fix:
+### Test Setup
 
-### Original (Broken):
-```go
-s.db, err = dynamorm.New(dynamorm.Config{
-    Region:   "us-east-1",
-    Endpoint: "http://localhost:8000",
-})
-```
-
-### Fixed:
 ```go
 import (
     "github.com/aws/aws-sdk-go-v2/config"
@@ -67,7 +58,7 @@ sessionConfig := session.Config{
     },
 }
 
-s.db, err = dynamorm.New(sessionConfig)
+db, err := dynamorm.New(sessionConfig)
 ```
 
 ## Running Integration Tests
@@ -229,13 +220,13 @@ jobs:
         go test ./tests/integration/... -v
 ```
 
-## Next Steps
+## Testing Best Practices
 
-1. **Fix all existing integration tests** to use correct initialization
-2. **Run the test suite** to identify all issues
-3. **Create GitHub issue** for each failing test
-4. **Fix issues incrementally** starting with critical path (Create, Query, Update, Delete)
-5. **Add new tests** for reported issues (nil pointer, composite keys, atomic operations)
+1. **Isolate Tests**: Each test should create its own tables or use unique keys
+2. **Clean Up**: Always clean up test data after tests complete
+3. **Use Fixtures**: Create reusable test data setup functions
+4. **Test Edge Cases**: Include tests for error conditions and limits
+5. **Performance Tests**: Add benchmarks for critical operations
 
 ## Quick Test Script
 

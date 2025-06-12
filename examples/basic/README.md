@@ -132,10 +132,11 @@ err := db.Model(&todo).Create()
 ### Query with Index
 ```go
 var notes []Note
-result, err := db.Query("gsi-user").
+err := db.Model(&Note{}).
+    Index("gsi-user").
     Where("UserID", "=", userID).
     Limit(10).
-    Execute(ctx, &notes)
+    All(&notes)
 ```
 
 ### Update with Condition

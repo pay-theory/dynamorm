@@ -1,6 +1,6 @@
-# DynamORM v1.0.2 - Troubleshooting Guide
+# DynamORM v1.0.9 - Troubleshooting Guide
 
-This guide addresses the most common issues encountered when using DynamORM v1.0.2.
+This guide addresses the most common issues encountered when using DynamORM v1.0.9.
 
 ## Table of Contents
 1. [Critical: Nil Pointer Dereference](#nil-pointer-dereference)
@@ -40,7 +40,7 @@ db, err := dynamorm.New(session.Config{
 })
 ```
 
-### ⚠️ If Still Getting Nil Pointer After Quick Fix
+### If Still Getting Nil Pointer After Quick Fix
 
 The nil pointer can persist even after the initialization fix due to AWS SDK v2 configuration issues. **See the comprehensive fix guide: [nil-pointer-fix.md](./nil-pointer-fix.md)**
 

@@ -1,31 +1,11 @@
 # DynamORM Documentation
 
-## ⚠️ CRITICAL: v1.0.2 Issues
-
-**DynamORM v1.0.2 has critical issues that affect all users:**
-
-1. **[Nil Pointer Dereference](./troubleshooting/nil-pointer-fix.md)** - Occurs on any DynamoDB operation
-2. **Integration tests have never been run** - The library was released without proper testing
-3. **Documentation shows non-working examples** - Many examples use incorrect initialization
-
-**If you're experiencing issues, please read:**
-- 🚨 **[Critical Issues Summary](./releases/v1.0.2-critical-issues.md)** - Complete list of known issues
-- 🔧 **[Nil Pointer Fix Guide](./troubleshooting/nil-pointer-fix.md)** - Comprehensive fix for the most common issue
-- 🧪 **[Integration Testing Guide](./testing/integration-test-guide.md)** - How to properly test DynamORM
-
----
-
 Welcome to the DynamORM documentation! This guide will help you get started with DynamORM and master its features.
-
-## 🚨 Important Notes for v1.0.2
-
-- **[Migration Guide from v0.x](./migration/v0-to-v1.md)** - Breaking changes and migration steps
-- **[Composite Keys Guide](./guides/composite-keys.md)** - Composite key syntax has changed
 
 ## 📚 Documentation Structure
 
 ### Getting Started
-- **[Installation & Initialization](./getting-started/installation.md)** ⭐ Start here!
+- **[Installation & Initialization](./getting-started/installation.md)** - Start here!
 - [Quick Start Guide](./getting-started/quickstart.md)
 - [Basic Usage](./getting-started/basic-usage.md)
 
@@ -34,11 +14,11 @@ Welcome to the DynamORM documentation! This guide will help you get started with
 - **[Composite Keys](./guides/composite-keys.md)** - PK/SK patterns and best practices
 - [Testing with Mocks](./guides/testing.md) - Unit testing with pre-built mocks
 - [Query Patterns](./guides/queries.md) - Advanced querying techniques
+- **[Query Patterns v1.0.9](./guides/query-patterns-v109.md)** - Complete v1.0.9 API examples
 - [Working with Indexes](./guides/indexes.md) - GSI and LSI usage
 
 ### Migration & Troubleshooting
-- **[v0.x to v1.0.2 Migration](./migration/v0-to-v1.md)** - Step-by-step migration guide
-- **[Nil Pointer Fix](./troubleshooting/nil-pointer-fix.md)** - Common initialization issues
+- **[v0.x to v1.0.9 Migration](./migration/v0-to-v1.md)** - Step-by-step migration guide
 - [Common Errors](./troubleshooting/common-errors.md) - Error solutions
 
 ### Architecture & Design
@@ -61,13 +41,12 @@ Welcome to the DynamORM documentation! This guide will help you get started with
 - [Testing Examples](../examples/testing/)
 
 ### Release Notes
+- [v1.0.9 - Performance Improvements](./releases/v1.0.9-performance.md)
+- [v1.0.3 - Core Implementation](./releases/v1.0.3-core-implementation.md)
 - [v1.0.2 - Mocks Package](./releases/v1.0.2-mocks-package.md)
 - [v1.0.1 - Interface Improvements](./releases/v1.0.1-interface-improvements.md)
 
 ## 🎯 Quick Links by Use Case
-
-### "I'm getting a nil pointer error"
-→ Read [Nil Pointer Fix Guide](./troubleshooting/nil-pointer-fix.md)
 
 ### "I'm upgrading from v0.x"
 → Follow [Migration Guide](./migration/v0-to-v1.md)
@@ -86,7 +65,7 @@ Welcome to the DynamORM documentation! This guide will help you get started with
 
 ## 📋 Common Code Patterns
 
-### Correct Initialization (v1.0.2)
+### Correct Initialization
 ```go
 import (
     "github.com/pay-theory/dynamorm"
@@ -132,4 +111,4 @@ Found an issue or want to contribute? Check our [Contributing Guide](../CONTRIBU
 
 ---
 
-*Last updated for DynamORM v1.0.2* 
+*Last updated for DynamORM v1.0.9* 

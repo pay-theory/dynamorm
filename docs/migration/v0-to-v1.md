@@ -1,315 +1,244 @@
-# Migration Guide: v0.x to v1.0.2
+# Migration Guide: v0.x to v1.0.9
 
-This guide helps you migrate from DynamORM v0.x to v1.0.2. The new version introduces interface-based design, better testability, and some breaking changes.
+This guide helps you migrate from DynamORM v0.x to v1.0.9. The new version introduces interface-based design, better testability, and some breaking changes.
 
-## Breaking Changes Overview
+## Overview
 
-1. **Initialization syntax changed**
-2. **Import paths changed**
-3. **Composite key syntax not supported**
-4. **Table name tags removed**
-5. **Return types now use interfaces**
+### Major Changes
+1. **Import Path**: Now uses `github.com/pay-theory/dynamorm`
+2. **Initialization**: New configuration-based setup
+3. **Interfaces**: DB operations now use interfaces for better testing
+4. **Composite Keys**: New PK/SK pattern for complex keys
+5. **Error Handling**: Standardized error types
+6. **Query API**: Refined method signatures
 
-## 1. Initialization Changes
+## Step-by-Step Migration
 
-### v0.x (Old)
+### 1. Update Import Paths
+
+#### v0.x
 ```go
-import (
-    "github.com/aws/aws-sdk-go-v2/service/dynamodb"
-    "github.com/dynamorm/dynamorm"
-)
-
-// Create DynamoDB client
-client := dynamodb.NewFromConfig(cfg)
-
-// Initialize DynamORM with client
-db := dynamorm.New(client)
+import "github.com/your-old-path/dynamorm"
 ```
 
-### v1.0.2 (New)
+#### v1.0.9
 ```go
 import (
     "github.com/pay-theory/dynamorm"
     "github.com/pay-theory/dynamorm/pkg/session"
 )
+```
 
-// Initialize with configuration
+### 2. Update Initialization
+
+#### v0.x
+```go
+db := dynamorm.New()
+// or
+db, err := dynamorm.NewWithConfig(config)
+```
+
+#### v1.0.9
+```go
+import "github.com/pay-theory/dynamorm/pkg/session"
+
 config := session.Config{
     Region: "us-east-1",
 }
-
 db, err := dynamorm.New(config)
 if err != nil {
     log.Fatal(err)
 }
 ```
 
-## 2. Import Path Changes
-
-### v0.x
-```go
-import "github.com/dynamorm/dynamorm"
-```
-
-### v1.0.2
-```go
-import (
-    "github.com/pay-theory/dynamorm"
-    "github.com/pay-theory/dynamorm/pkg/session"
-    "github.com/pay-theory/dynamorm/pkg/core"
-)
-```
-
-## 3. Model Definition Changes
-
-### Table Name Tags (Removed)
+### 3. Update Model Tags
 
 #### v0.x
 ```go
 type User struct {
-    ID    string `dynamorm:"pk,table:users"`
-    Email string `dynamorm:"sk"`
+    ID    string `dynamodb:"id,hash"`
+    Email string `dynamodb:"email,range"`
+    Name  string `dynamodb:"name"`
 }
 ```
 
-#### v1.0.2
+#### v1.0.9
 ```go
-type User struct {
-    ID    string `dynamorm:"pk"`  // Table name derived from struct name
-    Email string `dynamorm:"sk"`
-}
-// Table name will be "Users" (pluralized struct name)
-```
-
-### Composite Keys (Not Supported)
-
-#### v0.x (If you were using composite syntax)
-```go
-type Session struct {
-    ID        string `dynamorm:"pk,composite:partner_id,session_id"`
-    PartnerID string `dynamorm:"extract:partner_id"`
-    SessionID string `dynamorm:"extract:session_id"`
-}
-```
-
-#### v1.0.2 (Use PK/SK pattern)
-```go
-type Session struct {
-    PK        string `dynamorm:"pk"` // Store partner_id
-    SK        string `dynamorm:"sk"` // Store session_id
-    PartnerID string
-    SessionID string
-}
-
-func (s *Session) SetKeys() {
-    s.PK = s.PartnerID
-    s.SK = s.SessionID
-}
-```
-
-## 4. Interface-Based Returns
-
-### v0.x
-```go
-func InitDB() *dynamorm.DB {
-    return dynamorm.New(client)
-}
-```
-
-### v1.0.2
-```go
-func InitDB() (core.DB, error) {
-    config := session.Config{Region: "us-east-1"}
-    return dynamorm.New(config)
-}
-
-// Or for extended features:
-func InitExtendedDB() (core.ExtendedDB, error) {
-    config := session.Config{Region: "us-east-1"}
-    return dynamorm.New(config)
-}
-```
-
-## 5. Query Changes
-
-The query interface remains similar, but some methods have been added:
-
-### New in v1.0.2
-```go
-// Filter groups
-db.Model(&User{}).
-    FilterGroup(func(q core.Query) {
-        q.Filter("Age", ">", 18).
-          Filter("Age", "<", 65)
-    }).
-    All(&users)
-
-// Update builder
-db.Model(&Counter{ID: "123"}).
-    UpdateBuilder().
-    Add("Count", 1).        // Atomic increment
-    Execute()
-```
-
-## 6. Testing Changes
-
-### v0.x (Difficult to mock)
-```go
-type Service struct {
-    db *dynamorm.DB  // Concrete type - hard to mock
-}
-```
-
-### v1.0.2 (Easy to mock)
-```go
-import (
-    "github.com/pay-theory/dynamorm/pkg/core"
-    "github.com/pay-theory/dynamorm/pkg/mocks"
-)
-
-type Service struct {
-    db core.DB  // Interface - easy to mock
-}
-
-// In tests:
-mockDB := new(mocks.MockDB)
-mockQuery := new(mocks.MockQuery)
-```
-
-## 7. Table Operations
-
-### v0.x
-```go
-// Manual table creation via AWS SDK
-```
-
-### v1.0.2
-```go
-// Development helpers
-err := db.CreateTable(&User{})
-err := db.EnsureTable(&User{})
-err := db.AutoMigrate(&User{})
-```
-
-## Complete Migration Example
-
-### Before (v0.x)
-```go
-package main
-
-import (
-    "github.com/aws/aws-sdk-go-v2/config"
-    "github.com/aws/aws-sdk-go-v2/service/dynamodb"
-    "github.com/dynamorm/dynamorm"
-)
-
-type User struct {
-    ID    string `dynamorm:"pk,table:my-users"`
-    Email string `dynamorm:"sk"`
-    Name  string
-}
-
-func main() {
-    cfg, _ := config.LoadDefaultConfig(context.Background())
-    client := dynamodb.NewFromConfig(cfg)
-    
-    db := dynamorm.New(client)
-    
-    user := &User{
-        ID:    "user123",
-        Email: "john@example.com",
-        Name:  "John Doe",
-    }
-    
-    db.Create(user)
-}
-```
-
-### After (v1.0.2)
-```go
-package main
-
-import (
-    "log"
-    "github.com/pay-theory/dynamorm"
-    "github.com/pay-theory/dynamorm/pkg/session"
-)
-
-// Note: Table will be "Users" (pluralized)
-// If you need "my-users", rename struct to "MyUser"
 type User struct {
     ID    string `dynamorm:"pk"`
     Email string `dynamorm:"sk"`
-    Name  string
-}
-
-func main() {
-    config := session.Config{
-        Region: "us-east-1",
-    }
-    
-    db, err := dynamorm.New(config)
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    user := &User{
-        ID:    "user123",
-        Email: "john@example.com",
-        Name:  "John Doe",
-    }
-    
-    if err := db.Model(user).Create(); err != nil {
-        log.Printf("Create failed: %v", err)
-    }
+    Name  string `json:"name"`
 }
 ```
 
-## Migration Checklist
+### 4. Update Composite Keys
 
-- [ ] Update all imports to use `github.com/pay-theory/dynamorm`
-- [ ] Add `pkg/session` import for Config
-- [ ] Change initialization from `New(client)` to `New(config)`
-- [ ] Remove any `table:` tags from struct fields
-- [ ] Convert composite key syntax to PK/SK pattern
-- [ ] Add `SetKeys()` methods for composite key models
-- [ ] Update function signatures to return interfaces (`core.DB`)
-- [ ] Update tests to use mocks from `pkg/mocks`
-- [ ] Handle table name changes (struct name pluralization)
-- [ ] Add error handling to initialization
+#### v0.x
+```go
+type Order struct {
+    UserID  string `dynamodb:"user_id,hash"`
+    OrderID string `dynamodb:"order_id,range"`
+}
+```
 
-## Common Issues During Migration
+#### v1.0.9 (Use PK/SK pattern)
+```go
+type Order struct {
+    PK      string `dynamorm:"pk"` // "USER#123"
+    SK      string `dynamorm:"sk"` // "ORDER#456"
+    UserID  string `json:"user_id"`
+    OrderID string `json:"order_id"`
+}
 
-### 1. Nil Pointer Dereference
-**Cause**: Using old initialization syntax
-**Fix**: Use `session.Config` as shown above
+func (o *Order) SetKeys() {
+    o.PK = fmt.Sprintf("USER#%s", o.UserID)
+    o.SK = fmt.Sprintf("ORDER#%s", o.OrderID)
+}
+```
 
-### 2. Table Not Found
-**Cause**: Table names changed due to automatic pluralization
-**Fix**: Either rename structs or recreate tables with new names
+### 5. Update CRUD Operations
 
-### 3. Missing Primary Key
-**Cause**: Using composite key syntax that's no longer supported
-**Fix**: Switch to PK/SK pattern with helper methods
+#### v0.x
+```go
+// Create
+db.Put(user).Run()
 
-### 4. Type Mismatch
-**Cause**: Functions expecting concrete `*dynamorm.DB` type
-**Fix**: Update to use `core.DB` interface
+// Read
+db.Get("id", "123").One(&user)
 
-## Gradual Migration Strategy
+// Update
+db.Update("id", "123").Set("name", "John").Run()
 
-1. **Update imports and initialization first**
-2. **Fix compilation errors**
-3. **Update models one at a time**
-4. **Test each model after updating**
-5. **Update tests to use new mocking approach**
-6. **Deploy with careful monitoring**
+// Delete
+db.Delete("id", "123").Run()
+```
 
-## Getting Help
+#### v1.0.9
+```go
+// Create
+err := db.Model(&user).Create()
 
-If you encounter issues not covered here:
+// Read
+err := db.Model(&User{}).
+    Where("ID", "=", "123").
+    First(&user)
 
-1. Check the [Troubleshooting Guide](../troubleshooting/nil-pointer-fix.md)
-2. Review the [Composite Keys Guide](../guides/composite-keys.md)
-3. See [Installation Guide](../getting-started/installation.md) for correct setup
-4. Open an issue on GitHub with specific error messages 
+// Update
+err := db.Model(&User{ID: "123"}).
+    UpdateBuilder().
+    Set("Name", "John").
+    Execute()
+
+// Delete  
+err := db.Model(&User{ID: "123"}).Delete()
+```
+
+### 6. Update Query Operations
+
+#### v0.x
+```go
+var users []User
+db.Scan().Filter("active", true).All(&users)
+```
+
+#### v1.0.9
+```go
+var users []User
+err := db.Model(&User{}).
+    Filter("Active", "=", true).
+    Scan(&users)
+```
+
+### 7. Update Error Handling
+
+#### v0.x
+```go
+if err == dynamorm.ErrNotFound {
+    // handle not found
+}
+```
+
+#### v1.0.9
+```go
+import "github.com/pay-theory/dynamorm/pkg/errors"
+
+if errors.Is(err, errors.ErrItemNotFound) {
+    // handle not found
+}
+```
+
+### 8. Testing Updates
+
+#### v0.x (Difficult to mock)
+```go
+// Required real DynamoDB connection
+db := dynamorm.New()
+// Hard to unit test
+```
+
+#### v1.0.9 (Easy to mock)
+```go
+import "github.com/pay-theory/dynamorm/pkg/core"
+
+type Service struct {
+    db core.DB // Use interface
+}
+
+// In tests
+import "github.com/pay-theory/dynamorm/pkg/mocks"
+
+mockDB := new(mocks.MockDB)
+service := Service{db: mockDB}
+```
+
+## Common Patterns
+
+### Before (v0.x)
+```go
+// Complex query
+result := db.Query("UserIndex").
+    Hash("user_id", "123").
+    Range("created_at", ">", "2024-01-01").
+    Limit(10).
+    Run()
+```
+
+### After (v1.0.9)
+```go
+// Cleaner query
+var items []Item
+err := db.Model(&Item{}).
+    Index("UserIndex").
+    Where("UserID", "=", "123").
+    Where("CreatedAt", ">", "2024-01-01").
+    Limit(10).
+    All(&items)
+```
+
+## Breaking Changes Summary
+
+1. **No Default DB Instance**: Must explicitly create with `New(config)`
+2. **Model-Centric API**: Operations start with `db.Model()`
+3. **Explicit Error Returns**: All operations return errors
+4. **New Tag Format**: Use `dynamorm:` tags instead of `dynamodb:`
+5. **PK/SK Pattern**: For composite keys
+6. **Interface Types**: DB operations use interfaces
+
+## Need Help?
+
+- Check the [examples](../examples/) for working code
+- Review [API documentation](../reference/)
+- See [troubleshooting guide](../troubleshooting/)
+
+## Quick Reference Card
+
+| Operation | v0.x | v1.0.9 |
+|-----------|------|---------|
+| Import | `github.com/old/dynamorm` | `github.com/pay-theory/dynamorm` |
+| Initialize | `dynamorm.New()` | `dynamorm.New(session.Config{})` |
+| Create | `db.Put(item).Run()` | `db.Model(item).Create()` |
+| Read | `db.Get(hash, range).One(&item)` | `db.Model(&Type{}).Where(...).First(&item)` |
+| Update | `db.Update(keys).Set(...).Run()` | `db.Model(item).UpdateBuilder().Set(...).Execute()` |
+| Delete | `db.Delete(keys).Run()` | `db.Model(item).Delete()` |
+| Query | `db.Query(index).Hash(...).Run()` | `db.Model(&Type{}).Index(...).Where(...).All(&items)` |
+| Scan | `db.Scan().Filter(...).All(&items)` | `db.Model(&Type{}).Filter(...).Scan(&items)` | 
