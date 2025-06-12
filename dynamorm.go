@@ -35,6 +35,7 @@ type DB struct {
 	mu                  sync.RWMutex
 	lambdaDeadline      time.Time // Lambda execution deadline for timeout handling
 	lambdaTimeoutBuffer time.Duration
+	metadataCache       sync.Map // type -> *model.Metadata
 }
 
 // New creates a new DynamORM instance with the given configuration
@@ -67,11 +68,28 @@ func (db *DB) Model(model any) core.Query {
 		return &errorQuery{err: err}
 	}
 
+	// Fast-path metadata lookup - cache for later use
+	typ := reflect.TypeOf(model)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	// Check cache first
+	if _, ok := db.metadataCache.Load(typ); !ok {
+		// Get from registry and cache
+		meta, err := db.registry.GetMetadata(model)
+		if err != nil {
+			return &errorQuery{err: err}
+		}
+		db.metadataCache.Store(typ, meta)
+	}
+
 	return &query{
-		db:      db,
-		model:   model,
-		ctx:     db.ctx,
-		builder: expr.NewBuilder(),
+		db:         db,
+		model:      model,
+		ctx:        db.ctx,
+		builder:    expr.NewBuilder(),
+		conditions: make([]condition, 0, 4), // Pre-allocate for typical use case
 	}
 }
 
@@ -215,7 +233,7 @@ func (db *DB) WithContext(ctx context.Context) core.DB {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	return &DB{
+	newDB := &DB{
 		session:             db.session,
 		registry:            db.registry,
 		converter:           db.converter,
@@ -224,6 +242,14 @@ func (db *DB) WithContext(ctx context.Context) core.DB {
 		lambdaDeadline:      db.lambdaDeadline,
 		lambdaTimeoutBuffer: db.lambdaTimeoutBuffer,
 	}
+
+	// Copy metadata cache
+	db.metadataCache.Range(func(key, value any) bool {
+		newDB.metadataCache.Store(key, value)
+		return true
+	})
+
+	return newDB
 }
 
 // WithLambdaTimeout sets a deadline based on Lambda context
@@ -243,7 +269,7 @@ func (db *DB) WithLambdaTimeout(ctx context.Context) core.DB {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	return &DB{
+	newDB := &DB{
 		session:             db.session,
 		registry:            db.registry,
 		converter:           db.converter,
@@ -252,6 +278,14 @@ func (db *DB) WithLambdaTimeout(ctx context.Context) core.DB {
 		lambdaDeadline:      adjustedDeadline,
 		lambdaTimeoutBuffer: db.lambdaTimeoutBuffer,
 	}
+
+	// Copy metadata cache
+	db.metadataCache.Range(func(key, value any) bool {
+		newDB.metadataCache.Store(key, value)
+		return true
+	})
+
+	return newDB
 }
 
 // WithLambdaTimeoutBuffer sets a custom timeout buffer for Lambda execution
@@ -423,6 +457,10 @@ func (q *query) First(dest any) error {
 
 	// Build GetItem request if we have a primary key condition
 	if pk := q.extractPrimaryKey(metadata); pk != nil {
+		// Use optimized path when no projections are specified
+		if len(q.fields) == 0 {
+			return q.getItemDirect(metadata, pk, dest)
+		}
 		return q.getItem(metadata, pk, dest)
 	}
 
@@ -1010,11 +1048,21 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 			continue
 		}
 
+		// Check by Go field name first
 		if field, exists := metadata.Fields[cond.field]; exists {
 			if field.IsPK {
 				pk["pk"] = cond.value
 			} else if field.IsSK {
 				pk["sk"] = cond.value
+			}
+		} else {
+			// NEW: Also check by DynamoDB attribute name
+			if field, exists := metadata.FieldsByDBName[cond.field]; exists {
+				if field.IsPK {
+					pk["pk"] = cond.value
+				} else if field.IsSK {
+					pk["sk"] = cond.value
+				}
 			}
 		}
 	}
@@ -1106,6 +1154,45 @@ func (q *query) getItem(metadata *model.Metadata, pk map[string]any, dest any) e
 	}
 
 	// Unmarshal item to destination
+	return q.unmarshalItem(output.Item, dest, metadata)
+}
+
+// getItemDirect performs a direct GetItem without expression builder overhead
+func (q *query) getItemDirect(metadata *model.Metadata, pk map[string]any, dest any) error {
+	// Pre-allocate with exact size
+	keyMap := make(map[string]types.AttributeValue, 2)
+
+	// Direct conversion without error handling in hot path
+	if pkValue, hasPK := pk["pk"]; hasPK {
+		if av, err := q.db.converter.ToAttributeValue(pkValue); err == nil {
+			keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+		} else {
+			return fmt.Errorf("failed to convert partition key: %w", err)
+		}
+	}
+
+	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
+		if av, err := q.db.converter.ToAttributeValue(skValue); err == nil {
+			keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+		} else {
+			return fmt.Errorf("failed to convert sort key: %w", err)
+		}
+	}
+
+	// Direct API call
+	output, err := q.db.session.Client().GetItem(q.ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(metadata.TableName),
+		Key:       keyMap,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to get item: %w", err)
+	}
+
+	if output.Item == nil {
+		return customerrors.ErrItemNotFound
+	}
+
 	return q.unmarshalItem(output.Item, dest, metadata)
 }
 
