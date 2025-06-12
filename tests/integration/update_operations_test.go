@@ -892,3 +892,116 @@ func setupTestDB(t *testing.T) (core.ExtendedDB, func()) {
 
 	return db, cleanup
 }
+
+// TestUpdateOperations_ExecuteWithResultAutoReturnValues tests the bug fix where
+// ExecuteWithResult should automatically set ReturnValues to ALL_NEW when not explicitly set
+func TestUpdateOperations_ExecuteWithResultAutoReturnValues(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	db, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Create table
+	err := db.CreateTable(&UpdateProduct{})
+	require.NoError(t, err)
+
+	t.Run("ExecuteWithResult returns values after Add without explicit ReturnValues", func(t *testing.T) {
+		// Create initial product
+		product := &UpdateProduct{
+			ID:       "PROD-ADD-TEST",
+			Category: "TestCategory",
+			Name:     "Test Product",
+			Price:    10.0,
+			Stock:    5,
+			Version:  1,
+		}
+		err := db.Model(product).Create()
+		require.NoError(t, err)
+
+		// Update with Add operation and ExecuteWithResult WITHOUT setting ReturnValues
+		var result UpdateProduct
+		err = db.Model(&UpdateProduct{}).
+			Where("ID", "=", "PROD-ADD-TEST").
+			Where("Category", "=", "TestCategory").
+			UpdateBuilder().
+			Add("Stock", 3). // Atomic increment
+			Set("LastModified", time.Now()).
+			ExecuteWithResult(&result)
+
+		// Should succeed
+		require.NoError(t, err)
+
+		// Verify the result contains updated values (not zero values)
+		assert.Equal(t, "PROD-ADD-TEST", result.ID, "ID should be populated")
+		assert.Equal(t, "TestCategory", result.Category, "Category should be populated")
+		assert.Equal(t, "Test Product", result.Name, "Name should be populated")
+		assert.Equal(t, 10.0, result.Price, "Price should be populated")
+		assert.Equal(t, 8, result.Stock, "Stock should be 8 after adding 3 to 5")
+		assert.Equal(t, int64(1), result.Version, "Version should be populated")
+	})
+
+	t.Run("ExecuteWithResult with multiple atomic operations", func(t *testing.T) {
+		// Create user profile
+		user := &UserProfile{
+			UserID:     "USER-ATOMIC-TEST",
+			Email:      "atomic@test.com",
+			Username:   "atomicuser",
+			Score:      100.0,
+			LoginCount: 5,
+			Version:    1,
+		}
+		err := db.CreateTable(&UserProfile{})
+		require.NoError(t, err)
+		err = db.Model(user).Create()
+		require.NoError(t, err)
+
+		// Multiple atomic operations with ExecuteWithResult
+		var result UserProfile
+		err = db.Model(&UserProfile{}).
+			Where("UserID", "=", "USER-ATOMIC-TEST").
+			Where("Email", "=", "atomic@test.com").
+			UpdateBuilder().
+			Add("Score", 50.5).      // Add to score
+			Increment("LoginCount"). // Increment login count
+			Set("LastLogin", time.Now()).
+			ExecuteWithResult(&result)
+
+		// Should succeed
+		require.NoError(t, err)
+
+		// All fields should be populated
+		assert.Equal(t, "USER-ATOMIC-TEST", result.UserID, "UserID should be populated")
+		assert.Equal(t, "atomic@test.com", result.Email, "Email should be populated")
+		assert.Equal(t, "atomicuser", result.Username, "Username should be populated")
+		assert.Equal(t, 150.5, result.Score, "Score should be 150.5 after adding 50.5 to 100")
+		assert.Equal(t, int64(6), result.LoginCount, "LoginCount should be 6 after increment")
+		assert.NotZero(t, result.LastLogin, "LastLogin should be set")
+	})
+
+	t.Run("ExecuteWithResult with conditional Add operation", func(t *testing.T) {
+		// Test with conditional update to ensure it works with conditions too
+		product := &UpdateProduct{
+			ID:       "PROD-COND-ADD",
+			Category: "Conditional",
+			Stock:    10,
+			Version:  1,
+		}
+		err := db.Model(product).Create()
+		require.NoError(t, err)
+
+		var result UpdateProduct
+		err = db.Model(&UpdateProduct{}).
+			Where("ID", "=", "PROD-COND-ADD").
+			Where("Category", "=", "Conditional").
+			UpdateBuilder().
+			Add("Stock", -5).            // Decrement stock
+			Condition("Stock", ">=", 5). // Only if stock >= 5
+			ExecuteWithResult(&result)
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, result.Stock, "Stock should be 5 after subtracting 5 from 10")
+		assert.Equal(t, "PROD-COND-ADD", result.ID, "ID should be populated")
+	})
+}

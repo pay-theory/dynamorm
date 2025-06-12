@@ -2539,6 +2539,11 @@ func (ub *updateBuilder) executeInternal(result any) error {
 		input.ConditionExpression = aws.String(components.ConditionExpression)
 	}
 
+	// If result is requested but returnValues is still default, set it to ALL_NEW
+	if result != nil && ub.returnValues == "NONE" {
+		ub.returnValues = "ALL_NEW"
+	}
+
 	// Set return values
 	if ub.returnValues != "NONE" {
 		input.ReturnValues = types.ReturnValue(ub.returnValues)
