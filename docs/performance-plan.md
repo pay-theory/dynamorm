@@ -32,7 +32,7 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 		}
 
 		// Check by Go field name first
-		if field, exists := metadata.Fields[cond.field]; exists {
+		if field, exists := lookupField(metadata, cond.field); exists {
 			if field.IsPK {
 				pk["pk"] = cond.value
 			} else if field.IsSK {

@@ -513,7 +513,7 @@ func (q *query) All(dest any) error {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -562,7 +562,7 @@ func (q *query) Count() (int64, error) {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -1039,6 +1039,21 @@ func (q *query) WithContext(ctx context.Context) core.Query {
 
 // Helper methods for basic CRUD operations
 
+// lookupField provides consistent field lookup by checking both Go field names and DynamoDB attribute names
+func lookupField(metadata *model.Metadata, fieldName string) (*model.FieldMetadata, bool) {
+	// First check by Go field name
+	if field, exists := metadata.Fields[fieldName]; exists {
+		return field, true
+	}
+
+	// Then check by DynamoDB attribute name
+	if field, exists := metadata.FieldsByDBName[fieldName]; exists {
+		return field, true
+	}
+
+	return nil, false
+}
+
 func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 	pk := make(map[string]any)
 
@@ -1048,21 +1063,12 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 			continue
 		}
 
-		// Check by Go field name first
-		if field, exists := metadata.Fields[cond.field]; exists {
+		// Check field name using enhanced lookup
+		if field, exists := lookupField(metadata, cond.field); exists {
 			if field.IsPK {
 				pk["pk"] = cond.value
 			} else if field.IsSK {
 				pk["sk"] = cond.value
-			}
-		} else {
-			// NEW: Also check by DynamoDB attribute name
-			if field, exists := metadata.FieldsByDBName[cond.field]; exists {
-				if field.IsPK {
-					pk["pk"] = cond.value
-				} else if field.IsSK {
-					pk["sk"] = cond.value
-				}
 			}
 		}
 	}
@@ -1397,13 +1403,13 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 
 	// Add key conditions
 	for _, cond := range keyConditions {
-		fieldMeta := metadata.Fields[cond.field]
+		fieldMeta, _ := lookupField(metadata, cond.field)
 		builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
 	}
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1483,7 +1489,7 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1606,13 +1612,13 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 
 	// Add key conditions
 	for _, cond := range keyConditions {
-		fieldMeta := metadata.Fields[cond.field]
+		fieldMeta, _ := lookupField(metadata, cond.field)
 		builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
 	}
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1669,7 +1675,7 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1771,7 +1777,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 
 	// Build SET expressions
 	for _, fieldName := range fieldsToUpdate {
-		fieldMeta, exists := metadata.Fields[fieldName]
+		fieldMeta, exists := lookupField(metadata, fieldName)
 		if !exists {
 			continue
 		}
@@ -1885,7 +1891,7 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 	// Add any other conditions from the query
 	for _, cond := range q.conditions {
 		// Skip primary key conditions as they're already in the key
-		if fieldMeta, exists := metadata.Fields[cond.field]; exists && (fieldMeta.IsPK || fieldMeta.IsSK) {
+		if fieldMeta, exists := lookupField(metadata, cond.field); exists && (fieldMeta.IsPK || fieldMeta.IsSK) {
 			continue
 		}
 
@@ -1925,7 +1931,7 @@ func (e *errorQuery) Filter(field string, op string, value any) core.Query { ret
 func (e *errorQuery) OrFilter(field string, op string, value any) core.Query {
 	return e
 }
-func (e *errorQuery) FilterGroup(fn func(core.Query)) core.Query { return e }
+func (e *errorQuery) FilterGroup(fn func(q core.Query)) core.Query { return e }
 func (e *errorQuery) OrFilterGroup(fn func(core.Query)) core.Query {
 	return e
 }
@@ -2007,7 +2013,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	var filterConditions []condition
 
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists {
 			return nil, fmt.Errorf("field %s not found in model", cond.field)
 		}
@@ -2033,13 +2039,13 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		// Add key conditions
 		for _, cond := range keyConditions {
-			fieldMeta := metadata.Fields[cond.field]
+			fieldMeta, _ := lookupField(metadata, cond.field)
 			builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
 		}
 
 		// Add filter conditions
 		for _, cond := range filterConditions {
-			fieldMeta, exists := metadata.Fields[cond.field]
+			fieldMeta, exists := lookupField(metadata, cond.field)
 			if exists {
 				builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 			} else {
@@ -2106,7 +2112,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		// Add filter conditions
 		for _, cond := range filterConditions {
-			fieldMeta, exists := metadata.Fields[cond.field]
+			fieldMeta, exists := lookupField(metadata, cond.field)
 			if exists {
 				builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 			} else {
@@ -2376,7 +2382,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 		// Handle special operation markers
 		if strings.HasPrefix(field, "ADD:") {
 			fieldName := field[4:]
-			fieldMeta, exists := metadata.Fields[fieldName]
+			fieldMeta, exists := lookupField(metadata, fieldName)
 			if !exists {
 				continue
 			}
@@ -2388,14 +2394,14 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			if idx := strings.Index(fieldName, "["); idx > 0 {
 				// Handle list element removal
 				actualField := fieldName[:idx]
-				fieldMeta, exists := metadata.Fields[actualField]
+				fieldMeta, exists := lookupField(metadata, actualField)
 				if !exists {
 					continue
 				}
 				builder.AddUpdateRemove(fieldMeta.DBName + fieldName[idx:])
 			} else {
 				// Regular field removal
-				fieldMeta, exists := metadata.Fields[fieldName]
+				fieldMeta, exists := lookupField(metadata, fieldName)
 				if !exists {
 					continue
 				}
@@ -2404,7 +2410,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			}
 		} else if strings.HasPrefix(field, "DELETE:") {
 			fieldName := field[7:]
-			fieldMeta, exists := metadata.Fields[fieldName]
+			fieldMeta, exists := lookupField(metadata, fieldName)
 			if !exists {
 				continue
 			}
@@ -2412,7 +2418,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			processedFields[fieldName] = true
 		} else if strings.HasPrefix(field, "SETIFNOTEXISTS:") {
 			fieldName := field[15:]
-			fieldMeta, exists := metadata.Fields[fieldName]
+			fieldMeta, exists := lookupField(metadata, fieldName)
 			if !exists {
 				continue
 			}
@@ -2428,7 +2434,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			processedFields[fieldName] = true
 		} else if strings.HasPrefix(field, "APPEND:") {
 			fieldName := field[7:]
-			fieldMeta, exists := metadata.Fields[fieldName]
+			fieldMeta, exists := lookupField(metadata, fieldName)
 			if !exists {
 				continue
 			}
@@ -2440,7 +2446,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			processedFields[fieldName] = true
 		} else if strings.HasPrefix(field, "PREPEND:") {
 			fieldName := field[8:]
-			fieldMeta, exists := metadata.Fields[fieldName]
+			fieldMeta, exists := lookupField(metadata, fieldName)
 			if !exists {
 				continue
 			}
@@ -2454,14 +2460,14 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			// Handle list element update like "Features[1]"
 			idx := strings.Index(field, "[")
 			fieldName := field[:idx]
-			fieldMeta, exists := metadata.Fields[fieldName]
+			fieldMeta, exists := lookupField(metadata, fieldName)
 			if !exists {
 				continue
 			}
 			builder.AddUpdateSet(fieldMeta.DBName+field[idx:], value)
 		} else {
 			// Regular SET operation
-			fieldMeta, exists := metadata.Fields[field]
+			fieldMeta, exists := lookupField(metadata, field)
 			if !exists {
 				continue
 			}
@@ -2492,7 +2498,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 				builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
 			} else {
 				// For regular conditions, check if we need to use DB name
-				fieldMeta, exists := metadata.Fields[cond.field]
+				fieldMeta, exists := lookupField(metadata, cond.field)
 				if exists {
 					builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
 				} else {
@@ -2521,7 +2527,7 @@ func (ub *updateBuilder) executeInternal(result any) error {
 			var fieldName string
 
 			// Get the correct field name (DB name if available)
-			if fieldMeta, exists := metadata.Fields[cond.field]; exists {
+			if fieldMeta, exists := lookupField(metadata, cond.field); exists {
 				fieldName = fieldMeta.DBName
 			} else {
 				fieldName = cond.field
@@ -2754,14 +2760,14 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 	// Add filter conditions
 	var filterConditions []condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists || (!fieldMeta.IsPK && !fieldMeta.IsSK) {
 			filterConditions = append(filterConditions, cond)
 		}
 	}
 
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {

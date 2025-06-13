@@ -272,7 +272,8 @@ func (m *MockUpdateBuilder) OrCondition(field string, operator string, value any
 }
 
 func (m *MockUpdateBuilder) ConditionExists(field string) UpdateBuilder {
-	return m
+	args := m.Called(field)
+	return args.Get(0).(UpdateBuilder)
 }
 
 func (m *MockUpdateBuilder) ConditionNotExists(field string) UpdateBuilder {
@@ -823,11 +824,11 @@ func TestUpdateBuilderChaining(t *testing.T) {
 	mockBuilder := new(MockUpdateBuilder)
 
 	// Set up all methods to return the same builder instance for chaining
-	mockBuilder.On("Set", "name", "John Doe").Return(mockBuilder)
-	mockBuilder.On("Increment", "view_count").Return(mockBuilder)
-	mockBuilder.On("Add", "tags", []string{"new", "featured"}).Return(mockBuilder)
-	mockBuilder.On("ConditionExists", "id").Return(mockBuilder)
-	mockBuilder.On("ReturnValues", "ALL_NEW").Return(mockBuilder)
+	mockBuilder.On("Set", "name", "John Doe").Return(mockBuilder).Once()
+	mockBuilder.On("Increment", "view_count").Return(mockBuilder).Once()
+	mockBuilder.On("Add", "tags", []string{"new", "featured"}).Return(mockBuilder).Once()
+	mockBuilder.On("ConditionExists", "id").Return(mockBuilder).Once()
+	mockBuilder.On("ReturnValues", "ALL_NEW").Return(mockBuilder).Once()
 
 	// Test method chaining
 	result := mockBuilder.

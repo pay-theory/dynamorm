@@ -4,12 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/schema"
-	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/pkg/transaction"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
@@ -41,42 +36,22 @@ type Product struct {
 func TestCompleteWorkflow(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	// Initialize DB with correct session.Config
-	sessionConfig := session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-		AWSConfigOptions: []func(*config.LoadOptions) error{
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-			),
-			config.WithRegion("us-east-1"),
-		},
-	}
-
-	db, err := dynamorm.New(sessionConfig)
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&User{})
-	_ = db.DeleteTable(&Product{})
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 
 	t.Run("CreateTables", func(t *testing.T) {
 		// Create user table with custom options
-		err = db.CreateTable(&User{},
-			schema.WithBillingMode(types.BillingModePayPerRequest),
-		)
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &User{})
 
 		// Create product table
-		err = db.CreateTable(&Product{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &Product{})
 
 		// Verify tables exist
-		desc, err := db.DescribeTable(&User{})
+		desc, err := testCtx.DB.DescribeTable(&User{})
 		assert.NoError(t, err)
 		assert.Equal(t, types.TableStatusActive, desc.(*types.TableDescription).TableStatus)
 
-		desc, err = db.DescribeTable(&Product{})
+		desc, err = testCtx.DB.DescribeTable(&Product{})
 		assert.NoError(t, err)
 		assert.Equal(t, types.TableStatusActive, desc.(*types.TableDescription).TableStatus)
 	})
@@ -91,24 +66,24 @@ func TestCompleteWorkflow(t *testing.T) {
 			Status:  "active",
 		}
 
-		err = db.Model(user).Create()
+		err := testCtx.DB.Model(user).Create()
 		require.NoError(t, err)
 
 		// Read the user
 		var fetchedUser User
-		err = db.Model(&User{ID: "user-1"}).First(&fetchedUser)
+		err = testCtx.DB.Model(&User{ID: "user-1"}).First(&fetchedUser)
 		require.NoError(t, err)
 		assert.Equal(t, "Alice", fetchedUser.Name)
 		assert.Equal(t, float64(100), fetchedUser.Balance)
 
 		// Update the user
 		fetchedUser.Balance = 125.0
-		err = db.Model(&fetchedUser).Update()
+		err = testCtx.DB.Model(&fetchedUser).Update()
 		require.NoError(t, err)
 
 		// Verify update
 		var updatedUser User
-		err = db.Model(&User{ID: "user-1"}).First(&updatedUser)
+		err = testCtx.DB.Model(&User{ID: "user-1"}).First(&updatedUser)
 		require.NoError(t, err)
 		assert.Equal(t, float64(125), updatedUser.Balance)
 		assert.Equal(t, 1, updatedUser.Version) // Version should be incremented
@@ -121,13 +96,13 @@ func TestCompleteWorkflow(t *testing.T) {
 		}
 
 		for _, p := range products {
-			err = db.Model(&p).Create()
+			err = testCtx.DB.Model(&p).Create()
 			require.NoError(t, err)
 		}
 
 		// Query products by category
 		var electronics []Product
-		err = db.Model(&Product{CategoryID: "electronics"}).
+		err = testCtx.DB.Model(&Product{CategoryID: "electronics"}).
 			Where("CategoryID", "=", "electronics").
 			All(&electronics)
 		require.NoError(t, err)
@@ -139,22 +114,22 @@ func TestCompleteWorkflow(t *testing.T) {
 		user1 := &User{ID: "tx-user-1", Name: "Bob", Email: "bob@example.com", Balance: 200.0}
 		user2 := &User{ID: "tx-user-2", Name: "Charlie", Email: "charlie@example.com", Balance: 50.0}
 
-		err = db.Model(user1).Create()
+		err := testCtx.DB.Model(user1).Create()
 		require.NoError(t, err)
-		err = db.Model(user2).Create()
+		err = testCtx.DB.Model(user2).Create()
 		require.NoError(t, err)
 
 		// Perform atomic fund transfer
 		transferAmount := 25.0
-		err = db.TransactionFunc(func(tx any) error {
+		err = testCtx.DB.TransactionFunc(func(tx any) error {
 			txTyped := tx.(*transaction.Transaction)
 			// Fetch current balances
 			var u1, u2 User
-			err := db.Model(&User{ID: "tx-user-1"}).First(&u1)
+			err := testCtx.DB.Model(&User{ID: "tx-user-1"}).First(&u1)
 			if err != nil {
 				return err
 			}
-			err = db.Model(&User{ID: "tx-user-2"}).First(&u2)
+			err = testCtx.DB.Model(&User{ID: "tx-user-2"}).First(&u2)
 			if err != nil {
 				return err
 			}
@@ -173,9 +148,9 @@ func TestCompleteWorkflow(t *testing.T) {
 
 		// Verify balances after transaction
 		var afterUser1, afterUser2 User
-		err = db.Model(&User{ID: "tx-user-1"}).First(&afterUser1)
+		err = testCtx.DB.Model(&User{ID: "tx-user-1"}).First(&afterUser1)
 		require.NoError(t, err)
-		err = db.Model(&User{ID: "tx-user-2"}).First(&afterUser2)
+		err = testCtx.DB.Model(&User{ID: "tx-user-2"}).First(&afterUser2)
 		require.NoError(t, err)
 
 		assert.Equal(t, 175.0, afterUser1.Balance)
@@ -185,11 +160,11 @@ func TestCompleteWorkflow(t *testing.T) {
 	t.Run("TransactionWithNewItems", func(t *testing.T) {
 		// Get the product before the transaction
 		var product Product
-		err := db.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&product)
+		err := testCtx.DB.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&product)
 		require.NoError(t, err)
 
 		// Create order and update inventory atomically
-		err = db.TransactionFunc(func(tx any) error {
+		err = testCtx.DB.TransactionFunc(func(tx any) error {
 			txTyped := tx.(*transaction.Transaction)
 			// Create a new order
 			order := &User{
@@ -213,20 +188,20 @@ func TestCompleteWorkflow(t *testing.T) {
 
 		// Verify order was created
 		var order User
-		err = db.Model(&User{ID: "order-1"}).First(&order)
+		err = testCtx.DB.Model(&User{ID: "order-1"}).First(&order)
 		require.NoError(t, err)
 		assert.Equal(t, "pending", order.Status)
 
 		// Verify stock was updated
 		var updatedProduct Product
-		err = db.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&updatedProduct)
+		err = testCtx.DB.Model(&Product{ProductID: "prod-1", CategoryID: "electronics"}).First(&updatedProduct)
 		require.NoError(t, err)
 		assert.Equal(t, 9, updatedProduct.Stock)
 	})
 
 	t.Run("ConditionalTransactionFailure", func(t *testing.T) {
 		// Try to create a user that already exists
-		err = db.TransactionFunc(func(tx any) error {
+		err := testCtx.DB.TransactionFunc(func(tx any) error {
 			txTyped := tx.(*transaction.Transaction)
 			duplicate := &User{
 				ID:   "user-1",
@@ -241,7 +216,7 @@ func TestCompleteWorkflow(t *testing.T) {
 	t.Run("QueryWithIndex", func(t *testing.T) {
 		// Query by email using GSI
 		var userByEmail User
-		err = db.Model(&User{}).
+		err := testCtx.DB.Model(&User{}).
 			Index("email-index").
 			Where("Email", "=", "alice@example.com").
 			First(&userByEmail)
@@ -251,7 +226,7 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	t.Run("AutoMigrate", func(t *testing.T) {
 		// Test AutoMigrate with existing tables
-		err = db.AutoMigrate(&User{}, &Product{})
+		err := testCtx.DB.AutoMigrate(&User{}, &Product{})
 		assert.NoError(t, err) // Should not error on existing tables
 	})
 
@@ -260,7 +235,7 @@ func TestCompleteWorkflow(t *testing.T) {
 		// may have limitations on certain updates
 		// Commenting out for local testing but this shows the API
 
-		// err = db.UpdateTable(&User{},
+		// err = testCtx.DB.UpdateTable(&User{},
 		//     schema.WithStreamSpecification(types.StreamSpecification{
 		//         StreamEnabled:  aws.Bool(true),
 		//         StreamViewType: types.StreamViewTypeNewAndOldImages,
@@ -271,74 +246,47 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	// Cleanup
 	t.Cleanup(func() {
-		_ = db.DeleteTable(&User{})
-		_ = db.DeleteTable(&Product{})
+		_ = testCtx.DB.DeleteTable(&User{})
+		_ = testCtx.DB.DeleteTable(&Product{})
 	})
 }
 
 func TestEnsureTable(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	// Initialize DB with correct session.Config
-	sessionConfig := session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-		AWSConfigOptions: []func(*config.LoadOptions) error{
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-			),
-			config.WithRegion("us-east-1"),
-		},
-	}
-
-	db, err := dynamorm.New(sessionConfig)
-	require.NoError(t, err)
-
-	// Clean up
-	_ = db.DeleteTable(&User{})
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 
 	// EnsureTable should create if not exists
-	err = db.EnsureTable(&User{})
+	err := testCtx.DB.EnsureTable(&User{})
 	require.NoError(t, err)
 
 	// Second call should not error
-	err = db.EnsureTable(&User{})
+	err = testCtx.DB.EnsureTable(&User{})
 	require.NoError(t, err)
 
 	// Verify table exists
-	desc, err := db.DescribeTable(&User{})
+	desc, err := testCtx.DB.DescribeTable(&User{})
 	assert.NoError(t, err)
 	assert.NotNil(t, desc)
 
 	// Cleanup
-	_ = db.DeleteTable(&User{})
+	_ = testCtx.DB.DeleteTable(&User{})
 }
 
 func TestBatchOperationsWithTransaction(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	// Initialize DB with correct session.Config
-	sessionConfig := session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-		AWSConfigOptions: []func(*config.LoadOptions) error{
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-			),
-			config.WithRegion("us-east-1"),
-		},
-	}
-
-	db, err := dynamorm.New(sessionConfig)
-	require.NoError(t, err)
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 
 	// Ensure table exists
-	_ = db.DeleteTable(&User{})
-	err = db.CreateTable(&User{})
+	_ = testCtx.DB.DeleteTable(&User{})
+	err := testCtx.DB.CreateTable(&User{})
 	require.NoError(t, err)
 
 	// Create multiple users in a transaction
-	err = db.TransactionFunc(func(tx any) error {
+	err = testCtx.DB.TransactionFunc(func(tx any) error {
 		txTyped := tx.(*transaction.Transaction)
 		users := []User{
 			{ID: "batch-1", Name: "User 1", Email: "user1@example.com", Balance: 100},
@@ -359,10 +307,10 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 
 	// Verify all users were created
 	var allUsers []User
-	err = db.Model(&User{}).Scan(&allUsers)
+	err = testCtx.DB.Model(&User{}).Scan(&allUsers)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(allUsers), 5)
 
 	// Cleanup
-	_ = db.DeleteTable(&User{})
+	_ = testCtx.DB.DeleteTable(&User{})
 }

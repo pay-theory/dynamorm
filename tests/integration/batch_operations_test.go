@@ -33,15 +33,12 @@ type BatchTestItem struct {
 }
 
 func TestBatchOperations(t *testing.T) {
-	// Skip if not integration test
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	// Setup
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 	ctx := context.Background()
-	db, cleanup := setupBatchTestDB(t)
-	defer cleanup()
+
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &BatchTestItem{})
 
 	t.Run("BatchCreate", func(t *testing.T) {
 		// Create test items
@@ -78,12 +75,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		// Batch create
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
 		require.NoError(t, err)
 
 		// Verify all items were created
 		var results []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch1").
 			WithContext(ctx).
 			All(&results)
@@ -107,12 +104,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		// This should succeed by processing items in batches of 25
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
 		assert.NoError(t, err)
 
 		// Verify all 30 items were created
 		var results []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch2").
 			WithContext(ctx).
 			All(&results)
@@ -121,21 +118,6 @@ func TestBatchOperations(t *testing.T) {
 	})
 
 	t.Run("BatchGet", func(t *testing.T) {
-		// First, clean up any existing items with the same keys
-		cleanupItems := []BatchTestItem{
-			{ID: "batch3", SKValue: "get1"},
-			{ID: "batch3", SKValue: "get2"},
-			{ID: "batch3", SKValue: "get3"},
-		}
-
-		for _, item := range cleanupItems {
-			_ = db.Model(&BatchTestItem{}).
-				Where("ID", "=", item.ID).
-				Where("SKValue", "=", item.SKValue).
-				WithContext(ctx).
-				Delete()
-		}
-
 		// Setup: Create items first
 		setupItems := []BatchTestItem{
 			{ID: "batch3", SKValue: "get1", Name: "Get Item 1", Value: 100},
@@ -144,7 +126,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range setupItems {
-			err := db.Model(&item).WithContext(ctx).Create()
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
 			require.NoError(t, err)
 		}
 
@@ -156,7 +138,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		var results []BatchTestItem
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchGet(keys, &results)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchGet(keys, &results)
 		require.NoError(t, err)
 		assert.Len(t, results, 3)
 
@@ -177,7 +159,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range cleanupItems {
-			_ = db.Model(&BatchTestItem{}).
+			_ = testCtx.DB.Model(&BatchTestItem{}).
 				Where("ID", "=", item.ID).
 				Where("SKValue", "=", item.SKValue).
 				WithContext(ctx).
@@ -193,7 +175,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range setupItems {
-			err := db.Model(&item).WithContext(ctx).Create()
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
 			require.NoError(t, err)
 		}
 
@@ -204,12 +186,12 @@ func TestBatchOperations(t *testing.T) {
 			BatchTestItem{ID: "batch4", SKValue: "del3"},
 		}
 
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchDelete(deleteKeys)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchDelete(deleteKeys)
 		require.NoError(t, err)
 
 		// Verify items were deleted
 		var remaining []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch4").
 			WithContext(ctx).
 			All(&remaining)
@@ -228,7 +210,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range cleanupItems {
-			_ = db.Model(&BatchTestItem{}).
+			_ = testCtx.DB.Model(&BatchTestItem{}).
 				Where("ID", "=", item.ID).
 				Where("SKValue", "=", item.SKValue).
 				WithContext(ctx).
@@ -242,7 +224,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range setupItems {
-			err := db.Model(&item).WithContext(ctx).Create()
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
 			require.NoError(t, err)
 		}
 
@@ -259,12 +241,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		// Execute mixed batch write
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchWrite(putItems, deleteKeys)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchWrite(putItems, deleteKeys)
 		require.NoError(t, err)
 
 		// Verify results
 		var results []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch5").
 			WithContext(ctx).
 			All(&results)
@@ -288,7 +270,7 @@ func TestBatchOperations(t *testing.T) {
 
 		// Create items first
 		for _, item := range items {
-			err := db.Model(&item).WithContext(ctx).Create()
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
 			require.NoError(t, err)
 		}
 
@@ -300,7 +282,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		// Execute batch update with options
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchUpdateWithOptions(
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchUpdateWithOptions(
 			updateItems,
 			[]string{"Name", "Value"},
 		)
@@ -308,7 +290,7 @@ func TestBatchOperations(t *testing.T) {
 
 		// Verify updates
 		var results []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch6").
 			WithContext(ctx).
 			All(&results)

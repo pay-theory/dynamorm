@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,17 +30,11 @@ func TestCreateOrUpdate(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	// Initialize DynamORM with local DynamoDB
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://127.0.0.1:8000",
-	})
-	require.NoError(t, err)
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err = db.CreateTable(&TestItem{})
-	require.NoError(t, err)
-	defer db.DeleteTable(&TestItem{})
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &TestItem{})
 
 	t.Run("Create with duplicate key shows helpful error", func(t *testing.T) {
 		// Create first item
@@ -51,7 +44,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "First Item",
 			Value: 100,
 		}
-		err := db.Model(item1).Create()
+		err := testCtx.DB.Model(item1).Create()
 		require.NoError(t, err)
 
 		// Try to create duplicate - should fail with helpful error
@@ -61,7 +54,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "Second Item",
 			Value: 200,
 		}
-		err = db.Model(item2).Create()
+		err = testCtx.DB.Model(item2).Create()
 		require.Error(t, err)
 		// The error should wrap ErrConditionFailed
 		assert.True(t, errors.Is(err, customerrors.ErrConditionFailed))
@@ -77,7 +70,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "New Item",
 			Value: 300,
 		}
-		err := db.Model(item).CreateOrUpdate()
+		err := testCtx.DB.Model(item).CreateOrUpdate()
 		require.NoError(t, err)
 		assert.NotZero(t, item.CreatedAt)
 		assert.NotZero(t, item.UpdatedAt)
@@ -85,7 +78,7 @@ func TestCreateOrUpdate(t *testing.T) {
 
 		// Verify item was created
 		var retrieved TestItem
-		err = db.Model(&TestItem{}).
+		err = testCtx.DB.Model(&TestItem{}).
 			Where("ID", "=", "upsert-id").
 			Where("SK", "=", "upsert-sk").
 			First(&retrieved)
@@ -103,7 +96,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Value:   400,
 			Version: 5, // Set a specific version
 		}
-		err := db.Model(original).CreateOrUpdate()
+		err := testCtx.DB.Model(original).CreateOrUpdate()
 		require.NoError(t, err)
 		originalCreatedAt := original.CreatedAt
 
@@ -118,12 +111,12 @@ func TestCreateOrUpdate(t *testing.T) {
 			Value:   500,
 			Version: 10, // Different version - should be overwritten
 		}
-		err = db.Model(updated).CreateOrUpdate()
+		err = testCtx.DB.Model(updated).CreateOrUpdate()
 		require.NoError(t, err)
 
 		// Verify item was overwritten
 		var retrieved TestItem
-		err = db.Model(&TestItem{}).
+		err = testCtx.DB.Model(&TestItem{}).
 			Where("ID", "=", "overwrite-id").
 			Where("SK", "=", "overwrite-sk").
 			First(&retrieved)
@@ -143,13 +136,13 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name: "Version Test",
 		}
 		// Don't set version explicitly
-		err := db.Model(item).Create()
+		err := testCtx.DB.Model(item).Create()
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), item.Version)
 
 		// Verify in database
 		var retrieved TestItem
-		err = db.Model(&TestItem{}).
+		err = testCtx.DB.Model(&TestItem{}).
 			Where("ID", "=", "version-test").
 			Where("SK", "=", "version-sk").
 			First(&retrieved)
@@ -165,7 +158,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "Test Item",
 			Value: 600,
 		}
-		err := db.Model(item).Create()
+		err := testCtx.DB.Model(item).Create()
 		require.NoError(t, err)
 
 		// Try Create again - should fail
@@ -175,17 +168,17 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "Updated Name",
 			Value: 700,
 		}
-		err = db.Model(item2).Create()
+		err = testCtx.DB.Model(item2).Create()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 
 		// CreateOrUpdate should succeed
-		err = db.Model(item2).CreateOrUpdate()
+		err = testCtx.DB.Model(item2).CreateOrUpdate()
 		require.NoError(t, err)
 
 		// Verify the update
 		var retrieved TestItem
-		err = db.Model(&TestItem{}).
+		err = testCtx.DB.Model(&TestItem{}).
 			Where("ID", "=", "behavior-test").
 			Where("SK", "=", "behavior-sk").
 			First(&retrieved)

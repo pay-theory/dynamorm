@@ -2,54 +2,24 @@
 package integration
 
 import (
-	"context"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestUser is a simple model for testing
-type TestUser struct {
-	ID        string `dynamorm:"pk"`
-	Email     string `dynamorm:"index:gsi-email"`
-	Name      string
-	Active    bool
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
-}
-
 // TestBasicOperations tests the core CRUD operations
 func TestBasicOperations(t *testing.T) {
-	// Skip if integration tests are disabled
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("Integration tests disabled")
-	}
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 
-	// Initialize DynamORM with correct pattern
-	db := initTestDB(t)
-	defer db.Close()
-
-	// Debug: Let's check if the DB was created properly
-	t.Logf("DB created: %v", db != nil)
-
-	// Create table
-	t.Log("Attempting to create table...")
-	err := db.CreateTable(&TestUser{})
-	if err != nil && !isTableExistsError(err) {
-		t.Fatalf("Failed to create table: %v", err)
-	}
-
-	// Wait for table to be ready
-	waitForTable(t, "TestUsers")
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &TestUser{})
 
 	t.Run("Create", func(t *testing.T) {
 		user := &TestUser{
@@ -59,7 +29,7 @@ func TestBasicOperations(t *testing.T) {
 			Active: true,
 		}
 
-		err := db.Model(user).Create()
+		err := testCtx.DB.Model(user).Create()
 		assert.NoError(t, err)
 		assert.NotZero(t, user.CreatedAt)
 		assert.NotZero(t, user.UpdatedAt)
@@ -67,7 +37,7 @@ func TestBasicOperations(t *testing.T) {
 
 	t.Run("Query", func(t *testing.T) {
 		var user TestUser
-		err := db.Model(&TestUser{}).
+		err := testCtx.DB.Model(&TestUser{}).
 			Where("ID", "=", "test-user-1").
 			First(&user)
 
@@ -85,7 +55,7 @@ func TestBasicOperations(t *testing.T) {
 			Active: false,
 		}
 
-		err := db.Model(user).
+		err := testCtx.DB.Model(user).
 			Where("ID", "=", "test-user-1").
 			Update("Name", "Active")
 
@@ -93,7 +63,7 @@ func TestBasicOperations(t *testing.T) {
 
 		// Verify update
 		var updated TestUser
-		err = db.Model(&TestUser{}).
+		err = testCtx.DB.Model(&TestUser{}).
 			Where("ID", "=", "test-user-1").
 			First(&updated)
 
@@ -104,7 +74,7 @@ func TestBasicOperations(t *testing.T) {
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		err := db.Model(&TestUser{}).
+		err := testCtx.DB.Model(&TestUser{}).
 			Where("ID", "=", "test-user-1").
 			Delete()
 
@@ -112,7 +82,7 @@ func TestBasicOperations(t *testing.T) {
 
 		// Verify deletion
 		var deleted TestUser
-		err = db.Model(&TestUser{}).
+		err = testCtx.DB.Model(&TestUser{}).
 			Where("ID", "=", "test-user-1").
 			First(&deleted)
 
@@ -159,81 +129,4 @@ func TestNilPointerScenarios(t *testing.T) {
 		query := db.Model(&TestUser{})
 		assert.NotNil(t, query)
 	})
-}
-
-// Helper functions
-
-func initTestDB(t *testing.T) core.ExtendedDB {
-	t.Helper()
-
-	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "http://localhost:8000"
-	}
-
-	sessionConfig := session.Config{
-		Region:   "us-east-1",
-		Endpoint: endpoint,
-		AWSConfigOptions: []func(*config.LoadOptions) error{
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-			),
-			config.WithRegion("us-east-1"),
-		},
-	}
-
-	db, err := dynamorm.New(sessionConfig)
-	require.NoError(t, err)
-	require.NotNil(t, db)
-
-	return db
-}
-
-func waitForTable(t *testing.T, tableName string) {
-	t.Helper()
-
-	// Create a DynamoDB client for checking table status
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-		),
-	)
-	require.NoError(t, err)
-
-	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "http://localhost:8000"
-	}
-
-	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		o.BaseEndpoint = &endpoint
-	})
-
-	// Wait up to 30 seconds for table to be active
-	ctx := context.TODO()
-	for i := 0; i < 30; i++ {
-		resp, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
-			TableName: &tableName,
-		})
-
-		if err == nil && resp.Table != nil && resp.Table.TableStatus == "ACTIVE" {
-			return
-		}
-
-		time.Sleep(1 * time.Second)
-	}
-
-	t.Fatalf("Table %s did not become active", tableName)
-}
-
-func isTableExistsError(err error) bool {
-	return err != nil &&
-		(contains(err.Error(), "ResourceInUseException") ||
-			contains(err.Error(), "already exists"))
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[0:len(substr)] == substr ||
-		len(s) > len(substr) && contains(s[1:], substr)
 }

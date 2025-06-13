@@ -1,124 +1,18 @@
 package integration
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/pkg/session"
-	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-type QueryIntegrationSuite struct {
-	suite.Suite
-	db     core.ExtendedDB
-	client *dynamodb.Client
-	tables []string
-}
-
-func (s *QueryIntegrationSuite) SetupSuite() {
-	tests.RequireDynamoDBLocal(s.T())
-	// Initialize AWS config for DynamoDB Local
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...any) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           "http://localhost:8000",
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy", "dummy")),
-	)
-	s.Require().NoError(err)
-
-	// Initialize DynamoDB client
-	s.client = dynamodb.NewFromConfig(cfg)
-
-	// Initialize DynamORM with correct session.Config
-	sessionConfig := session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-		AWSConfigOptions: []func(*config.LoadOptions) error{
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-			),
-			config.WithRegion("us-east-1"),
-		},
-	}
-	s.db, err = dynamorm.New(sessionConfig)
-	s.Require().NoError(err)
-
-	// Create test tables
-	s.createTestTables()
-
-	// Seed test data
-	s.seedTestData()
-}
-
-func (s *QueryIntegrationSuite) TearDownSuite() {
-	// Clean up tables
-	for _, table := range s.tables {
-		_, _ = s.client.DeleteTable(context.TODO(), &dynamodb.DeleteTableInput{
-			TableName: aws.String(table),
-		})
-	}
-
-	// Close DB connection
-	if s.db != nil {
-		s.db.Close()
-	}
-}
-
-func (s *QueryIntegrationSuite) createTestTables() {
-	// Delete existing tables first
-	_ = s.db.DeleteTable(&models.TestUser{})
-	_ = s.db.DeleteTable(&models.TestProduct{})
-	_ = s.db.DeleteTable(&models.TestOrder{})
-
-	// Give DynamoDB time to clean up
-	time.Sleep(2 * time.Second)
-
-	// Create tables for each test model
-	err := s.db.AutoMigrate(
-		&models.TestUser{},
-		&models.TestProduct{},
-		&models.TestOrder{},
-	)
-	s.Require().NoError(err)
-
-	s.tables = []string{"TestUsers", "TestProducts", "TestOrders"}
-
-	// Wait for tables to be active
-	for _, table := range s.tables {
-		s.waitForTable(table)
-	}
-}
-
-func (s *QueryIntegrationSuite) waitForTable(tableName string) {
-	ctx := context.TODO()
-	for i := 0; i < 30; i++ {
-		desc, err := s.client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
-			TableName: aws.String(tableName),
-		})
-		if err == nil && desc.Table.TableStatus == "ACTIVE" {
-			return
-		}
-		time.Sleep(1 * time.Second)
-	}
-	s.Fail("Table not active: " + tableName)
-}
-
-func (s *QueryIntegrationSuite) seedTestData() {
+// seedQueryTestData seeds test data for query tests
+func seedQueryTestData(t *testing.T, testCtx *TestContext) {
 	// Seed users
 	users := []models.TestUser{
 		{ID: "user-1", Email: "john@example.com", CreatedAt: time.Now().Add(-48 * time.Hour), Age: 25, Status: "active", Tags: []string{"premium", "verified"}, Name: "John Doe"},
@@ -128,8 +22,8 @@ func (s *QueryIntegrationSuite) seedTestData() {
 	}
 
 	for _, user := range users {
-		err := s.db.Model(&user).Create()
-		s.Require().NoError(err)
+		err := testCtx.DB.Model(&user).Create()
+		require.NoError(t, err)
 	}
 
 	// Seed products
@@ -141,8 +35,8 @@ func (s *QueryIntegrationSuite) seedTestData() {
 	}
 
 	for _, product := range products {
-		err := s.db.Model(&product).Create()
-		s.Require().NoError(err)
+		err := testCtx.DB.Model(&product).Create()
+		require.NoError(t, err)
 	}
 
 	// Seed orders
@@ -168,38 +62,51 @@ func (s *QueryIntegrationSuite) seedTestData() {
 	}
 
 	for _, order := range orders {
-		err := s.db.Model(&order).Create()
-		s.Require().NoError(err)
+		err := testCtx.DB.Model(&order).Create()
+		require.NoError(t, err)
 	}
 }
 
-// Test Cases
+func TestComplexQueryWithIndexSelection(t *testing.T) {
+	testCtx := InitTestDB(t)
 
-func (s *QueryIntegrationSuite) TestComplexQueryWithIndexSelection() {
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+	testCtx.CreateTableIfNotExists(t, &models.TestOrder{})
+
+	// Seed test data
+	seedQueryTestData(t, testCtx)
+
 	// Test that queries automatically select the right index
 	var user models.TestUser
 
 	// This should use gsi-email index
-	err := s.db.Model(&models.TestUser{}).
+	err := testCtx.DB.Model(&models.TestUser{}).
 		Where("Email", "=", "john@example.com").
 		First(&user)
 
-	s.NoError(err)
-	s.Equal("john@example.com", user.Email)
+	assert.NoError(t, err)
+	assert.Equal(t, "john@example.com", user.Email)
 
 	// Test with category index on products
 	var products []models.TestProduct
-	err = s.db.Model(&models.TestProduct{}).
+	err = testCtx.DB.Model(&models.TestProduct{}).
 		Where("Category", "=", "electronics").
 		Where("Price", "<", 500.00).
 		All(&products)
 
-	s.NoError(err)
-	s.Len(products, 1)
-	s.Equal("ELEC-001", products[0].SKU)
+	assert.NoError(t, err)
+	assert.Len(t, products, 1)
+	assert.Equal(t, "ELEC-001", products[0].SKU)
 }
 
-func (s *QueryIntegrationSuite) TestBatchOperationsWithLimits() {
+func TestBatchOperationsWithLimits(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+
 	// Create many items to test batch limits
 	for i := 0; i < 30; i++ {
 		user := models.TestUser{
@@ -210,22 +117,27 @@ func (s *QueryIntegrationSuite) TestBatchOperationsWithLimits() {
 			Status:    "active",
 			Name:      fmt.Sprintf("Batch User %d", i),
 		}
-		err := s.db.Model(&user).Create()
-		s.NoError(err)
+		err := testCtx.DB.Model(&user).Create()
+		assert.NoError(t, err)
 	}
 
 	// Query with limit
 	var users []models.TestUser
-	err := s.db.Model(&models.TestUser{}).
+	err := testCtx.DB.Model(&models.TestUser{}).
 		Where("Status", "=", "active").
 		Limit(10).
 		All(&users)
 
-	s.NoError(err)
-	s.LessOrEqual(len(users), 10)
+	assert.NoError(t, err)
+	assert.LessOrEqual(t, len(users), 10)
 }
 
-func (s *QueryIntegrationSuite) TestPaginationAcrossMultiplePages() {
+func TestPaginationAcrossMultiplePages(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+
 	// Create 50 items for pagination testing
 	for i := 0; i < 50; i++ {
 		product := models.TestProduct{
@@ -237,8 +149,8 @@ func (s *QueryIntegrationSuite) TestPaginationAcrossMultiplePages() {
 			InStock:     true,
 			CreatedAt:   time.Now(),
 		}
-		err := s.db.Model(&product).Create()
-		s.NoError(err)
+		err := testCtx.DB.Model(&product).Create()
+		assert.NoError(t, err)
 	}
 
 	// Test pagination using limit and offset for now
@@ -246,26 +158,26 @@ func (s *QueryIntegrationSuite) TestPaginationAcrossMultiplePages() {
 
 	// First page
 	var firstPage []models.TestProduct
-	err := s.db.Model(&models.TestProduct{}).
+	err := testCtx.DB.Model(&models.TestProduct{}).
 		Where("Category", "=", "pagination-test").
 		Limit(10).
 		OrderBy("Price", "asc").
 		All(&firstPage)
 
-	s.NoError(err)
-	s.Len(firstPage, 10)
+	assert.NoError(t, err)
+	assert.Len(t, firstPage, 10)
 
 	// Second page using offset
 	var secondPage []models.TestProduct
-	err = s.db.Model(&models.TestProduct{}).
+	err = testCtx.DB.Model(&models.TestProduct{}).
 		Where("Category", "=", "pagination-test").
 		Limit(10).
 		Offset(10).
 		OrderBy("Price", "asc").
 		All(&secondPage)
 
-	s.NoError(err)
-	s.Len(secondPage, 10)
+	assert.NoError(t, err)
+	assert.Len(t, secondPage, 10)
 
 	// Verify no duplicates between pages
 	firstPageSKUs := make(map[string]bool)
@@ -274,81 +186,131 @@ func (s *QueryIntegrationSuite) TestPaginationAcrossMultiplePages() {
 	}
 
 	for _, p := range secondPage {
-		s.False(firstPageSKUs[p.SKU], "Found duplicate SKU across pages: %s", p.SKU)
+		assert.False(t, firstPageSKUs[p.SKU], "Found duplicate SKU across pages: %s", p.SKU)
 	}
 }
 
-func (s *QueryIntegrationSuite) TestComplexFilters() {
+func TestComplexFilters(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+	testCtx.CreateTableIfNotExists(t, &models.TestOrder{})
+
+	// Seed test data
+	seedQueryTestData(t, testCtx)
+
 	// Test multiple filter conditions
 	var users []models.TestUser
-	err := s.db.Model(&models.TestUser{}).
+	err := testCtx.DB.Model(&models.TestUser{}).
 		Where("Status", "=", "active").
 		Filter("Age", ">", 20).
 		Filter("Age", "<", 35).
 		All(&users)
 
-	s.NoError(err)
-	s.NotEmpty(users)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, users)
 	for _, user := range users {
-		s.Greater(user.Age, 20)
-		s.Less(user.Age, 35)
-		s.Equal("active", user.Status)
+		assert.Greater(t, user.Age, 20)
+		assert.Less(t, user.Age, 35)
+		assert.Equal(t, "active", user.Status)
 	}
 }
 
-func (s *QueryIntegrationSuite) TestINOperator() {
+func TestINOperator(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+	testCtx.CreateTableIfNotExists(t, &models.TestOrder{})
+
+	// Seed test data
+	seedQueryTestData(t, testCtx)
+
 	var users []models.TestUser
-	err := s.db.Model(&models.TestUser{}).
+	err := testCtx.DB.Model(&models.TestUser{}).
 		Where("Status", "in", []string{"active", "admin"}).
 		All(&users)
 
-	s.NoError(err)
-	s.GreaterOrEqual(len(users), 3) // We have at least 3 users with these statuses
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(users), 3) // We have at least 3 users with these statuses
 
 	for _, user := range users {
-		s.Contains([]string{"active", "admin"}, user.Status)
+		assert.Contains(t, []string{"active", "admin"}, user.Status)
 	}
 }
 
-func (s *QueryIntegrationSuite) TestContainsOperator() {
+func TestContainsOperator(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+	testCtx.CreateTableIfNotExists(t, &models.TestOrder{})
+
+	// Seed test data
+	seedQueryTestData(t, testCtx)
+
 	// Note: The contains operator might need special handling
 	// For now, let's use a Where clause with contains
 	var users []models.TestUser
-	err := s.db.Model(&models.TestUser{}).
+	err := testCtx.DB.Model(&models.TestUser{}).
 		Where("Tags", "contains", "verified").
 		All(&users)
 
-	s.NoError(err)
-	s.GreaterOrEqual(len(users), 3) // We have at least 3 verified users
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(users), 3) // We have at least 3 verified users
 
 	for _, user := range users {
-		s.Contains(user.Tags, "verified")
+		assert.Contains(t, user.Tags, "verified")
 	}
 }
 
-func (s *QueryIntegrationSuite) TestProjections() {
+func TestQueryProjections(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+	testCtx.CreateTableIfNotExists(t, &models.TestOrder{})
+
+	// Seed test data
+	seedQueryTestData(t, testCtx)
+
 	var users []models.TestUser
-	err := s.db.Model(&models.TestUser{}).
+	err := testCtx.DB.Model(&models.TestUser{}).
 		Where("Status", "=", "active").
 		Select("ID", "Email", "Name").
 		All(&users)
 
-	s.NoError(err)
-	s.NotEmpty(users)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, users)
 
 	// Verify selected fields are populated
 	for _, user := range users {
-		s.NotEmpty(user.ID)
-		s.NotEmpty(user.Email)
-		s.NotEmpty(user.Name)
+		assert.NotEmpty(t, user.ID)
+		assert.NotEmpty(t, user.Email)
+		assert.NotEmpty(t, user.Name)
 		// Age should be zero value since not selected
-		s.Zero(user.Age)
+		assert.Zero(t, user.Age)
 	}
 }
 
-func (s *QueryIntegrationSuite) TestTransactionQueries() {
+func TestTransactionQueries(t *testing.T) {
+	testCtx := InitTestDB(t)
+
+	// Create tables
+	testCtx.CreateTableIfNotExists(t, &models.TestUser{})
+	testCtx.CreateTableIfNotExists(t, &models.TestProduct{})
+	testCtx.CreateTableIfNotExists(t, &models.TestOrder{})
+
+	// Seed test data
+	seedQueryTestData(t, testCtx)
+
 	// Test query within transaction
-	err := s.db.Transaction(func(tx *core.Tx) error {
+	err := testCtx.DB.Transaction(func(tx *core.Tx) error {
 		var user models.TestUser
 		err := tx.Model(&models.TestUser{}).
 			Where("ID", "=", "user-1").
@@ -362,17 +324,13 @@ func (s *QueryIntegrationSuite) TestTransactionQueries() {
 		return tx.Model(&user).Update("Status")
 	})
 
-	s.NoError(err)
+	assert.NoError(t, err)
 
 	// Verify update
 	var updated models.TestUser
-	err = s.db.Model(&models.TestUser{}).
+	err = testCtx.DB.Model(&models.TestUser{}).
 		Where("ID", "=", "user-1").
 		First(&updated)
-	s.NoError(err)
-	s.Equal("premium", updated.Status)
-}
-
-func TestQueryIntegrationSuite(t *testing.T) {
-	suite.Run(t, new(QueryIntegrationSuite))
+	assert.NoError(t, err)
+	assert.Equal(t, "premium", updated.Status)
 }

@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,17 +27,11 @@ func TestUnmarshalSliceOfPointers(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	// Initialize DynamORM with local DynamoDB
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://127.0.0.1:8000",
-	})
-	require.NoError(t, err)
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err = db.CreateTable(&TestModel{})
-	require.NoError(t, err)
-	defer db.DeleteTable(&TestModel{})
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &TestModel{})
 
 	// Create test data
 	items := []TestModel{
@@ -49,14 +42,14 @@ func TestUnmarshalSliceOfPointers(t *testing.T) {
 
 	// Insert test data
 	for _, item := range items {
-		err := db.Model(&item).Create()
+		err := testCtx.DB.Model(&item).Create()
 		require.NoError(t, err)
 	}
 
 	// Test 1: All() with slice of pointers - THIS SHOULD NOW WORK!
 	t.Run("All with slice of pointers", func(t *testing.T) {
 		var results []*TestModel // Slice of pointers
-		err := db.Model(&TestModel{}).
+		err := testCtx.DB.Model(&TestModel{}).
 			Where("PK", "=", "test").
 			All(&results)
 
@@ -77,7 +70,7 @@ func TestUnmarshalSliceOfPointers(t *testing.T) {
 	// Test 2: All() with slice of values - should still work
 	t.Run("All with slice of values", func(t *testing.T) {
 		var results []TestModel // Slice of values
-		err := db.Model(&TestModel{}).
+		err := testCtx.DB.Model(&TestModel{}).
 			Where("PK", "=", "test").
 			All(&results)
 
@@ -95,7 +88,7 @@ func TestUnmarshalSliceOfPointers(t *testing.T) {
 	// Test 3: Scan() with slice of pointers
 	t.Run("Scan with slice of pointers", func(t *testing.T) {
 		var results []*TestModel
-		err := db.Model(&TestModel{}).
+		err := testCtx.DB.Model(&TestModel{}).
 			Filter("PK", "=", "test").
 			Scan(&results)
 
@@ -116,7 +109,7 @@ func TestUnmarshalSliceOfPointers(t *testing.T) {
 		}
 
 		var results []*TestModel
-		err := db.Model(&TestModel{}).BatchGet(keys, &results)
+		err := testCtx.DB.Model(&TestModel{}).BatchGet(keys, &results)
 
 		require.NoError(t, err)
 		assert.Len(t, results, 2)
@@ -131,7 +124,7 @@ func TestUnmarshalSliceOfPointers(t *testing.T) {
 	// Test 5: Empty results
 	t.Run("Empty results with slice of pointers", func(t *testing.T) {
 		var results []*TestModel
-		err := db.Model(&TestModel{}).
+		err := testCtx.DB.Model(&TestModel{}).
 			Where("PK", "=", "nonexistent").
 			All(&results)
 
