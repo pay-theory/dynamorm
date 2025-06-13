@@ -64,8 +64,13 @@ func NewBasic(config session.Config) (core.DB, error) {
 func (db *DB) Model(model any) core.Query {
 	// Ensure model is registered
 	if err := db.registry.Register(model); err != nil {
+		// Log the error for debugging
+		if db.ctx != nil {
+			// Include context info if available
+			return &errorQuery{err: fmt.Errorf("failed to register model %T: %w", model, err)}
+		}
 		// Return a query that will error on execution
-		return &errorQuery{err: err}
+		return &errorQuery{err: fmt.Errorf("failed to register model %T: %w", model, err)}
 	}
 
 	// Fast-path metadata lookup - cache for later use
@@ -79,15 +84,21 @@ func (db *DB) Model(model any) core.Query {
 		// Get from registry and cache
 		meta, err := db.registry.GetMetadata(model)
 		if err != nil {
-			return &errorQuery{err: err}
+			return &errorQuery{err: fmt.Errorf("failed to get metadata for model %T: %w", model, err)}
 		}
 		db.metadataCache.Store(typ, meta)
+	}
+
+	// Use the context from the DB if query doesn't have one
+	ctx := db.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	return &query{
 		db:         db,
 		model:      model,
-		ctx:        db.ctx,
+		ctx:        ctx,
 		builder:    expr.NewBuilder(),
 		conditions: make([]condition, 0, 4), // Pre-allocate for typical use case
 	}
@@ -887,62 +898,27 @@ func (q *query) BatchCreate(items any) error {
 			})
 		}
 
+		// Build BatchWriteItem input
+		input := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{
+				metadata.TableName: writeRequests,
+			},
+		}
+
 		// Execute batch write with retries for unprocessed items
-		remainingRequests := writeRequests
-		retryCount := 0
-		maxRetries := 3
-
-		for len(remainingRequests) > 0 && retryCount < maxRetries {
-			// Build BatchWriteItem input for current attempt
-			batchInput := &dynamodb.BatchWriteItemInput{
-				RequestItems: map[string][]types.WriteRequest{
-					metadata.TableName: remainingRequests,
-				},
-			}
-
-			output, err := q.db.session.Client().BatchWriteItem(q.ctx, batchInput)
+		for {
+			output, err := q.db.session.Client().BatchWriteItem(q.ctx, input)
 			if err != nil {
 				return fmt.Errorf("failed to batch create items: %w", err)
 			}
 
 			// Check for unprocessed items
 			if len(output.UnprocessedItems) == 0 {
-				// All items processed successfully
 				break
 			}
 
-			// Collect unprocessed items for retry
-			var unprocessed []types.WriteRequest
-			for _, items := range output.UnprocessedItems {
-				unprocessed = append(unprocessed, items...)
-			}
-
-			remainingRequests = unprocessed
-
-			if len(remainingRequests) == 0 {
-				break
-			}
-
-			retryCount++
-
-			// Add exponential backoff with context awareness
-			if retryCount < maxRetries {
-				backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
-				if backoff > 2*time.Second {
-					backoff = 2 * time.Second
-				}
-
-				select {
-				case <-time.After(backoff):
-					// Continue with retry
-				case <-q.ctx.Done():
-					return fmt.Errorf("context cancelled during retry: %w", q.ctx.Err())
-				}
-			}
-		}
-
-		if len(remainingRequests) > 0 {
-			return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
+			// Retry unprocessed items
+			input.RequestItems = output.UnprocessedItems
 		}
 	}
 

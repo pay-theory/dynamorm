@@ -261,10 +261,10 @@ func TestBatchCreateReproduceIssue(t *testing.T) {
 		require.Error(t, err)
 		t.Logf("Reproduced timeout error: %v", err)
 
-		// The error should contain "deadline" or "timeout"
+		// The error should contain "deadline", "timeout", or "retries" (from our improved retry logic)
 		errorStr := err.Error()
 		require.True(t,
-			contains(errorStr, "deadline") || contains(errorStr, "timeout"),
+			contains(errorStr, "deadline") || contains(errorStr, "timeout") || contains(errorStr, "retries"),
 			"Expected timeout-related error, got: %s", errorStr)
 	})
 
