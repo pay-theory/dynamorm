@@ -1,575 +1,560 @@
-# DynamORM AI Assistant Guide
+# DynamORM AI Assistant Comprehensive Guide
 
-This comprehensive guide provides AI assistants with everything needed to understand, implement, and work with DynamORM - a Lambda-native, type-safe ORM for Amazon DynamoDB in Go.
-
-## Table of Contents
-
-1. [Project Overview](#project-overview)
-2. [Core Architecture](#core-architecture)
-3. [Important Types & Interfaces](#important-types--interfaces)
-4. [Key Structs & Functions](#key-structs--functions)
-5. [Testing Utilities & Mocks](#testing-utilities--mocks)
-6. [Implementation Patterns](#implementation-patterns)
-7. [Best Practices](#best-practices)
-8. [Common Use Cases](#common-use-cases)
-9. [Performance Considerations](#performance-considerations)
-10. [Troubleshooting Guide](#troubleshooting-guide)
+This guide provides AI assistants with comprehensive information about DynamORM, a Lambda-native, type-safe ORM for Amazon DynamoDB written in Go.
 
 ## Project Overview
 
-DynamORM is a production-ready ORM for DynamoDB that provides:
-- **Lambda-native design** with 11ms cold starts (91% faster than alternatives)
-- **Type-safe operations** with compile-time validation
-- **80% code reduction** compared to raw AWS SDK
-- **Multi-account support** for enterprise use cases
-- **Atomic operations** with optimistic locking
-- **Smart index selection** and query optimization
-
-### Module Structure
-```
-github.com/pay-theory/dynamorm
-├── pkg/core/           # Core interfaces and types
-├── pkg/query/          # Query builder implementation
-├── pkg/model/          # Model registry and metadata
-├── pkg/types/          # Type conversion system
-├── pkg/session/        # AWS session management
-├── pkg/schema/         # Table management
-├── pkg/transaction/    # Transaction support
-├── pkg/marshal/        # High-performance marshaling
-├── pkg/mocks/          # Pre-built test mocks
-├── internal/expr/      # Expression building
-└── examples/           # Production-ready examples
-```
+DynamORM is designed specifically for serverless architectures, providing:
+- **Lambda-Native**: 11ms cold starts (91% faster than AWS SDK)
+- **Type-Safe**: Full Go type safety with compile-time checks
+- **High Performance**: 20,000+ operations per second
+- **Code Reduction**: 80% less code than raw AWS SDK
+- **Interface-Driven**: Testable design with pre-built mocks
 
 ## Core Architecture
 
-### Layered Design
-```
-Application Layer
-    ↓
-Public API (DB, Query, Transaction)
-    ↓
-Core Services (Registry, Builder, Engine)
-    ↓
-Internal Components (Expression, Reflection)
-    ↓
-AWS SDK v2 Layer
-```
-
-### Key Design Principles
-1. **Interface-driven**: All major components are interfaces
-2. **Builder pattern**: Fluent, chainable query API
-3. **Zero magic**: Explicit, predictable behavior
-4. **Performance first**: Minimal overhead over raw SDK
-5. **Lambda optimized**: Connection reuse and pre-registration
+DynamORM follows a layered architecture:
+1. **Interface Layer** (`pkg/core/interfaces.go`) - Core abstractions
+2. **Query Layer** (`pkg/query/`) - Query building and execution
+3. **Model Layer** (`pkg/model/`) - Model metadata and registry
+4. **Session Layer** (`pkg/session/`) - DynamoDB connection management
+5. **Marshal Layer** (`pkg/marshal/`) - High-performance serialization
 
 ## Important Types & Interfaces
 
-### Core Interfaces
+### Core Database Interfaces
 
-#### DB Interface
+#### `core.DB` Interface
+The basic interface for CRUD operations:
 ```go
 type DB interface {
-    Model(interface{}) Query
-    Transaction(func(*Transaction) error) error
-    TransactionFunc(func(*Transaction) error) error
-    CreateTable(model interface{}, opts ...schema.TableOption) error
-    EnsureTable(model interface{}) error
-    DeleteTable(model interface{}) error
-    AutoMigrate(models ...interface{}) error
+    Model(model any) Query
+    Transaction(fn func(tx *Tx) error) error
+    Migrate() error
+    AutoMigrate(models ...any) error
     Close() error
+    WithContext(ctx context.Context) DB
 }
 ```
 
-#### Query Interface
+#### `core.ExtendedDB` Interface
+Full interface including schema management and Lambda features:
+```go
+type ExtendedDB interface {
+    DB  // Embeds basic operations
+    
+    // Schema management
+    AutoMigrateWithOptions(model any, opts ...any) error
+    CreateTable(model any, opts ...any) error
+    EnsureTable(model any) error
+    DeleteTable(model any) error
+    DescribeTable(model any) (any, error)
+    
+    // Lambda optimizations
+    WithLambdaTimeout(ctx context.Context) DB
+    WithLambdaTimeoutBuffer(buffer time.Duration) DB
+    TransactionFunc(fn func(tx any) error) error
+}
+```
+
+#### `core.Query` Interface
+Chainable query builder with 20+ methods:
 ```go
 type Query interface {
-    // Builder methods
-    Where(field string, op string, value interface{}) Query
-    Filter(expr string, params ...Param) Query
+    // Query construction
+    Where(field string, op string, value any) Query
     Index(indexName string) Query
-    Limit(limit int) Query
+    Filter(field string, op string, value any) Query
+    OrFilter(field string, op string, value any) Query
+    FilterGroup(func(Query)) Query
+    OrFilterGroup(func(Query)) Query
     OrderBy(field string, order string) Query
-    Select(fields ...string) Query
-    Cursor(cursor string) Query
-    SetCursor(cursor string) Query
+    Limit(limit int) Query
     Offset(offset int) Query
-    WithContext(ctx context.Context) Query
+    Select(fields ...string) Query
     
     // Execution methods
-    First(dest interface{}) error
-    All(dest interface{}) error
-    AllPaginated(dest interface{}) (*PaginatedResult, error)
+    First(dest any) error
+    All(dest any) error
+    AllPaginated(dest any) (*PaginatedResult, error)
     Count() (int64, error)
-    Scan(dest interface{}) error
-    ParallelScan(segments int32) Query
-    ScanAllSegments(dest interface{}, segments int32) error
     
     // CRUD operations
     Create() error
+    CreateOrUpdate() error
     Update(fields ...string) error
+    UpdateBuilder() UpdateBuilder
     Delete() error
     
-    // Batch operations
-    BatchGet(keys []interface{}, dest interface{}) error
-    BatchCreate(items interface{}) error
-    
     // Advanced operations
-    UpdateBuilder() UpdateBuilder
+    Scan(dest any) error
+    ParallelScan(segment int32, totalSegments int32) Query
+    ScanAllSegments(dest any, totalSegments int32) error
+    
+    // Batch operations
+    BatchGet(keys []any, dest any) error
+    BatchCreate(items any) error
+    BatchDelete(keys []any) error
+    BatchWrite(putItems []any, deleteKeys []any) error
+    BatchUpdateWithOptions(items []any, fields []string, options ...any) error
+    
+    // Pagination
+    Cursor(cursor string) Query
+    SetCursor(cursor string) error
+    WithContext(ctx context.Context) Query
 }
 ```
 
-#### UpdateBuilder Interface
+#### `core.UpdateBuilder` Interface
+Fluent interface for complex update operations:
 ```go
 type UpdateBuilder interface {
-    Set(field string, value interface{}) UpdateBuilder
-    Add(field string, value interface{}) UpdateBuilder
+    // Basic updates
+    Set(field string, value any) UpdateBuilder
+    SetIfNotExists(field string, value any, defaultValue any) UpdateBuilder
+    
+    // Atomic operations
+    Add(field string, value any) UpdateBuilder
+    Increment(field string) UpdateBuilder
+    Decrement(field string) UpdateBuilder
     Remove(field string) UpdateBuilder
-    Delete(field string, value interface{}) UpdateBuilder
-    Increment(field string, value ...interface{}) UpdateBuilder
-    Decrement(field string, value ...interface{}) UpdateBuilder
-    Append(field string, value interface{}) UpdateBuilder
-    Prepend(field string, value interface{}) UpdateBuilder
-    SetElement(field string, index int, value interface{}) UpdateBuilder
-    RemoveElement(field string, index int) UpdateBuilder
-    If(condition string, params ...Param) UpdateBuilder
+    Delete(field string, value any) UpdateBuilder
+    
+    // List operations
+    AppendToList(field string, values any) UpdateBuilder
+    PrependToList(field string, values any) UpdateBuilder
+    RemoveFromListAt(field string, index int) UpdateBuilder
+    SetListElement(field string, index int, value any) UpdateBuilder
+    
+    // Conditions
+    Condition(field string, operator string, value any) UpdateBuilder
+    OrCondition(field string, operator string, value any) UpdateBuilder
+    ConditionExists(field string) UpdateBuilder
+    ConditionNotExists(field string) UpdateBuilder
+    ConditionVersion(currentVersion int64) UpdateBuilder
+    
+    // Execution
+    ReturnValues(option string) UpdateBuilder
     Execute() error
-    ExecuteWithResult(dest interface{}) error
+    ExecuteWithResult(result any) error
 }
 ```
 
 ### Lambda-Specific Types
 
-#### LambdaDB
+#### `LambdaDB` Struct
+Lambda-optimized database wrapper:
 ```go
 type LambdaDB struct {
-    *DB
-    preRegistered map[reflect.Type]bool
-    warmStart     bool
-    memoryMB      int
+    core.ExtendedDB
+    db             *DB
+    modelCache     *sync.Map
+    isLambda       bool
+    lambdaMemoryMB int
+    xrayEnabled    bool
 }
-
-// Key methods
-func NewLambdaOptimized(config Config) (*LambdaDB, error)
-func (ldb *LambdaDB) PreRegisterModels(models ...interface{}) error
-func (ldb *LambdaDB) WithLambdaTimeout(ctx context.Context) *LambdaDB
 ```
 
-#### MultiAccountDB
+#### `MultiAccountDB` Struct
+Multi-tenant database for cross-account operations:
 ```go
 type MultiAccountDB struct {
     accounts map[string]AccountConfig
-    cache    sync.Map // partnerID -> *LambdaDB
+    cache    map[string]*DB
+    mu       sync.RWMutex
 }
 
-func NewMultiAccount(accounts map[string]AccountConfig) (*MultiAccountDB, error)
-func (mdb *MultiAccountDB) Partner(partnerID string) (*LambdaDB, error)
+type AccountConfig struct {
+    RoleARN    string
+    ExternalID string
+    Region     string
+}
 ```
 
-### Model Definition Types
+### Data Types
 
-#### Struct Tags
+#### `PaginatedResult` Struct
+Contains paginated query results:
 ```go
-// Primary key
-`dynamorm:"pk"`
+type PaginatedResult struct {
+    Items            any
+    Count            int
+    ScannedCount     int
+    LastEvaluatedKey map[string]types.AttributeValue
+    NextCursor       string
+    HasMore          bool
+}
+```
 
-// Sort key
-`dynamorm:"sk"`
-
-// Global Secondary Index
-`dynamorm:"index:gsi-name,pk"`
-`dynamorm:"index:gsi-name,sk"`
-
-// Local Secondary Index
-`dynamorm:"index:lsi-name,sk"`
-
-// Special fields
-`dynamorm:"created_at"`
-`dynamorm:"updated_at"`
-`dynamorm:"version"`
-`dynamorm:"ttl"`
-
-// Type modifiers
-`dynamorm:"set"`
-`dynamorm:"json"`
-`dynamorm:"omitempty"`
+#### `CompiledQuery` Struct
+Represents a compiled DynamoDB query:
+```go
+type CompiledQuery struct {
+    Operation                 string
+    TableName                 string
+    IndexName                 string
+    KeyConditionExpression    string
+    FilterExpression          string
+    ProjectionExpression      string
+    UpdateExpression          string
+    ConditionExpression       string
+    ExpressionAttributeNames  map[string]string
+    ExpressionAttributeValues map[string]types.AttributeValue
+    Limit                     *int32
+    ExclusiveStartKey         map[string]types.AttributeValue
+    ScanIndexForward          *bool
+    Select                    string
+    Offset                    *int
+    ReturnValues              string
+    Segment                   *int32
+    TotalSegments             *int32
+}
 ```
 
 ## Key Structs & Functions
 
-### Model Definition Example
+### Model Definition
+
+Models use struct tags for configuration:
 ```go
 type User struct {
-    ID        string    `dynamorm:"pk"`
-    Email     string    `dynamorm:"index:gsi-email,unique"`
-    Name      string    
-    Age       int       `dynamorm:"index:gsi-age-status,pk"`
-    Status    string    `dynamorm:"index:gsi-age-status,sk"`
-    Tags      []string  `dynamorm:"set"`
-    Profile   Profile   `dynamorm:"json"`
-    CreatedAt time.Time `dynamorm:"created_at"`
-    UpdatedAt time.Time `dynamorm:"updated_at"`
-    Version   int       `dynamorm:"version"`
-    TTL       time.Time `dynamorm:"ttl"`
-}
-
-type Profile struct {
-    Bio     string
-    Website string
-    Social  map[string]string
+    ID        string    `dynamorm:"pk"`                    // Partition key
+    Email     string    `dynamorm:"index:gsi-email"`       // GSI partition key
+    CreatedAt time.Time `dynamorm:"sk"`                    // Sort key
+    Name      string    `dynamorm:"attr:display_name"`     // Custom attribute name
+    Tags      []string  `dynamorm:"set"`                   // DynamoDB set
+    Active    bool      `dynamorm:"omitempty"`             // Skip if empty
+    Version   int       `dynamorm:"version"`               // Optimistic locking
+    UpdatedAt time.Time `dynamorm:"updated_at"`            // Auto-updated
 }
 ```
 
-### Initialization Functions
+### Initialization Patterns
 
-#### Standard Initialization
+#### Basic Initialization
 ```go
-func New(config Config) (*DB, error)
-
-type Config struct {
-    Region          string
-    Endpoint        string // For DynamoDB Local
-    MaxRetries      int
-    DefaultRCU      int64
-    DefaultWCU      int64
-    EnableXRay      bool
-    CustomConfig    *aws.Config
+config := session.Config{
+    Region: "us-east-1",
 }
+db, err := dynamorm.New(config)
 ```
 
-#### Lambda Initialization
+#### Lambda-Optimized Initialization
 ```go
-// Global instance for warm starts
+// Global initialization for connection reuse
 var db *dynamorm.LambdaDB
 
 func init() {
-    var err error
-    db, err = dynamorm.NewLambdaOptimized(dynamorm.Config{
-        Region: "us-east-1",
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // Pre-register models for performance
-    db.PreRegisterModels(&User{}, &Order{}, &Product{})
+    db, _ = dynamorm.LambdaInit(&User{}, &Post{})
 }
 
-func handler(ctx context.Context, event Event) (Response, error) {
-    // Use timeout-aware DB
-    timeoutDB := db.WithLambdaTimeout(ctx)
-    
-    var user User
-    err := timeoutDB.Model(&User{}).
-        Where("ID", "=", event.UserID).
-        First(&user)
-    
-    return Response{User: user}, err
+func handler(ctx context.Context, event Event) error {
+    lambdaDB := db.WithLambdaTimeout(ctx)
+    return lambdaDB.Model(&User{}).Create()
 }
 ```
 
-### Query Building Functions
+#### Multi-Account Setup
+```go
+accounts := map[string]dynamorm.AccountConfig{
+    "prod": {
+        RoleARN:    "arn:aws:iam::111111:role/dynamodb-role",
+        ExternalID: "external-id",
+        Region:     "us-east-1",
+    },
+}
+multiDB, err := dynamorm.NewMultiAccount(accounts)
+prodDB, err := multiDB.Partner("prod")
+```
+
+### Query Building Patterns
 
 #### Basic Queries
 ```go
-// Get single item
+// Find by primary key
 var user User
 err := db.Model(&User{}).Where("ID", "=", "123").First(&user)
 
-// Get multiple items
+// Query with index
 var users []User
 err := db.Model(&User{}).
+    Index("gsi-email").
+    Where("Email", "=", "john@example.com").
+    All(&users)
+
+// Complex filtering
+err := db.Model(&User{}).
     Where("Status", "=", "active").
-    OrderBy("CreatedAt", "desc").
+    Filter("Age", ">", 18).
+    OrderBy("CreatedAt", "DESC").
     Limit(10).
     All(&users)
-
-// Count items
-count, err := db.Model(&User{}).
-    Where("Status", "=", "active").
-    Count()
 ```
 
-#### Advanced Queries
+#### Pagination
 ```go
-// Complex conditions with filters
-var users []User
-err := db.Model(&User{}).
-    Index("gsi-age-status").
-    Where("Age", ">=", 18).
-    Where("Status", "=", "active").
-    Filter("contains(Tags, :tag)", dynamorm.Param("tag", "premium")).
-    Filter("attribute_exists(Email)").
-    All(&users)
-
-// Pagination
 result, err := db.Model(&User{}).
     Where("Status", "=", "active").
-    Limit(20).
+    Limit(25).
     AllPaginated(&users)
 
 if result.HasMore {
-    // Get next page
+    // Next page
     nextResult, err := db.Model(&User{}).
         Where("Status", "=", "active").
         Cursor(result.NextCursor).
-        Limit(20).
+        Limit(25).
         AllPaginated(&users)
 }
 ```
 
-### Transaction Functions
-
-#### Simple Transactions
+#### Update Operations
 ```go
-err := db.Transaction(func(tx *transaction.Transaction) error {
-    // Create user
-    user := &User{ID: "123", Name: "John"}
-    if err := tx.Create(user); err != nil {
-        return err
-    }
-    
-    // Update account
-    account := &Account{UserID: "123", Balance: 100}
-    if err := tx.Update(account); err != nil {
-        return err
-    }
-    
-    return nil
-})
-```
+// Simple update
+user.Name = "Updated Name"
+err := db.Model(user).Update("Name")
 
-#### Atomic Operations
-```go
-// Atomic counter increment
-err := db.Model(&Counter{}).
-    Where("ID", "=", "page-views").
-    UpdateBuilder().
-    Increment("Count", 1).
-    Execute()
-
-// Conditional update with optimistic locking
+// Complex update with builder
 err := db.Model(&User{}).
     Where("ID", "=", "123").
     UpdateBuilder().
-    Set("Status", "premium").
-    If("Version = :v", dynamorm.Param("v", user.Version)).
+    Set("Name", "New Name").
+    Increment("LoginCount").
+    AppendToList("Tags", []string{"new-tag"}).
+    ConditionExists("ID").
     Execute()
 ```
 
-### Schema Management Functions
+### Transaction Patterns
 
-#### Table Operations
 ```go
-// Create table with options
-err := db.CreateTable(&User{},
-    schema.WithBillingMode(types.BillingModePayPerRequest),
-    schema.WithStreamSpecification(types.StreamSpecification{
-        StreamEnabled:  true,
-        StreamViewType: types.StreamViewTypeNewAndOldImages,
-    }),
-)
+err := db.Transaction(func(tx *dynamorm.Tx) error {
+    // All operations in transaction
+    user.Balance -= 100
+    if err := tx.Model(user).Update("Balance"); err != nil {
+        return err
+    }
+    
+    transfer := &Transfer{
+        FromUserID: user.ID,
+        Amount:     100,
+    }
+    return tx.Model(transfer).Create()
+})
+```
+
+### Schema Management
+
+```go
+// Create table
+err := db.CreateTable(&User{})
 
 // Ensure table exists (idempotent)
 err := db.EnsureTable(&User{})
 
-// Auto-migrate multiple models
-err := db.AutoMigrate(&User{}, &Order{}, &Product{})
+// Auto-migrate with data copy
+err := db.AutoMigrateWithOptions(&UserV1{},
+    dynamorm.WithTargetModel(&UserV2{}),
+    dynamorm.WithDataCopy(true),
+)
 ```
 
 ## Testing Utilities & Mocks
 
-### Pre-built Mocks Package
+DynamORM provides comprehensive testing support through the `pkg/mocks` and `pkg/testing` packages.
 
-DynamORM provides a comprehensive mocks package to eliminate testing friction:
+### Pre-Built Mocks
 
+#### MockDB
 ```go
 import "github.com/pay-theory/dynamorm/pkg/mocks"
 
-func TestUserService(t *testing.T) {
-    // Use pre-built mocks
-    mockDB := new(mocks.MockDB)
-    mockQuery := new(mocks.MockQuery)
-    mockUpdateBuilder := new(mocks.MockUpdateBuilder)
-    
-    // Setup expectations
-    mockDB.On("Model", &User{}).Return(mockQuery)
-    mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
-    mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
-        user := args.Get(0).(*User)
-        user.ID = "123"
-        user.Name = "Test User"
-    }).Return(nil)
-    
-    // Test your service
-    service := NewUserService(mockDB)
-    user, err := service.GetUser("123")
-    
-    assert.NoError(t, err)
-    assert.Equal(t, "123", user.ID)
-    mockDB.AssertExpectations(t)
-}
+mockDB := new(mocks.MockDB)
+mockQuery := new(mocks.MockQuery)
+
+mockDB.On("Model", &User{}).Return(mockQuery)
+mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
+mockQuery.On("First", mock.Anything).Return(nil)
+```
+
+#### MockQuery
+```go
+mockQuery := new(mocks.MockQuery)
+mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
+mockQuery.On("Filter", "Status", "=", "active").Return(mockQuery)
+mockQuery.On("All", mock.Anything).Return(nil)
+```
+
+#### MockUpdateBuilder
+```go
+mockBuilder := new(mocks.MockUpdateBuilder)
+mockBuilder.On("Set", "Name", "Updated").Return(mockBuilder)
+mockBuilder.On("Increment", "Version").Return(mockBuilder)
+mockBuilder.On("Execute").Return(nil)
+```
+
+### Testing Helpers
+
+#### TestDB Factory
+```go
+import "github.com/pay-theory/dynamorm/pkg/testing"
+
+testDB := testing.NewTestDB()
+
+// Fluent expectations
+testDB.ExpectModel(&User{}).
+    ExpectWhere("ID", "=", "123").
+    ExpectFind(&User{ID: "123", Name: "John"})
+
+// Execute test
+service := NewUserService(testDB.MockDB)
+user, err := service.GetUser("123")
+assert.NoError(t, err)
+assert.Equal(t, "John", user.Name)
+
+testDB.AssertExpectations(t)
+```
+
+#### Common Scenarios
+```go
+scenarios := testing.NewCommonScenarios(testDB)
+
+// Setup CRUD operations
+scenarios.SetupCRUD(&User{})
+
+// Setup pagination
+scenarios.SetupPagination(25)
+
+// Setup multi-tenant
+scenarios.SetupMultiTenant("tenant123")
+
+// Setup batch operations
+scenarios.SetupBatchOperations()
 ```
 
 ### Integration Testing
 
 #### DynamoDB Local Setup
 ```go
-func setupTestDB(t *testing.T) *dynamorm.DB {
-    db, err := dynamorm.New(dynamorm.Config{
+func TestWithDynamoDBLocal(t *testing.T) {
+    // Start DynamoDB Local container
+    config := session.Config{
+        Endpoint: "http://localhost:8000",
         Region:   "us-east-1",
-        Endpoint: "http://localhost:8000", // DynamoDB Local
-    })
+    }
+    
+    db, err := dynamorm.New(config)
     require.NoError(t, err)
     
-    // Create test tables
-    require.NoError(t, db.CreateTable(&User{}))
-    require.NoError(t, db.CreateTable(&Order{}))
-    
-    return db
-}
-
-func TestUserCRUD(t *testing.T) {
-    db := setupTestDB(t)
-    
-    // Test create
-    user := &User{ID: "test-123", Name: "Test User"}
-    err := db.Model(user).Create()
+    // Create test table
+    err = db.CreateTable(&User{})
     require.NoError(t, err)
     
-    // Test read
-    var found User
-    err = db.Model(&User{}).Where("ID", "=", "test-123").First(&found)
-    require.NoError(t, err)
-    assert.Equal(t, "Test User", found.Name)
-    
-    // Test update
-    err = db.Model(&User{}).
-        Where("ID", "=", "test-123").
-        Update("Name", "Updated Name")
-    require.NoError(t, err)
-    
-    // Test delete
-    err = db.Model(&User{}).Where("ID", "=", "test-123").Delete()
-    require.NoError(t, err)
+    // Run tests
+    user := &User{ID: "test", Name: "Test User"}
+    err = db.Model(user).Create()
+    assert.NoError(t, err)
 }
 ```
-
-### Test Utilities
 
 #### Test Data Factories
 ```go
-func CreateTestUser(id string) *User {
-    return &User{
-        ID:        id,
-        Email:     fmt.Sprintf("%s@test.com", id),
-        Name:      fmt.Sprintf("Test User %s", id),
-        Status:    "active",
+func CreateTestUser(overrides ...func(*User)) *User {
+    user := &User{
+        ID:        "test-" + uuid.New().String(),
+        Email:     "test@example.com",
+        Name:      "Test User",
         CreatedAt: time.Now(),
+        Active:    true,
     }
-}
-
-func CreateTestUsers(count int) []*User {
-    users := make([]*User, count)
-    for i := 0; i < count; i++ {
-        users[i] = CreateTestUser(fmt.Sprintf("user-%d", i))
+    
+    for _, override := range overrides {
+        override(user)
     }
-    return users
-}
-```
-
-#### Assertion Helpers
-```go
-func AssertUserEqual(t *testing.T, expected, actual *User) {
-    assert.Equal(t, expected.ID, actual.ID)
-    assert.Equal(t, expected.Email, actual.Email)
-    assert.Equal(t, expected.Name, actual.Name)
-    assert.Equal(t, expected.Status, actual.Status)
+    
+    return user
 }
 
-func AssertQueryResult(t *testing.T, query dynamorm.Query, expectedCount int) {
-    count, err := query.Count()
-    require.NoError(t, err)
-    assert.Equal(t, int64(expectedCount), count)
-}
+// Usage
+user := CreateTestUser(func(u *User) {
+    u.Email = "custom@example.com"
+    u.Active = false
+})
 ```
 
 ## Implementation Patterns
 
 ### Repository Pattern
 ```go
-type UserRepository struct {
-    db dynamorm.DB
+type UserRepository interface {
+    GetByID(ctx context.Context, id string) (*User, error)
+    GetByEmail(ctx context.Context, email string) (*User, error)
+    Create(ctx context.Context, user *User) error
+    Update(ctx context.Context, user *User) error
+    Delete(ctx context.Context, id string) error
 }
 
-func NewUserRepository(db dynamorm.DB) *UserRepository {
-    return &UserRepository{db: db}
+type userRepository struct {
+    db core.DB
 }
 
-func (r *UserRepository) GetByID(id string) (*User, error) {
+func NewUserRepository(db core.DB) UserRepository {
+    return &userRepository{db: db}
+}
+
+func (r *userRepository) GetByID(ctx context.Context, id string) (*User, error) {
     var user User
-    err := r.db.Model(&User{}).Where("ID", "=", id).First(&user)
+    err := r.db.WithContext(ctx).
+        Model(&User{}).
+        Where("ID", "=", id).
+        First(&user)
     if err != nil {
-        return nil, fmt.Errorf("failed to get user %s: %w", id, err)
+        return nil, err
     }
     return &user, nil
-}
-
-func (r *UserRepository) GetByEmail(email string) (*User, error) {
-    var user User
-    err := r.db.Model(&User{}).
-        Index("gsi-email").
-        Where("Email", "=", email).
-        First(&user)
-    return &user, err
-}
-
-func (r *UserRepository) Create(user *User) error {
-    user.CreatedAt = time.Now()
-    user.UpdatedAt = time.Now()
-    return r.db.Model(user).Create()
-}
-
-func (r *UserRepository) Update(user *User) error {
-    user.UpdatedAt = time.Now()
-    return r.db.Model(user).Update()
 }
 ```
 
 ### Service Layer Pattern
 ```go
 type UserService struct {
-    repo *UserRepository
+    repo UserRepository
+    db   core.DB
 }
 
-func NewUserService(db dynamorm.DB) *UserService {
+func NewUserService(db core.DB) *UserService {
     return &UserService{
         repo: NewUserRepository(db),
+        db:   db,
     }
 }
 
-func (s *UserService) CreateUser(req CreateUserRequest) (*User, error) {
+func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*User, error) {
     // Validation
-    if req.Email == "" {
-        return nil, errors.New("email is required")
+    if err := req.Validate(); err != nil {
+        return nil, err
     }
     
-    // Check if user exists
-    existing, err := s.repo.GetByEmail(req.Email)
-    if err == nil && existing != nil {
-        return nil, errors.New("user already exists")
-    }
-    
-    // Create user
+    // Business logic
     user := &User{
-        ID:     uuid.New().String(),
-        Email:  req.Email,
-        Name:   req.Name,
-        Status: "active",
+        ID:    uuid.New().String(),
+        Email: req.Email,
+        Name:  req.Name,
     }
     
-    if err := s.repo.Create(user); err != nil {
-        return nil, fmt.Errorf("failed to create user: %w", err)
+    // Transaction
+    err := s.db.Transaction(func(tx *dynamorm.Tx) error {
+        if err := tx.Model(user).Create(); err != nil {
+            return err
+        }
+        
+        // Create related records
+        profile := &UserProfile{UserID: user.ID}
+        return tx.Model(profile).Create()
+    })
+    
+    if err != nil {
+        return nil, err
     }
     
     return user, nil
@@ -578,56 +563,51 @@ func (s *UserService) CreateUser(req CreateUserRequest) (*User, error) {
 
 ### Multi-Tenant Pattern
 ```go
-type TenantModel struct {
-    TenantID string `dynamorm:"pk,composite:tenant_id,id"`
-    ID       string `dynamorm:"extract:id"`
-    // other fields
-}
-
 type TenantService struct {
-    db       dynamorm.DB
-    tenantID string
+    multiDB *dynamorm.MultiAccountDB
 }
 
-func NewTenantService(db dynamorm.DB, tenantID string) *TenantService {
-    return &TenantService{db: db, tenantID: tenantID}
-}
-
-func (s *TenantService) GetResource(id string) (*Resource, error) {
-    var resource Resource
-    err := s.db.Model(&Resource{}).
-        Where("TenantID", "=", s.tenantID).
-        Where("ID", "=", id).
-        First(&resource)
-    return &resource, err
+func (s *TenantService) GetUserForTenant(ctx context.Context, tenantID, userID string) (*User, error) {
+    db, err := s.multiDB.Partner(tenantID)
+    if err != nil {
+        return nil, err
+    }
+    
+    var user User
+    err = db.WithContext(ctx).
+        Model(&User{}).
+        Where("ID", "=", userID).
+        First(&user)
+    
+    return &user, err
 }
 ```
 
 ### Event-Driven Pattern
 ```go
 type EventHandler struct {
-    db dynamorm.DB
+    db core.DB
 }
 
 func (h *EventHandler) HandleUserCreated(ctx context.Context, event UserCreatedEvent) error {
-    return h.db.Transaction(func(tx *transaction.Transaction) error {
-        // Create welcome message
-        message := &Message{
-            ID:     uuid.New().String(),
-            UserID: event.UserID,
-            Type:   "welcome",
-            Content: "Welcome to our platform!",
-        }
-        if err := tx.Create(message); err != nil {
+    return h.db.Transaction(func(tx *dynamorm.Tx) error {
+        // Update statistics
+        stats := &UserStats{Date: time.Now().Format("2006-01-02")}
+        err := tx.Model(stats).
+            UpdateBuilder().
+            Increment("NewUsers").
+            Execute()
+        if err != nil {
             return err
         }
         
-        // Update user stats
-        return tx.Model(&UserStats{}).
-            Where("ID", "=", "global").
-            UpdateBuilder().
-            Increment("TotalUsers", 1).
-            Execute()
+        // Create welcome email task
+        task := &EmailTask{
+            UserID:   event.UserID,
+            Template: "welcome",
+            Status:   "pending",
+        }
+        return tx.Model(task).Create()
     })
 }
 ```
@@ -635,374 +615,170 @@ func (h *EventHandler) HandleUserCreated(ctx context.Context, event UserCreatedE
 ## Best Practices
 
 ### Model Design
-
-#### 1. Use Composite Keys for Multi-Tenancy
-```go
-type Order struct {
-    ID         string `dynamorm:"pk,composite:customer_id,order_id"`
-    CustomerID string `dynamorm:"extract:customer_id"`
-    OrderID    string `dynamorm:"extract:order_id"`
-    // other fields
-}
-```
-
-#### 2. Design Indexes for Access Patterns
-```go
-type Product struct {
-    SKU        string  `dynamorm:"pk"`
-    CategoryID string  `dynamorm:"index:gsi-category-price,pk"`
-    Price      float64 `dynamorm:"index:gsi-category-price,sk"`
-    Name       string  `dynamorm:"index:gsi-name"`
-    Status     string  `dynamorm:"index:gsi-status-created,pk"`
-    CreatedAt  time.Time `dynamorm:"index:gsi-status-created,sk"`
-}
-```
-
-#### 3. Use TTL for Automatic Cleanup
-```go
-type Session struct {
-    ID        string    `dynamorm:"pk"`
-    UserID    string    `dynamorm:"index:gsi-user"`
-    Data      string
-    ExpiresAt time.Time `dynamorm:"ttl"`
-}
-```
+1. **Use appropriate struct tags**: `pk`, `sk`, `index`, `version`, `created_at`, `updated_at`
+2. **Design for access patterns**: Create indexes for all query patterns
+3. **Use composite keys**: Combine related data in sort keys
+4. **Optimize for DynamoDB**: Avoid hot partitions, use sparse indexes
 
 ### Query Optimization
-
-#### 1. Use Specific Indexes
-```go
-// Good: Uses specific index
-users, err := db.Model(&User{}).
-    Index("gsi-status-created").
-    Where("Status", "=", "active").
-    Where("CreatedAt", ">", yesterday).
-    All(&users)
-
-// Avoid: Forces table scan
-users, err := db.Model(&User{}).
-    Filter("Status = :status", dynamorm.Param("status", "active")).
-    Scan(&users)
-```
-
-#### 2. Limit Result Sets
-```go
-// Good: Limits results
-users, err := db.Model(&User{}).
-    Where("Status", "=", "active").
-    Limit(100).
-    All(&users)
-
-// Avoid: Unlimited results
-users, err := db.Model(&User{}).
-    Where("Status", "=", "active").
-    All(&users)
-```
-
-#### 3. Use Projection for Large Items
-```go
-// Good: Only fetch needed fields
-var users []User
-err := db.Model(&User{}).
-    Select("ID", "Name", "Email").
-    Where("Status", "=", "active").
-    All(&users)
-```
+1. **Prefer Query over Scan**: Always use indexes when possible
+2. **Use projections**: Select only needed fields with `Select()`
+3. **Implement pagination**: Use cursor-based pagination for large datasets
+4. **Batch operations**: Use batch methods for multiple items
 
 ### Error Handling
-
-#### 1. Wrap Errors with Context
-```go
-func (s *UserService) GetUser(id string) (*User, error) {
-    user, err := s.repo.GetByID(id)
-    if err != nil {
-        return nil, fmt.Errorf("failed to get user %s: %w", id, err)
-    }
-    return user, nil
-}
-```
-
-#### 2. Handle Specific Error Types
 ```go
 import "github.com/pay-theory/dynamorm/pkg/errors"
 
-func (s *UserService) GetUser(id string) (*User, error) {
-    user, err := s.repo.GetByID(id)
-    if err != nil {
-        if errors.Is(err, errors.ErrItemNotFound) {
-            return nil, ErrUserNotFound
-        }
-        return nil, fmt.Errorf("database error: %w", err)
-    }
-    return user, nil
+err := db.Model(&User{}).Where("ID", "=", "123").First(&user)
+if errors.Is(err, errors.ErrItemNotFound) {
+    // Handle not found case
 }
 ```
 
 ### Performance Optimization
-
-#### 1. Pre-register Models in Lambda
-```go
-func init() {
-    db.PreRegisterModels(&User{}, &Order{}, &Product{})
-}
-```
-
-#### 2. Use Batch Operations
-```go
-// Good: Batch create
-users := []*User{user1, user2, user3}
-err := db.Model(&User{}).BatchCreate(users)
-
-// Avoid: Individual creates
-for _, user := range users {
-    err := db.Model(user).Create()
-}
-```
-
-#### 3. Use Transactions for Consistency
-```go
-// Good: Atomic operation
-err := db.Transaction(func(tx *transaction.Transaction) error {
-    if err := tx.Create(order); err != nil {
-        return err
-    }
-    return tx.Model(&Inventory{}).
-        Where("ProductID", "=", order.ProductID).
-        UpdateBuilder().
-        Decrement("Stock", order.Quantity).
-        Execute()
-})
-```
+1. **Use Lambda optimizations**: `LambdaInit()` and `WithLambdaTimeout()`
+2. **Enable connection reuse**: Initialize globally in Lambda
+3. **Pre-register models**: Reduce cold start time
+4. **Monitor performance**: Use CloudWatch metrics
 
 ## Common Use Cases
 
-### 1. User Management System
+### User Management System
 ```go
 type User struct {
     ID        string    `dynamorm:"pk"`
-    Email     string    `dynamorm:"index:gsi-email,unique"`
-    Username  string    `dynamorm:"index:gsi-username,unique"`
-    Status    string    `dynamorm:"index:gsi-status-created,pk"`
-    CreatedAt time.Time `dynamorm:"index:gsi-status-created,sk"`
+    Email     string    `dynamorm:"index:gsi-email"`
+    Username  string    `dynamorm:"index:gsi-username"`
+    Status    string    `dynamorm:"index:gsi-status,pk"`
+    CreatedAt time.Time `dynamorm:"index:gsi-status,sk"`
     Profile   UserProfile `dynamorm:"json"`
-    Version   int       `dynamorm:"version"`
 }
 
-// Get user by email
-var user User
-err := db.Model(&User{}).
-    Index("gsi-email").
-    Where("Email", "=", email).
-    First(&user)
-
-// List active users
-var users []User
-err := db.Model(&User{}).
-    Index("gsi-status-created").
-    Where("Status", "=", "active").
-    OrderBy("CreatedAt", "desc").
-    Limit(50).
-    All(&users)
+// Access patterns:
+// 1. Get user by ID: Query on primary key
+// 2. Get user by email: Query on gsi-email
+// 3. Get users by status: Query on gsi-status
+// 4. Get recent users: Query on gsi-status with sort
 ```
 
-### 2. E-commerce Order System
+### E-commerce Product Catalog
 ```go
-type Order struct {
-    ID         string      `dynamorm:"pk"`
-    CustomerID string      `dynamorm:"index:gsi-customer-date,pk"`
-    OrderDate  time.Time   `dynamorm:"index:gsi-customer-date,sk"`
-    Status     string      `dynamorm:"index:gsi-status-date,pk"`
-    Items      []OrderItem `dynamorm:"json"`
-    Total      float64
-    Version    int         `dynamorm:"version"`
+type Product struct {
+    SKU       string  `dynamorm:"pk"`
+    Category  string  `dynamorm:"index:gsi-category,pk"`
+    Price     float64 `dynamorm:"index:gsi-category,sk"`
+    Brand     string  `dynamorm:"index:gsi-brand"`
+    InStock   bool    `dynamorm:"index:gsi-availability,sparse"`
+    CreatedAt time.Time `dynamorm:"created_at"`
 }
 
-// Get customer orders
-var orders []Order
-err := db.Model(&Order{}).
-    Index("gsi-customer-date").
-    Where("CustomerID", "=", customerID).
-    OrderBy("OrderDate", "desc").
-    All(&orders)
-
-// Process order with inventory update
-err := db.Transaction(func(tx *transaction.Transaction) error {
-    // Create order
-    if err := tx.Create(order); err != nil {
-        return err
-    }
-    
-    // Update inventory
-    for _, item := range order.Items {
-        err := tx.Model(&Inventory{}).
-            Where("ProductID", "=", item.ProductID).
-            UpdateBuilder().
-            Decrement("Stock", item.Quantity).
-            If("Stock >= :qty", dynamorm.Param("qty", item.Quantity)).
-            Execute()
-        if err != nil {
-            return err
-        }
-    }
-    
-    return nil
-})
+// Access patterns:
+// 1. Get product by SKU: Query on primary key
+// 2. Browse by category: Query on gsi-category
+// 3. Filter by brand: Query on gsi-brand
+// 4. Find available products: Query on gsi-availability
 ```
 
-### 3. Multi-Tenant SaaS
+### Multi-Tenant SaaS
 ```go
-type Project struct {
-    ID       string `dynamorm:"pk,composite:org_id,project_id"`
-    OrgID    string `dynamorm:"extract:org_id"`
-    Name     string `dynamorm:"index:gsi-org-name,pk,composite:org_id,name"`
-    Status   string `dynamorm:"index:gsi-org-status,pk,composite:org_id,status"`
-    CreatedAt time.Time `dynamorm:"index:gsi-org-status,sk"`
+type TenantData struct {
+    TenantID  string `dynamorm:"pk"`
+    DataType  string `dynamorm:"sk"`
+    Data      map[string]interface{} `dynamorm:"json"`
+    CreatedAt time.Time `dynamorm:"created_at"`
 }
 
-// Get organization projects
-var projects []Project
-err := db.Model(&Project{}).
-    Index("gsi-org-status").
-    Where("OrgID", "=", orgID).
-    Where("Status", "=", "active").
-    All(&projects)
+// Access patterns:
+// 1. Get all data for tenant: Query with TenantID
+// 2. Get specific data type: Query with TenantID and DataType
+// 3. Cross-tenant queries: Use MultiAccountDB
 ```
 
-### 4. Time-Series Data (IoT/Analytics)
+### Time-Series Data
 ```go
 type Metric struct {
-    DeviceID  string    `dynamorm:"pk"`
-    Timestamp time.Time `dynamorm:"sk"`
-    Value     float64
-    Type      string    `dynamorm:"index:gsi-type-time,pk"`
-    TTL       time.Time `dynamorm:"ttl"`
+    MetricName string    `dynamorm:"pk"`
+    Timestamp  time.Time `dynamorm:"sk"`
+    Value      float64
+    Tags       map[string]string `dynamorm:"json"`
 }
 
-// Get device metrics for time range
-var metrics []Metric
-err := db.Model(&Metric{}).
-    Where("DeviceID", "=", deviceID).
-    Where("Timestamp", "between", startTime, endTime).
-    All(&metrics)
-
-// Get metrics by type
-var typeMetrics []Metric
-err := db.Model(&Metric{}).
-    Index("gsi-type-time").
-    Where("Type", "=", "temperature").
-    Where("Timestamp", ">", time.Now().Add(-24*time.Hour)).
-    All(&typeMetrics)
+// Access patterns:
+// 1. Get metric by name and time range: Query with MetricName
+// 2. Get latest metrics: Query with reverse sort
+// 3. Aggregate data: Use parallel scan for analytics
 ```
 
 ## Performance Considerations
 
 ### Lambda Optimization
-1. **Pre-register models** to avoid reflection overhead
-2. **Use global DB instance** for connection reuse
-3. **Set Lambda timeout** to prevent hanging operations
-4. **Use appropriate memory allocation** (1024MB+ recommended)
+- **Cold Start**: ~11ms with DynamORM vs ~127ms with AWS SDK
+- **Memory Usage**: 18MB vs 42MB (57% reduction)
+- **Throughput**: 20,000+ ops/sec vs 12,000 ops/sec
 
 ### DynamoDB Optimization
-1. **Design for access patterns** not normalization
-2. **Use composite keys** for hierarchical data
-3. **Leverage GSIs** for different query patterns
-4. **Use TTL** for automatic data cleanup
-5. **Batch operations** when possible
-6. **Monitor hot partitions** and distribute load
+- **Use appropriate read/write capacity**: Start with on-demand, move to provisioned for predictable workloads
+- **Design for even distribution**: Avoid hot partitions
+- **Use sparse indexes**: Only index items that have the attribute
+- **Implement caching**: Use DAX or application-level caching
 
 ### Query Performance
-1. **Use specific indexes** instead of scans
-2. **Limit result sets** with pagination
-3. **Use projection** to reduce data transfer
-4. **Cache frequently accessed data**
-5. **Use eventually consistent reads** when possible
+- **Prefer Query over Scan**: 10-100x faster
+- **Use projections**: Reduce data transfer
+- **Implement pagination**: Handle large result sets efficiently
+- **Batch operations**: Reduce API calls
 
 ## Troubleshooting Guide
 
 ### Common Issues
 
-#### 1. Item Not Found Errors
+#### "Item not found" errors
 ```go
-// Check for specific error
+err := db.Model(&User{}).Where("ID", "=", "123").First(&user)
 if errors.Is(err, errors.ErrItemNotFound) {
     // Handle not found case
-    return nil, ErrUserNotFound
 }
 ```
 
-#### 2. Conditional Check Failed
+#### Conditional check failures
 ```go
-// Handle optimistic locking failures
+err := db.Model(user).
+    UpdateBuilder().
+    Set("Status", "active").
+    ConditionExists("ID").
+    Execute()
 if errors.Is(err, errors.ErrConditionFailed) {
-    // Retry with fresh data
-    return s.retryUpdate(user)
+    // Handle condition failure
 }
 ```
 
-#### 3. Index Not Found
+#### Timeout issues in Lambda
 ```go
-// Verify index exists in model definition
-type User struct {
-    Email string `dynamorm:"index:gsi-email"` // Make sure this exists
-}
-```
-
-#### 4. Lambda Timeout Issues
-```go
-// Use timeout-aware DB
 func handler(ctx context.Context, event Event) error {
-    timeoutDB := db.WithLambdaTimeout(ctx)
-    // Use timeoutDB for all operations
+    // Set timeout buffer
+    db := db.WithLambdaTimeoutBuffer(1 * time.Second)
+    lambdaDB := db.WithLambdaTimeout(ctx)
+    
+    // Use lambdaDB for operations
+    return lambdaDB.Model(&User{}).Create()
 }
 ```
 
 ### Debugging Tips
+1. **Enable logging**: Set log level to debug
+2. **Use X-Ray tracing**: Enable in Lambda environment
+3. **Monitor CloudWatch metrics**: Track performance and errors
+4. **Test with DynamoDB Local**: Reproduce issues locally
 
-#### 1. Enable Debug Logging
+### Performance Monitoring
 ```go
-db, err := dynamorm.New(dynamorm.Config{
-    Region:     "us-east-1",
-    DebugLevel: dynamorm.DebugAll,
-})
-```
-
-#### 2. Check Query Compilation
-```go
-// Use Count() to test query without fetching data
-count, err := db.Model(&User{}).
-    Where("Status", "=", "active").
-    Count()
-```
-
-#### 3. Verify Table Schema
-```go
-// Check if table exists and has correct schema
-desc, err := db.DescribeTable(&User{})
-if err != nil {
-    log.Printf("Table issue: %v", err)
+// Get Lambda memory stats
+if lambdaDB, ok := db.(*dynamorm.LambdaDB); ok {
+    stats := lambdaDB.GetMemoryStats()
+    log.Printf("Memory usage: %.2f%% (%d MB)", 
+        stats.MemoryPercent, stats.LambdaMemoryMB)
 }
 ```
 
-### Performance Monitoring
-
-#### 1. Track Query Performance
-```go
-start := time.Now()
-err := db.Model(&User{}).Where("ID", "=", id).First(&user)
-duration := time.Since(start)
-log.Printf("Query took %v", duration)
-```
-
-#### 2. Monitor Lambda Metrics
-- Cold start frequency
-- Memory usage
-- Execution duration
-- Error rates
-
-#### 3. DynamoDB Metrics
-- Read/write capacity usage
-- Throttling events
-- Hot partition warnings
-- Index usage patterns
-
-This comprehensive guide provides AI assistants with all the essential knowledge needed to work effectively with DynamORM, from basic usage to advanced patterns and troubleshooting. 
+This comprehensive guide provides AI assistants with the knowledge needed to effectively help developers use DynamORM for building high-performance, serverless applications with DynamoDB. 
