@@ -917,11 +917,12 @@ func (q *query) BatchCreate(items any) error {
 				unprocessed = append(unprocessed, items...)
 			}
 
-			if len(unprocessed) == 0 {
+			remainingRequests = unprocessed
+
+			if len(remainingRequests) == 0 {
 				break
 			}
 
-			remainingRequests = unprocessed
 			retryCount++
 
 			// Add exponential backoff with context awareness
