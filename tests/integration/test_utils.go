@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -31,13 +32,27 @@ type TestContext struct {
 func InitTestDB(t *testing.T) *TestContext {
 	t.Helper()
 
-	if os.Getenv("SKIP_INTEGRATION") == "true" {
-		t.Skip("Integration tests disabled")
-	}
-
+	// Always check for DynamoDB Local availability first
+	// This will skip the test with a clear message if DynamoDB Local is not running
 	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "http://localhost:8000"
+	}
+
+	// Check if DynamoDB Local is running
+	if !isDynamoDBLocalRunning(endpoint) {
+		t.Skip(`DynamoDB Local is not running.
+
+To run integration tests:
+1. Install Docker: https://www.docker.com/
+2. Start DynamoDB Local: ./tests/setup_test_env.sh
+3. Run tests: go test ./tests/integration -v
+
+Or skip integration tests: SKIP_INTEGRATION=true go test ./...`)
+	}
+
+	if os.Getenv("SKIP_INTEGRATION") == "true" {
+		t.Skip("Integration tests disabled")
 	}
 
 	sessionConfig := session.Config{
@@ -445,4 +460,39 @@ type TestContact struct {
 	Phone   string
 	Company string
 	Active  bool
+}
+
+// isDynamoDBLocalRunning checks if DynamoDB Local is accessible
+func isDynamoDBLocalRunning(endpoint string) bool {
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion("us-east-1"),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...any) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:           endpoint,
+					SigningRegion: "us-east-1",
+				}, nil
+			})),
+		config.WithCredentialsProvider(aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			})),
+	)
+	if err != nil {
+		return false
+	}
+
+	client := dynamodb.NewFromConfig(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err = client.ListTables(ctx, &dynamodb.ListTablesInput{
+		Limit: aws.Int32(1),
+	})
+
+	return err == nil
 }
