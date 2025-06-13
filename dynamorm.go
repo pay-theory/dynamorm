@@ -835,6 +835,11 @@ func (q *query) BatchGet(keys []any, dest any) error {
 
 // BatchCreate creates multiple items
 func (q *query) BatchCreate(items any) error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -882,27 +887,61 @@ func (q *query) BatchCreate(items any) error {
 			})
 		}
 
-		// Build BatchWriteItem input
-		input := &dynamodb.BatchWriteItemInput{
-			RequestItems: map[string][]types.WriteRequest{
-				metadata.TableName: writeRequests,
-			},
-		}
-
 		// Execute batch write with retries for unprocessed items
-		for {
-			output, err := q.db.session.Client().BatchWriteItem(q.ctx, input)
+		remainingRequests := writeRequests
+		retryCount := 0
+		maxRetries := 3
+
+		for len(remainingRequests) > 0 && retryCount < maxRetries {
+			// Build BatchWriteItem input for current attempt
+			batchInput := &dynamodb.BatchWriteItemInput{
+				RequestItems: map[string][]types.WriteRequest{
+					metadata.TableName: remainingRequests,
+				},
+			}
+
+			output, err := q.db.session.Client().BatchWriteItem(q.ctx, batchInput)
 			if err != nil {
 				return fmt.Errorf("failed to batch create items: %w", err)
 			}
 
 			// Check for unprocessed items
 			if len(output.UnprocessedItems) == 0 {
+				// All items processed successfully
 				break
 			}
 
-			// Retry unprocessed items
-			input.RequestItems = output.UnprocessedItems
+			// Collect unprocessed items for retry
+			var unprocessed []types.WriteRequest
+			for _, items := range output.UnprocessedItems {
+				unprocessed = append(unprocessed, items...)
+			}
+
+			if len(unprocessed) == 0 {
+				break
+			}
+
+			remainingRequests = unprocessed
+			retryCount++
+
+			// Add exponential backoff with context awareness
+			if retryCount < maxRetries {
+				backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
+				if backoff > 2*time.Second {
+					backoff = 2 * time.Second
+				}
+
+				select {
+				case <-time.After(backoff):
+					// Continue with retry
+				case <-q.ctx.Done():
+					return fmt.Errorf("context cancelled during retry: %w", q.ctx.Err())
+				}
+			}
+		}
+
+		if len(remainingRequests) > 0 {
+			return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
 		}
 	}
 
