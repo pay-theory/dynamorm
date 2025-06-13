@@ -917,6 +917,14 @@ func (q *query) BatchCreate(items any) error {
 				break
 			}
 
+			// Check if context is cancelled before retrying
+			select {
+			case <-q.ctx.Done():
+				return fmt.Errorf("context cancelled during batch create retry: %w", q.ctx.Err())
+			default:
+				// Continue with retry
+			}
+
 			// Retry unprocessed items
 			input.RequestItems = output.UnprocessedItems
 		}

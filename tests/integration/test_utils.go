@@ -338,8 +338,12 @@ func isTableExistsError(err error) bool {
 }
 
 func getTableName(model any) string {
-	// This is a simple implementation - in practice you'd use reflection
-	// to get the table name from the model or TableName() method
+	// First try to call TableName() method if it exists
+	if tableNamer, ok := model.(interface{ TableName() string }); ok {
+		return tableNamer.TableName()
+	}
+
+	// Fallback to type-based mapping
 	switch model.(type) {
 	// Handle models from models package
 	case *models.TestUser, models.TestUser:

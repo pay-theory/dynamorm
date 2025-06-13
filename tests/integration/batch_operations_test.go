@@ -32,6 +32,10 @@ type BatchTestItem struct {
 	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
+func (BatchTestItem) TableName() string {
+	return "BatchTestItems"
+}
+
 func TestBatchOperations(t *testing.T) {
 	// Initialize test context with automatic cleanup
 	testCtx := InitTestDB(t)

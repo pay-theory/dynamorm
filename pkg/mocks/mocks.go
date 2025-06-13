@@ -67,6 +67,21 @@
 //	mockUpdateBuilder.On("Set", "Status", "completed").Return(mockUpdateBuilder)
 //	mockUpdateBuilder.On("Execute").Return(nil)
 //
+// # AWS SDK Level Mocking
+//
+// For testing infrastructure code that directly uses the AWS SDK:
+//
+//	mockClient := new(mocks.MockDynamoDBClient)
+//	mockWaiter := new(mocks.MockTableExistsWaiter)
+//
+//	// Mock table creation
+//	mockClient.On("CreateTable", mock.Anything, mock.Anything, mock.Anything).
+//		Return(mocks.NewMockCreateTableOutput("test-table"), nil)
+//
+//	// Mock waiting for table to be ready
+//	mockWaiter.On("Wait", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+//		Return(nil)
+//
 // # Tips
 //
 // 1. Use mock.Anything when you don't need to assert on specific arguments
@@ -74,6 +89,8 @@
 // 3. Always assert expectations were met with AssertExpectations
 // 4. Return the mock itself for chainable methods
 // 5. Use Run to modify output parameters before returning
+// 6. Use the helper functions (NewMockCreateTableOutput, etc.) for realistic responses
+// 7. AWS SDK mocks complement DynamORM interface mocks for complete test coverage
 package mocks
 
 // Helper type aliases for convenience
@@ -86,4 +103,7 @@ type (
 
 	// UpdateBuilder is an alias for MockUpdateBuilder to allow shorter declarations
 	UpdateBuilder = MockUpdateBuilder
+
+	// ExtendedDB is an alias for MockExtendedDB to allow shorter declarations
+	ExtendedDB = MockExtendedDB
 )

@@ -21,6 +21,10 @@ type TestItem struct {
 	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
+func (TestItem) TableName() string {
+	return "TestItems"
+}
+
 func (t *TestItem) SetKeys() {
 	// Set composite key if needed
 }

@@ -54,12 +54,12 @@ func TestBatchCreateTimeout(t *testing.T) {
 
 	t.Run("BatchCreateWithShortTimeout", func(t *testing.T) {
 		// Create a context with a very short timeout to simulate the issue
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 		defer cancel()
 
-		// Create test records with unique keys
-		records := make([]BinRecord, 25) // Max batch size
-		for i := 0; i < 25; i++ {
+		// Create test records with unique keys - use more records to force timeout
+		records := make([]BinRecord, 100) // More records to increase processing time
+		for i := 0; i < 100; i++ {
 			records[i] = BinRecord{
 				CardBin:         "123456",
 				CardBinExtended: fmt.Sprintf("1234567890123456789%d", i), // Unique sort key
@@ -234,7 +234,7 @@ func TestBatchCreateReproduceIssue(t *testing.T) {
 
 	t.Run("ReproduceTimeoutIssue", func(t *testing.T) {
 		// Create a large number of records to process
-		const totalRecords = 100
+		const totalRecords = 200
 		const batchSize = 25
 
 		records := make([]BinRecord, totalRecords)
@@ -252,7 +252,7 @@ func TestBatchCreateReproduceIssue(t *testing.T) {
 		}
 
 		// Test with very short timeout to trigger the issue
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 		defer cancel()
 
 		err := writeChunk(ctx, records, batchSize)
