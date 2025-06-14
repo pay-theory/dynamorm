@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -138,22 +139,47 @@ func (tx *Transaction) Update(model any) error {
 			currentVersion := versionValue.Int()
 			conditionExpression = "#ver = :currentVer"
 			expressionAttributeNames["#ver"] = metadata.VersionField.DBName
-			av, _ := tx.converter.ToAttributeValue(currentVersion)
+
+			av, err := tx.converter.ToAttributeValue(currentVersion)
+			if err != nil {
+				return fmt.Errorf("failed to convert current version: %w", err)
+			}
 			expressionAttributeValues[":currentVer"] = av
 
 			// Increment version
 			updateExpression += fmt.Sprintf(", #ver = :newVer")
-			newAv, _ := tx.converter.ToAttributeValue(currentVersion + 1)
+			newAv, err := tx.converter.ToAttributeValue(currentVersion + 1)
+			if err != nil {
+				return fmt.Errorf("failed to convert new version: %w", err)
+			}
 			expressionAttributeValues[":newVer"] = newAv
 		}
 	}
 
 	// Handle updated_at field
 	if metadata.UpdatedAtField != nil {
-		updateExpression += fmt.Sprintf(", #upd = :updTime")
-		expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
-		av, _ := tx.converter.ToAttributeValue(reflect.ValueOf(metadata.UpdatedAtField.Type).Interface())
-		expressionAttributeValues[":updTime"] = av
+		// Check if we already have updated_at in the update expression
+		alreadyUpdated := false
+		for _, fieldMeta := range metadata.Fields {
+			if fieldMeta.DBName == metadata.UpdatedAtField.DBName {
+				fieldValue := modelValue.Field(fieldMeta.Index)
+				if fieldValue.IsValid() && !fieldValue.IsZero() {
+					alreadyUpdated = true
+					break
+				}
+			}
+		}
+
+		if !alreadyUpdated {
+			updateExpression += fmt.Sprintf(", #upd = :updTime")
+			expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
+
+			av, err := tx.converter.ToAttributeValue(time.Now())
+			if err != nil {
+				return fmt.Errorf("failed to convert updated_at timestamp: %w", err)
+			}
+			expressionAttributeValues[":updTime"] = av
+		}
 	}
 
 	// Build update item
@@ -209,7 +235,11 @@ func (tx *Transaction) Delete(model any) error {
 			deleteItem.ExpressionAttributeNames = map[string]string{
 				"#ver": metadata.VersionField.DBName,
 			}
-			av, _ := tx.converter.ToAttributeValue(versionValue.Interface())
+
+			av, err := tx.converter.ToAttributeValue(versionValue.Interface())
+			if err != nil {
+				return fmt.Errorf("failed to convert version for delete condition: %w", err)
+			}
 			deleteItem.ExpressionAttributeValues = map[string]types.AttributeValue{
 				":ver": av,
 			}
@@ -260,7 +290,12 @@ func (tx *Transaction) Commit() error {
 			TransactItems: tx.writes,
 		}
 
-		_, err := tx.session.Client().TransactWriteItems(tx.ctx, input)
+		client, err := tx.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for transaction commit: %w", err)
+		}
+
+		_, err = client.TransactWriteItems(tx.ctx, input)
 		if err != nil {
 			return tx.handleTransactionError(err)
 		}
@@ -272,7 +307,12 @@ func (tx *Transaction) Commit() error {
 			TransactItems: tx.reads,
 		}
 
-		output, err := tx.session.Client().TransactGetItems(tx.ctx, input)
+		client, err := tx.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for transaction reads: %w", err)
+		}
+
+		output, err := client.TransactGetItems(tx.ctx, input)
 		if err != nil {
 			return tx.handleTransactionError(err)
 		}

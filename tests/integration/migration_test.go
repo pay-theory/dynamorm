@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/schema"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,27 +75,16 @@ func (p *ProductV2) TableName() string {
 	return "products_v2"
 }
 
-func TestMigrationTransformFunction(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
+func TestAutoMigrate(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&UserV1{})
-	_ = db.DeleteTable(&UserV2{})
+	// Create DB with TestContext
+	testCtx := InitTestDB(t)
 
 	t.Run("BasicDataTransformation", func(t *testing.T) {
-		// Create and populate V1 table
-		err := db.CreateTable(&UserV1{})
-		require.NoError(t, err)
+		// Create tables
+		testCtx.CreateTableIfNotExists(t, &UserV1{})
+		testCtx.CreateTableIfNotExists(t, &UserV2{})
 
 		// Add test data
 		users := []*UserV1{
@@ -119,7 +109,7 @@ func TestMigrationTransformFunction(t *testing.T) {
 		}
 
 		for _, u := range users {
-			err = db.Model(u).Create()
+			err := testCtx.DB.Model(u).Create()
 			require.NoError(t, err)
 		}
 
@@ -162,7 +152,7 @@ func TestMigrationTransformFunction(t *testing.T) {
 		}
 
 		// Migrate to V2 with transformation
-		err = db.AutoMigrateWithOptions(&UserV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&UserV1{},
 			dynamorm.WithTargetModel(&UserV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithTransform(transformFunc),
@@ -171,13 +161,13 @@ func TestMigrationTransformFunction(t *testing.T) {
 
 		// Verify migration results
 		var migratedUsers []UserV2
-		err = db.Model(&UserV2{}).All(&migratedUsers)
+		err = testCtx.DB.Model(&UserV2{}).All(&migratedUsers)
 		require.NoError(t, err)
 		assert.Len(t, migratedUsers, 2)
 
 		// Check first user
 		var user1 UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-1").
 			Where("Email", "=", "john@example.com").
 			First(&user1)
@@ -194,7 +184,7 @@ func TestMigrationTransformFunction(t *testing.T) {
 
 		// Check second user
 		var user2 UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-2").
 			Where("Email", "=", "jane@example.com").
 			First(&user2)
@@ -208,16 +198,12 @@ func TestMigrationTransformFunction(t *testing.T) {
 		assert.False(t, user2.Active)
 		assert.Equal(t, "light", user2.Settings["theme"])
 		assert.Equal(t, "es", user2.Settings["lang"])
-
-		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
 	})
 
 	t.Run("AttributeValueTransformation", func(t *testing.T) {
-		// Create and populate V1 table
-		err := db.CreateTable(&ProductV1{})
-		require.NoError(t, err)
+		// Create tables
+		testCtx.CreateTableIfNotExists(t, &ProductV1{})
+		testCtx.CreateTableIfNotExists(t, &ProductV2{})
 
 		// Add test data
 		products := []*ProductV1{
@@ -240,12 +226,12 @@ func TestMigrationTransformFunction(t *testing.T) {
 		}
 
 		for _, p := range products {
-			err = db.Model(p).Create()
+			err := testCtx.DB.Model(p).Create()
 			require.NoError(t, err)
 		}
 
 		// Define AttributeValue transformation function
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			target := make(map[string]types.AttributeValue)
 
 			// Copy all existing fields
@@ -292,7 +278,7 @@ func TestMigrationTransformFunction(t *testing.T) {
 		}
 
 		// Migrate to V2 with transformation
-		err = db.AutoMigrateWithOptions(&ProductV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&ProductV1{},
 			dynamorm.WithTargetModel(&ProductV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithTransform(transformFunc),
@@ -301,13 +287,13 @@ func TestMigrationTransformFunction(t *testing.T) {
 
 		// Verify migration results
 		var migratedProducts []ProductV2
-		err = db.Model(&ProductV2{}).All(&migratedProducts)
+		err = testCtx.DB.Model(&ProductV2{}).All(&migratedProducts)
 		require.NoError(t, err)
 		assert.Len(t, migratedProducts, 2)
 
 		// Check electronics product
 		var laptop ProductV2
-		err = db.Model(&ProductV2{}).
+		err = testCtx.DB.Model(&ProductV2{}).
 			Where("ID", "=", "prod-1").
 			Where("Category", "=", "electronics").
 			First(&laptop)
@@ -325,7 +311,7 @@ func TestMigrationTransformFunction(t *testing.T) {
 
 		// Check books product
 		var book ProductV2
-		err = db.Model(&ProductV2{}).
+		err = testCtx.DB.Model(&ProductV2{}).
 			Where("ID", "=", "prod-2").
 			Where("Category", "=", "books").
 			First(&book)
@@ -338,10 +324,6 @@ func TestMigrationTransformFunction(t *testing.T) {
 		assert.Equal(t, "USD", book.Currency)
 		assert.Contains(t, book.Tags, "education")
 		assert.Contains(t, book.Tags, "reading")
-
-		// Clean up
-		_ = db.DeleteTable(&ProductV1{})
-		_ = db.DeleteTable(&ProductV2{})
 	})
 }
 
@@ -352,20 +334,13 @@ func TestMigrationWithBackup(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&UserV1{})
-	_ = db.DeleteTable(&UserV2{})
+	// Create DB with TestContext
+	testCtx := InitTestDB(t)
 
 	t.Run("MigrationWithBackup", func(t *testing.T) {
-		// Create and populate source table
-		err := db.CreateTable(&UserV1{})
-		require.NoError(t, err)
+		// Create tables
+		testCtx.CreateTableIfNotExists(t, &UserV1{})
+		testCtx.CreateTableIfNotExists(t, &UserV2{})
 
 		// Add test data
 		user := &UserV1{
@@ -376,11 +351,11 @@ func TestMigrationWithBackup(t *testing.T) {
 			Status:  "active",
 			Version: 1,
 		}
-		err = db.Model(user).Create()
+		err := testCtx.DB.Model(user).Create()
 		require.NoError(t, err)
 
 		// Migrate with backup
-		err = db.AutoMigrateWithOptions(&UserV1{},
+		err = testCtx.DB.AutoMigrateWithOptions(&UserV1{},
 			dynamorm.WithTargetModel(&UserV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithBackupTable("users_v1_backup"),
@@ -400,7 +375,7 @@ func TestMigrationWithBackup(t *testing.T) {
 
 		// Verify target table has data
 		var migratedUser UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-1").
 			Where("Email", "=", "test@example.com").
 			First(&migratedUser)
@@ -409,10 +384,6 @@ func TestMigrationWithBackup(t *testing.T) {
 
 		// Note: Backup verification would depend on the backup implementation
 		// In a real scenario, you might check for backup table existence or backup metadata
-
-		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
 	})
 }
 
@@ -423,20 +394,13 @@ func TestMigrationBatchProcessing(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&UserV1{})
-	_ = db.DeleteTable(&UserV2{})
+	// Create DB with TestContext
+	testCtx := InitTestDB(t)
 
 	t.Run("LargeBatchMigration", func(t *testing.T) {
-		// Create and populate source table with many items
-		err := db.CreateTable(&UserV1{})
-		require.NoError(t, err)
+		// Create tables
+		testCtx.CreateTableIfNotExists(t, &UserV1{})
+		testCtx.CreateTableIfNotExists(t, &UserV2{})
 
 		// Create multiple users to test batch processing
 		const numUsers = 50
@@ -449,12 +413,12 @@ func TestMigrationBatchProcessing(t *testing.T) {
 				Status:  []string{"active", "inactive"}[i%2],
 				Version: 1,
 			}
-			err = db.Model(user).Create()
+			err := testCtx.DB.Model(user).Create()
 			require.NoError(t, err)
 		}
 
 		// Migrate with small batch size to test batching
-		err = db.AutoMigrateWithOptions(&UserV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&UserV1{},
 			dynamorm.WithTargetModel(&UserV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithBatchSize(10), // Small batch size to test batching
@@ -474,13 +438,13 @@ func TestMigrationBatchProcessing(t *testing.T) {
 
 		// Verify all users were migrated
 		var migratedUsers []UserV2
-		err = db.Model(&UserV2{}).All(&migratedUsers)
+		err = testCtx.DB.Model(&UserV2{}).All(&migratedUsers)
 		require.NoError(t, err)
 		assert.Len(t, migratedUsers, numUsers)
 
 		// Verify a few specific users
 		var user0 UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-0").
 			Where("Email", "=", "user0@example.com").
 			First(&user0)
@@ -489,17 +453,13 @@ func TestMigrationBatchProcessing(t *testing.T) {
 		assert.True(t, user0.Active)
 
 		var user1 UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-1").
 			Where("Email", "=", "user1@example.com").
 			First(&user1)
 		require.NoError(t, err)
 		assert.Equal(t, "User 1", user1.FirstName)
 		assert.False(t, user1.Active)
-
-		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
 	})
 }
 
@@ -510,40 +470,28 @@ func TestMigrationErrorHandling(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&UserV1{})
-	_ = db.DeleteTable(&UserV2{})
+	// Create DB with TestContext
+	testCtx := InitTestDB(t)
 
 	t.Run("InvalidTransformFunction", func(t *testing.T) {
 		// Create source table
-		err := db.CreateTable(&UserV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &UserV1{})
 
 		// Try to use an invalid transform function
 		invalidTransform := "not a function"
 
-		err = db.AutoMigrateWithOptions(&UserV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&UserV1{},
 			dynamorm.WithTargetModel(&UserV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithTransform(invalidTransform),
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "transform must be a function")
-
-		// Clean up
-		_ = db.DeleteTable(&UserV1{})
 	})
 
 	t.Run("TransformationError", func(t *testing.T) {
 		// Create and populate source table
-		err := db.CreateTable(&UserV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &UserV1{})
 
 		user := &UserV1{
 			ID:      "user-1",
@@ -551,26 +499,22 @@ func TestMigrationErrorHandling(t *testing.T) {
 			Name:    "Test User",
 			Version: 1,
 		}
-		err = db.Model(user).Create()
+		err := testCtx.DB.Model(user).Create()
 		require.NoError(t, err)
 
 		// Define a transform that will fail
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			return nil, fmt.Errorf("intentional transform error")
 		}
 
 		// Migration should fail due to transform error
-		err = db.AutoMigrateWithOptions(&UserV1{},
+		err = testCtx.DB.AutoMigrateWithOptions(&UserV1{},
 			dynamorm.WithTargetModel(&UserV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithTransform(transformFunc),
 		)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "intentional transform error")
-
-		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
 	})
 }
 
@@ -581,20 +525,12 @@ func TestMigrationDataIntegrity(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&UserV1{})
-	_ = db.DeleteTable(&UserV2{})
+	// Create DB with TestContext
+	testCtx := InitTestDB(t)
 
 	t.Run("DataIntegrityVerification", func(t *testing.T) {
 		// Create and populate source table
-		err := db.CreateTable(&UserV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &UserV1{})
 
 		// Add test data with various data types
 		users := []*UserV1{
@@ -619,7 +555,7 @@ func TestMigrationDataIntegrity(t *testing.T) {
 		}
 
 		for _, u := range users {
-			err = db.Model(u).Create()
+			err := testCtx.DB.Model(u).Create()
 			require.NoError(t, err)
 		}
 
@@ -660,7 +596,7 @@ func TestMigrationDataIntegrity(t *testing.T) {
 		}
 
 		// Perform migration
-		err = db.AutoMigrateWithOptions(&UserV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&UserV1{},
 			dynamorm.WithTargetModel(&UserV2{}),
 			dynamorm.WithDataCopy(true),
 			dynamorm.WithTransform(transformFunc),
@@ -669,13 +605,13 @@ func TestMigrationDataIntegrity(t *testing.T) {
 
 		// Verify data integrity
 		var migratedUsers []UserV2
-		err = db.Model(&UserV2{}).All(&migratedUsers)
+		err = testCtx.DB.Model(&UserV2{}).All(&migratedUsers)
 		require.NoError(t, err)
 		assert.Len(t, migratedUsers, 2)
 
 		// Check user with full data
 		var user1 UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-1").
 			Where("Email", "=", "john@example.com").
 			First(&user1)
@@ -691,7 +627,7 @@ func TestMigrationDataIntegrity(t *testing.T) {
 
 		// Check user with minimal data (test zero values)
 		var user2 UserV2
-		err = db.Model(&UserV2{}).
+		err = testCtx.DB.Model(&UserV2{}).
 			Where("ID", "=", "user-2").
 			Where("Email", "=", "jane@example.com").
 			First(&user2)
@@ -704,9 +640,5 @@ func TestMigrationDataIntegrity(t *testing.T) {
 		assert.Equal(t, 0, user2.Age)   // Zero value preserved
 		assert.False(t, user2.Active)   // Empty status -> inactive
 		assert.Empty(t, user2.Settings) // Empty settings map
-
-		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
 	})
 }

@@ -84,6 +84,29 @@ count, err := db.Model(&models.Post{}).
     Count()
 ```
 
+### Creating and Updating Items
+
+```go
+// Create a new item (fails if item already exists)
+user := &models.User{
+    ID:    "user123",
+    Email: "user@example.com",
+    Name:  "John Doe",
+}
+err := db.Model(user).Create()
+if errors.Is(err, errors.ErrConditionFailed) {
+    // Item with the same key already exists
+}
+
+// Create or update an item (upsert)
+// This will create a new item or completely overwrite an existing one
+err := db.Model(user).CreateOrUpdate()
+
+// Update specific fields on existing item
+err := db.Model(&models.User{ID: "user123"}).
+    Update("Name", "UpdatedAt")
+```
+
 ### Pagination
 
 ```go

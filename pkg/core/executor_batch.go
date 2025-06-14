@@ -65,14 +65,16 @@ func (e *BatchWriteExecutor) ExecuteBatchWriteItem(tableName string, writeReques
 
 // ExecuteQuery implements the QueryExecutor interface
 func (e *BatchWriteExecutor) ExecuteQuery(input *CompiledQuery, dest any) error {
-	// This is just to satisfy the QueryExecutor interface
-	return fmt.Errorf("ExecuteQuery not implemented for BatchWriteExecutor")
+	// BatchWriteExecutor is optimized for batch write operations.
+	// For query operations, use the query package's MainExecutor or dynamorm.Model().
+	return fmt.Errorf("BatchWriteExecutor does not support ExecuteQuery - this executor is specialized for batch write operations only. Use dynamorm.Model() for queries")
 }
 
 // ExecuteScan implements the QueryExecutor interface
 func (e *BatchWriteExecutor) ExecuteScan(input *CompiledQuery, dest any) error {
-	// This is just to satisfy the QueryExecutor interface
-	return fmt.Errorf("ExecuteScan not implemented for BatchWriteExecutor")
+	// BatchWriteExecutor is optimized for batch write operations.
+	// For scan operations, use the query package's MainExecutor or dynamorm.Model().
+	return fmt.Errorf("BatchWriteExecutor does not support ExecuteScan - this executor is specialized for batch write operations only. Use dynamorm.Model() for scans")
 }
 
 // BatchDeleteWithResult performs batch delete and returns detailed results

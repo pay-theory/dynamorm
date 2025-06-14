@@ -4,9 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +15,7 @@ type UpdateProduct struct {
 	Name         string    `dynamorm:"attr:product_name"`
 	Price        float64   `dynamorm:"attr:price"`
 	Stock        int       `dynamorm:"attr:stock_count"`
-	Tags         []string  `dynamorm:"attr:tags,set"`
+	Tags         []string  `dynamorm:"attr:tags,set,omitempty"`
 	Features     []string  `dynamorm:"attr:features"`
 	Ratings      []float64 `dynamorm:"attr:ratings"`
 	Description  string    `dynamorm:"attr:description,omitempty"`
@@ -49,12 +46,10 @@ func TestUpdateOperations_Set(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
 
 	// Create initial product
 	product := &UpdateProduct{
@@ -70,11 +65,11 @@ func TestUpdateOperations_Set(t *testing.T) {
 		LastModified: time.Now(),
 	}
 
-	err = db.Model(product).Create()
+	err := testCtx.DB.Model(product).Create()
 	require.NoError(t, err)
 
 	t.Run("Set single field", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-001").
 			Where("Category", "=", "Electronics").
 			UpdateBuilder().
@@ -85,7 +80,7 @@ func TestUpdateOperations_Set(t *testing.T) {
 
 		// Verify update
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-001").
 			Where("Category", "=", "Electronics").
 			First(&updated)
@@ -96,7 +91,7 @@ func TestUpdateOperations_Set(t *testing.T) {
 	})
 
 	t.Run("Set multiple fields", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-001").
 			Where("Category", "=", "Electronics").
 			UpdateBuilder().
@@ -109,7 +104,7 @@ func TestUpdateOperations_Set(t *testing.T) {
 
 		// Verify updates
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-001").
 			Where("Category", "=", "Electronics").
 			First(&updated)
@@ -122,7 +117,7 @@ func TestUpdateOperations_Set(t *testing.T) {
 
 	t.Run("Set with return values", func(t *testing.T) {
 		var result UpdateProduct
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-001").
 			Where("Category", "=", "Electronics").
 			UpdateBuilder().
@@ -142,12 +137,10 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UserProfile{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UserProfile{})
 
 	// Create initial user
 	user := &UserProfile{
@@ -161,11 +154,11 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 		Version:    1,
 	}
 
-	err = db.Model(user).Create()
+	err := testCtx.DB.Model(user).Create()
 	require.NoError(t, err)
 
 	t.Run("Add to numeric fields", func(t *testing.T) {
-		err := db.Model(&UserProfile{}).
+		err := testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-001").
 			Where("Email", "=", "test@example.com").
 			UpdateBuilder().
@@ -178,7 +171,7 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 
 		// Verify
 		var updated UserProfile
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-001").
 			Where("Email", "=", "test@example.com").
 			First(&updated)
@@ -189,7 +182,7 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 	})
 
 	t.Run("Increment and Decrement", func(t *testing.T) {
-		err := db.Model(&UserProfile{}).
+		err := testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-001").
 			Where("Email", "=", "test@example.com").
 			UpdateBuilder().
@@ -200,7 +193,7 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 
 		// Verify increment
 		var updated UserProfile
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-001").
 			Where("Email", "=", "test@example.com").
 			First(&updated)
@@ -209,7 +202,7 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 		assert.Equal(t, 26, updated.Age)
 
 		// Test decrement
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-001").
 			Where("Email", "=", "test@example.com").
 			UpdateBuilder().
@@ -218,7 +211,7 @@ func TestUpdateOperations_AtomicCounters(t *testing.T) {
 
 		assert.NoError(t, err)
 
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-001").
 			Where("Email", "=", "test@example.com").
 			First(&updated)
@@ -233,14 +226,11 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create tables
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
-	err = db.CreateTable(&UserProfile{})
-	require.NoError(t, err)
+	// Create tables with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
+	testCtx.CreateTableIfNotExists(t, &UserProfile{})
 
 	// Create product with initial lists
 	product := &UpdateProduct{
@@ -254,11 +244,11 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 		Version:  1,
 	}
 
-	err = db.Model(product).Create()
+	err := testCtx.DB.Model(product).Create()
 	require.NoError(t, err)
 
 	t.Run("AppendToList", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-002").
 			Where("Category", "=", "Electronics").
 			UpdateBuilder().
@@ -269,7 +259,7 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 
 		// Verify
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-002").
 			Where("Category", "=", "Electronics").
 			First(&updated)
@@ -287,10 +277,10 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 			Achievements: []string{"First Win", "10 Wins"},
 			Version:      1,
 		}
-		err := db.Model(user).Create()
+		err := testCtx.DB.Model(user).Create()
 		require.NoError(t, err)
 
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-002").
 			Where("Email", "=", "gamer@example.com").
 			UpdateBuilder().
@@ -301,7 +291,7 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 
 		// Verify
 		var updated UserProfile
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-002").
 			Where("Email", "=", "gamer@example.com").
 			First(&updated)
@@ -312,7 +302,7 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 
 	t.Run("RemoveFromListAt", func(t *testing.T) {
 		// Remove the middle rating (index 1)
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-002").
 			Where("Category", "=", "Electronics").
 			UpdateBuilder().
@@ -323,7 +313,7 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 
 		// Verify
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-002").
 			Where("Category", "=", "Electronics").
 			First(&updated)
@@ -334,7 +324,7 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 
 	t.Run("SetListElement", func(t *testing.T) {
 		// Update a specific feature
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-002").
 			Where("Category", "=", "Electronics").
 			UpdateBuilder().
@@ -345,7 +335,7 @@ func TestUpdateOperations_ListOperations(t *testing.T) {
 
 		// Verify
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-002").
 			Where("Category", "=", "Electronics").
 			First(&updated)
@@ -360,12 +350,10 @@ func TestUpdateOperations_RemoveAndDelete(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
 
 	// Create product with optional fields
 	product := &UpdateProduct{
@@ -380,11 +368,11 @@ func TestUpdateOperations_RemoveAndDelete(t *testing.T) {
 		Version:     1,
 	}
 
-	err = db.Model(product).Create()
+	err := testCtx.DB.Model(product).Create()
 	require.NoError(t, err)
 
 	t.Run("Remove attributes", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-003").
 			Where("Category", "=", "Books").
 			UpdateBuilder().
@@ -396,7 +384,7 @@ func TestUpdateOperations_RemoveAndDelete(t *testing.T) {
 
 		// Verify
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-003").
 			Where("Category", "=", "Books").
 			First(&updated)
@@ -407,7 +395,7 @@ func TestUpdateOperations_RemoveAndDelete(t *testing.T) {
 	})
 
 	t.Run("Delete from set", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-003").
 			Where("Category", "=", "Books").
 			UpdateBuilder().
@@ -418,7 +406,7 @@ func TestUpdateOperations_RemoveAndDelete(t *testing.T) {
 
 		// Verify
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-003").
 			Where("Category", "=", "Books").
 			First(&updated)
@@ -433,12 +421,10 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
 
 	// Create product
 	product := &UpdateProduct{
@@ -451,12 +437,12 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 		Version:  1,
 	}
 
-	err = db.Model(product).Create()
+	err := testCtx.DB.Model(product).Create()
 	require.NoError(t, err)
 
 	t.Run("Condition on field value", func(t *testing.T) {
 		// Only update if stock is less than 10
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			UpdateBuilder().
@@ -468,7 +454,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 
 		// Verify update happened
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			First(&updated)
@@ -479,7 +465,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 
 	t.Run("Condition fails", func(t *testing.T) {
 		// Try to update only if price > 100 (should fail)
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			UpdateBuilder().
@@ -492,7 +478,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 
 		// Verify price unchanged
 		var unchanged UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			First(&unchanged)
@@ -503,7 +489,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 
 	t.Run("ConditionExists", func(t *testing.T) {
 		// Only update if Active field exists
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			UpdateBuilder().
@@ -515,7 +501,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 
 		// Verify
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			First(&updated)
@@ -526,7 +512,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 
 	t.Run("ConditionNotExists", func(t *testing.T) {
 		// Try to set Description only if it doesn't exist
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			UpdateBuilder().
@@ -537,7 +523,7 @@ func TestUpdateOperations_ConditionalUpdates(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Try again - should fail now
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-004").
 			Where("Category", "=", "Clothing").
 			UpdateBuilder().
@@ -554,12 +540,10 @@ func TestUpdateOperations_OptimisticLocking(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
 
 	// Create product
 	product := &UpdateProduct{
@@ -571,11 +555,11 @@ func TestUpdateOperations_OptimisticLocking(t *testing.T) {
 		Version:  1,
 	}
 
-	err = db.Model(product).Create()
+	err := testCtx.DB.Model(product).Create()
 	require.NoError(t, err)
 
 	t.Run("Successful version update", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-005").
 			Where("Category", "=", "Sports").
 			UpdateBuilder().
@@ -588,7 +572,7 @@ func TestUpdateOperations_OptimisticLocking(t *testing.T) {
 
 		// Verify version incremented
 		var updated UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-005").
 			Where("Category", "=", "Sports").
 			First(&updated)
@@ -600,7 +584,7 @@ func TestUpdateOperations_OptimisticLocking(t *testing.T) {
 
 	t.Run("Version conflict", func(t *testing.T) {
 		// Try to update with old version
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-005").
 			Where("Category", "=", "Sports").
 			UpdateBuilder().
@@ -614,7 +598,7 @@ func TestUpdateOperations_OptimisticLocking(t *testing.T) {
 
 		// Verify price unchanged
 		var unchanged UpdateProduct
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-005").
 			Where("Category", "=", "Sports").
 			First(&unchanged)
@@ -630,12 +614,10 @@ func TestUpdateOperations_ReturnValues(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
 
 	// Create product
 	product := &UpdateProduct{
@@ -647,12 +629,12 @@ func TestUpdateOperations_ReturnValues(t *testing.T) {
 		Version:  1,
 	}
 
-	err = db.Model(product).Create()
+	err := testCtx.DB.Model(product).Create()
 	require.NoError(t, err)
 
 	t.Run("ALL_NEW return values", func(t *testing.T) {
 		var result UpdateProduct
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-006").
 			Where("Category", "=", "Food").
 			UpdateBuilder().
@@ -670,7 +652,7 @@ func TestUpdateOperations_ReturnValues(t *testing.T) {
 
 	t.Run("ALL_OLD return values", func(t *testing.T) {
 		var result UpdateProduct
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-006").
 			Where("Category", "=", "Food").
 			UpdateBuilder().
@@ -686,7 +668,7 @@ func TestUpdateOperations_ReturnValues(t *testing.T) {
 
 	t.Run("UPDATED_NEW return values", func(t *testing.T) {
 		var result map[string]interface{}
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-006").
 			Where("Category", "=", "Food").
 			UpdateBuilder().
@@ -706,12 +688,10 @@ func TestUpdateOperations_ComplexScenarios(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UserProfile{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UserProfile{})
 
 	// Create user with complex data
 	user := &UserProfile{
@@ -729,12 +709,12 @@ func TestUpdateOperations_ComplexScenarios(t *testing.T) {
 		Version:      1,
 	}
 
-	err = db.Model(user).Create()
+	err := testCtx.DB.Model(user).Create()
 	require.NoError(t, err)
 
 	t.Run("Multiple operations in single update", func(t *testing.T) {
 		var result UserProfile
-		err := db.Model(&UserProfile{}).
+		err := testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-003").
 			Where("Email", "=", "complex@example.com").
 			UpdateBuilder().
@@ -764,11 +744,11 @@ func TestUpdateOperations_ComplexScenarios(t *testing.T) {
 			Username: "newuser",
 			Version:  1,
 		}
-		err := db.Model(newUser).Create()
+		err := testCtx.DB.Model(newUser).Create()
 		require.NoError(t, err)
 
 		// Update with SetIfNotExists
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-004").
 			Where("Email", "=", "new@example.com").
 			UpdateBuilder().
@@ -781,7 +761,7 @@ func TestUpdateOperations_ComplexScenarios(t *testing.T) {
 
 		// Verify
 		var updated UserProfile
-		err = db.Model(&UserProfile{}).
+		err = testCtx.DB.Model(&UserProfile{}).
 			Where("UserID", "=", "USER-004").
 			Where("Email", "=", "new@example.com").
 			First(&updated)
@@ -798,15 +778,13 @@ func TestUpdateOperations_ErrorCases(t *testing.T) {
 		t.Skip("Skipping integration test")
 	}
 
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+	testCtx := InitTestDB(t)
 
-	// Create table
-	err := db.CreateTable(&UpdateProduct{})
-	require.NoError(t, err)
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
 
 	t.Run("Update non-existent item", func(t *testing.T) {
-		err := db.Model(&UpdateProduct{}).
+		err := testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "NONEXISTENT").
 			Where("Category", "=", "NONE").
 			UpdateBuilder().
@@ -825,11 +803,11 @@ func TestUpdateOperations_ErrorCases(t *testing.T) {
 			Features: []string{"Feature1"},
 			Version:  1,
 		}
-		err := db.Model(product).Create()
+		err := testCtx.DB.Model(product).Create()
 		require.NoError(t, err)
 
 		// Try to update invalid index
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-ERR").
 			Where("Category", "=", "Test").
 			UpdateBuilder().
@@ -846,11 +824,11 @@ func TestUpdateOperations_ErrorCases(t *testing.T) {
 			Name:     "Type Test",
 			Version:  1,
 		}
-		err := db.Model(product).Create()
+		err := testCtx.DB.Model(product).Create()
 		require.NoError(t, err)
 
 		// Try to add to a string field (should fail)
-		err = db.Model(&UpdateProduct{}).
+		err = testCtx.DB.Model(&UpdateProduct{}).
 			Where("ID", "=", "PROD-TYPE").
 			Where("Category", "=", "Test").
 			UpdateBuilder().
@@ -861,21 +839,112 @@ func TestUpdateOperations_ErrorCases(t *testing.T) {
 	})
 }
 
-// Helper function to setup test database
-func setupTestDB(t *testing.T) (core.ExtendedDB, func()) {
-	tests.RequireDynamoDBLocal(t)
-
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	cleanup := func() {
-		// Clean up tables
-		_ = db.DeleteTable(&UpdateProduct{})
-		_ = db.DeleteTable(&UserProfile{})
+// TestUpdateOperations_ExecuteWithResultAutoReturnValues tests the bug fix where
+// ExecuteWithResult should automatically set ReturnValues to ALL_NEW when not explicitly set
+func TestUpdateOperations_ExecuteWithResultAutoReturnValues(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
 	}
 
-	return db, cleanup
+	testCtx := InitTestDB(t)
+
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &UpdateProduct{})
+
+	t.Run("ExecuteWithResult returns values after Add without explicit ReturnValues", func(t *testing.T) {
+		// Create initial product
+		product := &UpdateProduct{
+			ID:       "PROD-ADD-TEST",
+			Category: "TestCategory",
+			Name:     "Test Product",
+			Price:    10.0,
+			Stock:    5,
+			Version:  1,
+		}
+		err := testCtx.DB.Model(product).Create()
+		require.NoError(t, err)
+
+		// Update with Add operation and ExecuteWithResult WITHOUT setting ReturnValues
+		var result UpdateProduct
+		err = testCtx.DB.Model(&UpdateProduct{}).
+			Where("ID", "=", "PROD-ADD-TEST").
+			Where("Category", "=", "TestCategory").
+			UpdateBuilder().
+			Add("Stock", 3). // Atomic increment
+			Set("LastModified", time.Now()).
+			ExecuteWithResult(&result)
+
+		// Should succeed
+		require.NoError(t, err)
+
+		// Verify the result contains updated values (not zero values)
+		assert.Equal(t, "PROD-ADD-TEST", result.ID, "ID should be populated")
+		assert.Equal(t, "TestCategory", result.Category, "Category should be populated")
+		assert.Equal(t, "Test Product", result.Name, "Name should be populated")
+		assert.Equal(t, 10.0, result.Price, "Price should be populated")
+		assert.Equal(t, 8, result.Stock, "Stock should be 8 after adding 3 to 5")
+		assert.Equal(t, int64(1), result.Version, "Version should be populated")
+	})
+
+	t.Run("ExecuteWithResult with multiple atomic operations", func(t *testing.T) {
+		// Create user profile
+		user := &UserProfile{
+			UserID:     "USER-ATOMIC-TEST",
+			Email:      "atomic@test.com",
+			Username:   "atomicuser",
+			Score:      100.0,
+			LoginCount: 5,
+			Version:    1,
+		}
+		testCtx.CreateTableIfNotExists(t, &UserProfile{})
+		err := testCtx.DB.Model(user).Create()
+		require.NoError(t, err)
+
+		// Multiple atomic operations with ExecuteWithResult
+		var result UserProfile
+		err = testCtx.DB.Model(&UserProfile{}).
+			Where("UserID", "=", "USER-ATOMIC-TEST").
+			Where("Email", "=", "atomic@test.com").
+			UpdateBuilder().
+			Add("Score", 50.5).      // Add to score
+			Increment("LoginCount"). // Increment login count
+			Set("LastLogin", time.Now()).
+			ExecuteWithResult(&result)
+
+		// Should succeed
+		require.NoError(t, err)
+
+		// All fields should be populated
+		assert.Equal(t, "USER-ATOMIC-TEST", result.UserID, "UserID should be populated")
+		assert.Equal(t, "atomic@test.com", result.Email, "Email should be populated")
+		assert.Equal(t, "atomicuser", result.Username, "Username should be populated")
+		assert.Equal(t, 150.5, result.Score, "Score should be 150.5 after adding 50.5 to 100")
+		assert.Equal(t, int64(6), result.LoginCount, "LoginCount should be 6 after increment")
+		assert.NotZero(t, result.LastLogin, "LastLogin should be set")
+	})
+
+	t.Run("ExecuteWithResult with conditional Add operation", func(t *testing.T) {
+		// Test with conditional update to ensure it works with conditions too
+		product := &UpdateProduct{
+			ID:       "PROD-COND-ADD",
+			Category: "Conditional",
+			Stock:    10,
+			Version:  1,
+		}
+		err := testCtx.DB.Model(product).Create()
+		require.NoError(t, err)
+
+		var result UpdateProduct
+		err = testCtx.DB.Model(&UpdateProduct{}).
+			Where("ID", "=", "PROD-COND-ADD").
+			Where("Category", "=", "Conditional").
+			UpdateBuilder().
+			Add("Stock", -5).            // Decrement stock
+			Condition("Stock", ">=", 5). // Only if stock >= 5
+			ExecuteWithResult(&result)
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, result.Stock, "Stock should be 5 after subtracting 5 from 10")
+		assert.Equal(t, "PROD-COND-ADD", result.ID, "ID should be populated")
+	})
 }

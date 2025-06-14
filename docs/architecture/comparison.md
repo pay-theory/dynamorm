@@ -110,11 +110,9 @@ func GetUser(id string) (*User, error) {
 
 #### DynamORM
 ```go
-func GetUser(id string) (*User, error) {
-    user := &User{}
-    err := db.Model(user).Where("ID", "=", id).First()
-    return user, err
-}
+var user User
+err := db.Model(&user).Where("ID", "=", id).First(&user)
+// That's it! No unmarshaling needed
 ```
 
 ### Update Item

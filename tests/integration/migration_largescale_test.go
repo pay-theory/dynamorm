@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/schema"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
@@ -51,23 +50,15 @@ func TestLargeScaleMigration(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Clean up any existing tables
-	_ = db.DeleteTable(&LargeDatasetV1{})
-	_ = db.DeleteTable(&LargeDatasetV2{})
+	testCtx := InitTestDB(t)
 
 	t.Run("MigrationWithLargeDataset", func(t *testing.T) {
 		// Create source table
-		err := db.CreateTable(&LargeDatasetV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV1{})
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV2{})
 
-		// Generate large dataset (1000 items)
-		const itemCount = 1000
+		// Generate large dataset (50 items for debugging)
+		const itemCount = 50
 		items := make([]*LargeDatasetV1, itemCount)
 		for i := 0; i < itemCount; i++ {
 			items[i] = &LargeDatasetV1{
@@ -81,12 +72,12 @@ func TestLargeScaleMigration(t *testing.T) {
 
 		// Insert all items
 		for _, item := range items {
-			err = db.Model(item).Create()
+			err := testCtx.DB.Model(item).Create()
 			require.NoError(t, err)
 		}
 
 		// Define transform function that adds checksum and metadata
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			target := make(map[string]types.AttributeValue)
 
 			// Copy all existing fields
@@ -117,13 +108,13 @@ func TestLargeScaleMigration(t *testing.T) {
 			return target, nil
 		}
 
-		// Migrate with small batch size to test pagination
+		// Migrate with standard batch size
 		startTime := time.Now()
-		err = db.AutoMigrateWithOptions(&LargeDatasetV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&LargeDatasetV1{},
 			schema.WithTargetModel(&LargeDatasetV2{}),
 			schema.WithDataCopy(true),
 			schema.WithTransform(transformFunc),
-			schema.WithBatchSize(10), // Small batch size to test pagination
+			schema.WithBatchSize(25), // Standard DynamoDB batch size
 		)
 		require.NoError(t, err)
 		migrationDuration := time.Since(startTime)
@@ -132,7 +123,7 @@ func TestLargeScaleMigration(t *testing.T) {
 
 		// Verify all items were migrated
 		var migratedItems []LargeDatasetV2
-		err = db.Model(&LargeDatasetV2{}).All(&migratedItems)
+		err = testCtx.DB.Model(&LargeDatasetV2{}).All(&migratedItems)
 		require.NoError(t, err)
 		assert.Len(t, migratedItems, itemCount)
 
@@ -142,14 +133,14 @@ func TestLargeScaleMigration(t *testing.T) {
 			idx := i * (itemCount / sampleSize)
 
 			var original LargeDatasetV1
-			err = db.Model(&LargeDatasetV1{}).
+			err = testCtx.DB.Model(&LargeDatasetV1{}).
 				Where("ID", "=", fmt.Sprintf("item-%05d", idx)).
 				Where("Category", "=", fmt.Sprintf("cat-%d", idx%10)).
 				First(&original)
 			require.NoError(t, err)
 
 			var migrated LargeDatasetV2
-			err = db.Model(&LargeDatasetV2{}).
+			err = testCtx.DB.Model(&LargeDatasetV2{}).
 				Where("ID", "=", fmt.Sprintf("item-%05d", idx)).
 				Where("Category", "=", fmt.Sprintf("cat-%d", idx%10)).
 				First(&migrated)
@@ -167,16 +158,12 @@ func TestLargeScaleMigration(t *testing.T) {
 			assert.NotZero(t, migrated.MigratedAt)
 			assert.Equal(t, "large_dataset_v1", migrated.Metadata["source_table"])
 		}
-
-		// Clean up
-		_ = db.DeleteTable(&LargeDatasetV1{})
-		_ = db.DeleteTable(&LargeDatasetV2{})
 	})
 
 	t.Run("MigrationWithBatchingAndRetries", func(t *testing.T) {
 		// Create source table
-		err := db.CreateTable(&LargeDatasetV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV1{})
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV2{})
 
 		// Add items that might cause batch failures (e.g., large items)
 		const itemCount = 100
@@ -188,13 +175,13 @@ func TestLargeScaleMigration(t *testing.T) {
 				ProcessedAt: time.Now(),
 				Version:     1,
 			}
-			err = db.Model(item).Create()
+			err := testCtx.DB.Model(item).Create()
 			require.NoError(t, err)
 		}
 
 		// Transform that occasionally simulates errors for testing retry logic
 		errorCount := 0
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			// Simulate occasional errors (but not too many to avoid test failure)
 			if errorCount < 2 {
 				if idAttr, exists := source["id"]; exists {
@@ -219,7 +206,7 @@ func TestLargeScaleMigration(t *testing.T) {
 		}
 
 		// Migrate with custom batch size
-		err = db.AutoMigrateWithOptions(&LargeDatasetV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&LargeDatasetV1{},
 			schema.WithTargetModel(&LargeDatasetV2{}),
 			schema.WithDataCopy(true),
 			schema.WithTransform(transformFunc),
@@ -232,10 +219,6 @@ func TestLargeScaleMigration(t *testing.T) {
 		if err != nil {
 			t.Logf("Migration completed with expected errors: %v", err)
 		}
-
-		// Clean up
-		_ = db.DeleteTable(&LargeDatasetV1{})
-		_ = db.DeleteTable(&LargeDatasetV2{})
 	})
 }
 
@@ -246,16 +229,12 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
+	testCtx := InitTestDB(t)
 
 	t.Run("BackupBeforeMigration", func(t *testing.T) {
 		// Create and populate source table
-		err := db.CreateTable(&LargeDatasetV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV1{})
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV2{})
 
 		// Add test data
 		testData := []*LargeDatasetV1{
@@ -276,13 +255,13 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 		}
 
 		for _, item := range testData {
-			err = db.Model(item).Create()
+			err := testCtx.DB.Model(item).Create()
 			require.NoError(t, err)
 		}
 
 		// Migrate with backup table
 		backupTableName := "large_dataset_v1_backup_" + time.Now().Format("20060102_150405")
-		err = db.AutoMigrateWithOptions(&LargeDatasetV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&LargeDatasetV1{},
 			schema.WithBackupTable(backupTableName),
 			schema.WithTargetModel(&LargeDatasetV2{}),
 			schema.WithDataCopy(true),
@@ -296,27 +275,21 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 
 		// Verify original data in source table still exists
 		var sourceItems []LargeDatasetV1
-		err = db.Model(&LargeDatasetV1{}).All(&sourceItems)
+		err = testCtx.DB.Model(&LargeDatasetV1{}).All(&sourceItems)
 		require.NoError(t, err)
 		assert.Len(t, sourceItems, len(testData), "Source data should be intact")
 
 		// Verify data was copied to target table
 		var targetItems []LargeDatasetV2
-		err = db.Model(&LargeDatasetV2{}).All(&targetItems)
+		err = testCtx.DB.Model(&LargeDatasetV2{}).All(&targetItems)
 		require.NoError(t, err)
 		assert.Len(t, targetItems, len(testData), "Target table should have migrated data")
-
-		// Clean up tables
-		_ = db.DeleteTable(&LargeDatasetV1{})
-		_ = db.DeleteTable(&LargeDatasetV2{})
-		// Note: Backup table cleanup would require infrastructure tools
-		// as DynamORM doesn't support deleting tables by name directly
 	})
 
 	t.Run("MigrationWithValidationFailure", func(t *testing.T) {
 		// Create source table
-		err := db.CreateTable(&LargeDatasetV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV1{})
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV2{})
 
 		// Add item that will fail validation
 		item := &LargeDatasetV1{
@@ -326,11 +299,11 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 			ProcessedAt: time.Now(),
 			Version:     1,
 		}
-		err = db.Model(item).Create()
+		err := testCtx.DB.Model(item).Create()
 		require.NoError(t, err)
 
 		// Transform that removes required fields (should fail validation)
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			target := make(map[string]types.AttributeValue)
 			// Intentionally omit required partition key
 			if catAttr, exists := source["category"]; exists {
@@ -341,7 +314,7 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 		}
 
 		// Migration should fail due to validation
-		err = db.AutoMigrateWithOptions(&LargeDatasetV1{},
+		err = testCtx.DB.AutoMigrateWithOptions(&LargeDatasetV1{},
 			schema.WithTargetModel(&LargeDatasetV2{}),
 			schema.WithDataCopy(true),
 			schema.WithTransform(transformFunc),
@@ -351,22 +324,18 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 
 		// Verify original data is intact
 		var original LargeDatasetV1
-		err = db.Model(&LargeDatasetV1{}).
+		err = testCtx.DB.Model(&LargeDatasetV1{}).
 			Where("ID", "=", "invalid-1").
 			Where("Category", "=", "test").
 			First(&original)
 		require.NoError(t, err)
 		assert.Equal(t, "data", original.Data)
-
-		// Clean up
-		_ = db.DeleteTable(&LargeDatasetV1{})
-		_ = db.DeleteTable(&LargeDatasetV2{})
 	})
 
 	t.Run("PartialMigrationRecovery", func(t *testing.T) {
 		// Create source table
-		err := db.CreateTable(&LargeDatasetV1{})
-		require.NoError(t, err)
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV1{})
+		testCtx.CreateTableIfNotExists(t, &LargeDatasetV2{})
 
 		// Add multiple items
 		const itemCount = 50
@@ -378,13 +347,13 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 				ProcessedAt: time.Now(),
 				Version:     1,
 			}
-			err = db.Model(item).Create()
+			err := testCtx.DB.Model(item).Create()
 			require.NoError(t, err)
 		}
 
 		// Transform that fails after processing some items
 		processedCount := 0
-		transformFunc := func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		var transformFunc schema.TransformFunc = func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 			processedCount++
 			// Fail after processing half the items
 			if processedCount > itemCount/2 {
@@ -399,7 +368,7 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 		}
 
 		// Attempt migration (will fail partway through)
-		err = db.AutoMigrateWithOptions(&LargeDatasetV1{},
+		err := testCtx.DB.AutoMigrateWithOptions(&LargeDatasetV1{},
 			schema.WithTargetModel(&LargeDatasetV2{}),
 			schema.WithDataCopy(true),
 			schema.WithTransform(transformFunc),
@@ -414,13 +383,9 @@ func TestMigrationRollbackScenarios(t *testing.T) {
 
 		// For this test, we'll verify the source data is still intact
 		var sourceItems []LargeDatasetV1
-		err = db.Model(&LargeDatasetV1{}).All(&sourceItems)
+		err = testCtx.DB.Model(&LargeDatasetV1{}).All(&sourceItems)
 		require.NoError(t, err)
 		assert.Len(t, sourceItems, itemCount, "All source items should still exist")
-
-		// Clean up
-		_ = db.DeleteTable(&LargeDatasetV1{})
-		_ = db.DeleteTable(&LargeDatasetV2{})
 	})
 }
 

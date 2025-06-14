@@ -25,7 +25,7 @@ DynamoDB is an incredible database - it's fast, cheap, and scales fantastically.
 - 🔒 **Type-Safe**: Full Go type safety with compile-time checks
 - 🎯 **Simple API**: Write 80% less code than AWS SDK
 - ⚡ **High Performance**: 20,000+ operations per second
-- 🧪 **Testable**: Interface-based design enables easy mocking (v0.2.0+)
+- 🧪 **Testable**: Interface-based design enables easy mocking (v1.0.1+)
 - 🌍 **Multi-Account**: Built-in cross-account support
 - 💰 **Cost Efficient**: Smart query optimization reduces DynamoDB costs
 - 🔄 **Transactions**: Full support for DynamoDB transactions
@@ -47,7 +47,9 @@ package main
 
 import (
     "context"
-    "github.com/dynamorm/dynamorm"
+    "log"
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/session"
 )
 
 // Define your model
@@ -59,8 +61,17 @@ type User struct {
 }
 
 func main() {
-    // Initialize DynamORM
-    db := dynamorm.New()
+    // Initialize DynamORM with proper configuration
+    config := session.Config{
+        Region: "us-east-1",
+        // For local development:
+        // Endpoint: "http://localhost:8000",
+    }
+    
+    db, err := dynamorm.New(config)
+    if err != nil {
+        log.Fatal("Failed to initialize DynamORM:", err)
+    }
 
     // Create a user
     user := &User{
@@ -69,13 +80,19 @@ func main() {
         Name:  "John Doe",
     }
     
-    err := db.Model(user).Create()
+    err = db.Model(user).Create()
+    if err != nil {
+        log.Printf("Create error: %v", err)
+    }
     
     // Query users
     var users []User
     err = db.Model(&User{}).
         Where("ID", "=", "user123").
         All(&users)
+    if err != nil {
+        log.Printf("Query error: %v", err)
+    }
 }
 ```
 
@@ -101,12 +118,14 @@ err := db.Model(&User{}).
     First(&user)
 ```
 
-### 🧪 Testable Design (v0.2.0+)
+### 🧪 Testable Design (v1.0.1+)
 
-DynamORM now uses interfaces, making it easy to mock for unit tests:
+DynamORM uses interfaces and provides pre-built mocks (v1.0.2+), making it easy to test:
 
 ```go
 // In your service
+import "github.com/pay-theory/dynamorm/pkg/core"
+
 type UserService struct {
     db core.DB  // Use interface instead of concrete type
 }
@@ -116,9 +135,19 @@ func NewUserService(db core.DB) *UserService {
 }
 
 // In your tests - no DynamoDB required!
+import (
+    "testing"
+    "github.com/pay-theory/dynamorm/pkg/mocks"
+    "github.com/stretchr/testify/mock"
+)
+
 func TestUserService(t *testing.T) {
-    mockDB := new(MockDB)
-    mockDB.On("Model", mock.Anything).Return(mockQuery)
+    mockDB := new(mocks.MockDB)
+    mockQuery := new(mocks.MockQuery)
+    
+    mockDB.On("Model", &User{}).Return(mockQuery)
+    mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
+    mockQuery.On("First", mock.Anything).Return(nil)
     
     service := NewUserService(mockDB)
     // Test your service logic without DynamoDB
@@ -140,13 +169,6 @@ err := db.Model(&User{}).
     All(&results)
 ```
 
-### ⚠️ Important Note on Queries
-
-DynamORM provides a powerful and flexible query interface. However, it's crucial to understand how your queries translate to DynamoDB operations to avoid unexpected costs and performance issues.
-
--   **Use Indexes:** Always design your tables with the necessary Global Secondary Indexes (GSIs) and Local Secondary Indexes (LSIs) to support your query patterns. Queries that can use an index are significantly more efficient and cost-effective.
--   **Avoid Scans:** A query that does not use an index on its primary condition will result in a DynamoDB `Scan` operation, which reads every item in your table. On large tables, this can be slow and expensive. Use `Scan` operations deliberately and sparingly.
-
 ### Transaction Support
 
 ```go
@@ -161,8 +183,6 @@ err := db.Transaction(func(tx *dynamorm.Tx) error {
     return tx.Model(transfer).Create()
 })
 ```
-
-> **Note:** The `Transaction` function is currently a simplified wrapper. For full ACID transaction support across multiple operations, please use the more advanced `TransactionFunc` method.
 
 ### Multi-Account Support
 
@@ -197,8 +217,6 @@ err := db.AutoMigrateWithOptions(&UserV1{},
     dynamorm.WithTransform(transformFunc),
 )
 ```
-
-> **Note:** In production, tables should be created and managed using Infrastructure as Code tools (AWS CDK, Terraform, CloudFormation). DynamORM's table operations are designed for development, testing, and controlled migration scenarios.
 
 ### 📚 Documentation
 
@@ -293,8 +311,6 @@ See our [public roadmap](docs/architecture/roadmap.md) for upcoming features:
 - [ ] Enhanced data transformation utilities
 - [ ] Admin UI
 - [ ] More database adapters
-
-> **Table Management:** DynamORM provides simple table operations like `CreateTable`, `EnsureTable`, and `AutoMigrate` for development and testing. Production tables should be managed using Infrastructure as Code tools (CDK, Terraform, CloudFormation) as per AWS best practices.
 
 ## 🏆 Used By
 

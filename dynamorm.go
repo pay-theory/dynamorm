@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +35,7 @@ type DB struct {
 	mu                  sync.RWMutex
 	lambdaDeadline      time.Time // Lambda execution deadline for timeout handling
 	lambdaTimeoutBuffer time.Duration
+	metadataCache       sync.Map // type -> *model.Metadata
 }
 
 // New creates a new DynamORM instance with the given configuration
@@ -62,15 +64,43 @@ func NewBasic(config session.Config) (core.DB, error) {
 func (db *DB) Model(model any) core.Query {
 	// Ensure model is registered
 	if err := db.registry.Register(model); err != nil {
+		// Log the error for debugging
+		if db.ctx != nil {
+			// Include context info if available
+			return &errorQuery{err: fmt.Errorf("failed to register model %T: %w", model, err)}
+		}
 		// Return a query that will error on execution
-		return &errorQuery{err: err}
+		return &errorQuery{err: fmt.Errorf("failed to register model %T: %w", model, err)}
+	}
+
+	// Fast-path metadata lookup - cache for later use
+	typ := reflect.TypeOf(model)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	// Check cache first
+	if _, ok := db.metadataCache.Load(typ); !ok {
+		// Get from registry and cache
+		meta, err := db.registry.GetMetadata(model)
+		if err != nil {
+			return &errorQuery{err: fmt.Errorf("failed to get metadata for model %T: %w", model, err)}
+		}
+		db.metadataCache.Store(typ, meta)
+	}
+
+	// Use the context from the DB if query doesn't have one
+	ctx := db.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	return &query{
-		db:      db,
-		model:   model,
-		ctx:     db.ctx,
-		builder: expr.NewBuilder(),
+		db:         db,
+		model:      model,
+		ctx:        ctx,
+		builder:    expr.NewBuilder(),
+		conditions: make([]condition, 0, 4), // Pre-allocate for typical use case
 	}
 }
 
@@ -214,7 +244,7 @@ func (db *DB) WithContext(ctx context.Context) core.DB {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	return &DB{
+	newDB := &DB{
 		session:             db.session,
 		registry:            db.registry,
 		converter:           db.converter,
@@ -223,6 +253,14 @@ func (db *DB) WithContext(ctx context.Context) core.DB {
 		lambdaDeadline:      db.lambdaDeadline,
 		lambdaTimeoutBuffer: db.lambdaTimeoutBuffer,
 	}
+
+	// Copy metadata cache
+	db.metadataCache.Range(func(key, value any) bool {
+		newDB.metadataCache.Store(key, value)
+		return true
+	})
+
+	return newDB
 }
 
 // WithLambdaTimeout sets a deadline based on Lambda context
@@ -242,7 +280,7 @@ func (db *DB) WithLambdaTimeout(ctx context.Context) core.DB {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	return &DB{
+	newDB := &DB{
 		session:             db.session,
 		registry:            db.registry,
 		converter:           db.converter,
@@ -251,14 +289,39 @@ func (db *DB) WithLambdaTimeout(ctx context.Context) core.DB {
 		lambdaDeadline:      adjustedDeadline,
 		lambdaTimeoutBuffer: db.lambdaTimeoutBuffer,
 	}
+
+	// Copy metadata cache
+	db.metadataCache.Range(func(key, value any) bool {
+		newDB.metadataCache.Store(key, value)
+		return true
+	})
+
+	return newDB
 }
 
 // WithLambdaTimeoutBuffer sets a custom timeout buffer for Lambda execution
 func (db *DB) WithLambdaTimeoutBuffer(buffer time.Duration) core.DB {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	db.lambdaTimeoutBuffer = buffer
-	return db
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// Create new instance instead of modifying existing one to avoid race conditions
+	newDB := &DB{
+		session:             db.session,
+		registry:            db.registry,
+		converter:           db.converter,
+		marshaler:           db.marshaler,
+		ctx:                 db.ctx,
+		lambdaDeadline:      db.lambdaDeadline,
+		lambdaTimeoutBuffer: buffer, // Set the new buffer value
+	}
+
+	// Copy metadata cache
+	db.metadataCache.Range(func(key, value any) bool {
+		newDB.metadataCache.Store(key, value)
+		return true
+	})
+
+	return newDB
 }
 
 // query implements the core.Query interface
@@ -271,7 +334,6 @@ type query struct {
 	// Query conditions
 	conditions []condition
 	indexName  string
-	filters    []filter
 	orderBy    *orderBy
 	limit      *int
 	offset     *int
@@ -291,11 +353,6 @@ type condition struct {
 	value any
 }
 
-type filter struct {
-	expression string
-	values     []any
-}
-
 type orderBy struct {
 	field string
 	order string
@@ -309,7 +366,7 @@ func (q *query) checkLambdaTimeout() error {
 
 	remaining := time.Until(q.db.lambdaDeadline)
 	if remaining <= 0 {
-		return fmt.Errorf("Lambda timeout exceeded")
+		return fmt.Errorf("lambda timeout exceeded")
 	}
 
 	// Use configurable buffer, default to 100ms
@@ -320,7 +377,7 @@ func (q *query) checkLambdaTimeout() error {
 
 	// If we have less than the buffer, consider it too close to timeout
 	if remaining < buffer {
-		return fmt.Errorf("Lambda timeout imminent: only %v remaining", remaining)
+		return fmt.Errorf("lambda timeout imminent: only %v remaining", remaining)
 	}
 
 	return nil
@@ -428,6 +485,10 @@ func (q *query) First(dest any) error {
 
 	// Build GetItem request if we have a primary key condition
 	if pk := q.extractPrimaryKey(metadata); pk != nil {
+		// Use optimized path when no projections are specified
+		if len(q.fields) == 0 {
+			return q.getItemDirect(metadata, pk, dest)
+		}
 		return q.getItem(metadata, pk, dest)
 	}
 
@@ -480,7 +541,7 @@ func (q *query) All(dest any) error {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -529,7 +590,7 @@ func (q *query) Count() (int64, error) {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists {
 			filterConditions = append(filterConditions, cond)
 			continue
@@ -561,14 +622,65 @@ func (q *query) Create() error {
 		return err
 	}
 
-	// Get model metadata
+	// Get metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
 		return err
 	}
 
-	// Use PutItem to create the item
-	return q.putItem(metadata)
+	// Put item
+	err = q.putItem(metadata)
+	if err != nil {
+		// Provide a more helpful error message for duplicate key errors
+		if errors.Is(err, customerrors.ErrConditionFailed) {
+			return fmt.Errorf("%w: item with the same key already exists", customerrors.ErrConditionFailed)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// CreateOrUpdate creates a new item or updates an existing one (upsert)
+func (q *query) CreateOrUpdate() error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
+	// Get metadata
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		return err
+	}
+
+	// Marshal the model to DynamoDB item
+	item, err := q.marshalItem(q.model, metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal item: %w", err)
+	}
+
+	// Build PutItem input without condition expression (allowing overwrites)
+	input := &dynamodb.PutItemInput{
+		TableName: aws.String(metadata.TableName),
+		Item:      item,
+	}
+
+	// Execute PutItem
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for put item: %w", err)
+	}
+
+	_, err = client.PutItem(q.ctx, input)
+	if err != nil {
+		return fmt.Errorf("failed to put item: %w", err)
+	}
+
+	// Update timestamp fields in the original model
+	q.updateTimestampsInModel(metadata)
+
+	return nil
 }
 
 // Update updates the matching items
@@ -677,12 +789,44 @@ func (q *query) BatchGet(keys []any, dest any) error {
 				keyMap[metadata.PrimaryKey.SortKey.DBName] = av
 			}
 		default:
-			// Key is just the partition key value
-			av, err := q.db.converter.ToAttributeValue(key)
-			if err != nil {
-				return fmt.Errorf("failed to convert partition key: %w", err)
+			// Check if key is a struct with the same type as our model
+			keyValue := reflect.ValueOf(key)
+			if keyValue.Kind() == reflect.Ptr {
+				keyValue = keyValue.Elem()
 			}
-			keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+
+			if keyValue.Kind() == reflect.Struct {
+				// Extract primary key fields from struct
+				for _, field := range metadata.Fields {
+					if field.IsPK {
+						fieldValue := keyValue.FieldByIndex([]int{field.Index})
+						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
+						if err != nil {
+							return fmt.Errorf("failed to convert partition key: %w", err)
+						}
+						keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+					} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
+						fieldValue := keyValue.FieldByIndex([]int{field.Index})
+						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
+						if err != nil {
+							return fmt.Errorf("failed to convert sort key: %w", err)
+						}
+						keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+					}
+				}
+			} else {
+				// Key is just the partition key value
+				av, err := q.db.converter.ToAttributeValue(key)
+				if err != nil {
+					return fmt.Errorf("failed to convert partition key: %w", err)
+				}
+				keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+			}
+		}
+
+		// Validate that we have at least a partition key
+		if len(keyMap) == 0 {
+			return fmt.Errorf("invalid key: missing partition key")
 		}
 
 		keysAndAttributes.Keys = append(keysAndAttributes.Keys, keyMap)
@@ -698,8 +842,14 @@ func (q *query) BatchGet(keys []any, dest any) error {
 	// Execute batch get
 	var allItems []map[string]types.AttributeValue
 
+	// Get client once for the entire batch operation
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for batch get: %w", err)
+	}
+
 	for {
-		output, err := q.db.session.Client().BatchGetItem(q.ctx, input)
+		output, err := client.BatchGetItem(q.ctx, input)
 		if err != nil {
 			return fmt.Errorf("failed to batch get items: %w", err)
 		}
@@ -724,6 +874,11 @@ func (q *query) BatchGet(keys []any, dest any) error {
 
 // BatchCreate creates multiple items
 func (q *query) BatchCreate(items any) error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -779,10 +934,150 @@ func (q *query) BatchCreate(items any) error {
 		}
 
 		// Execute batch write with retries for unprocessed items
+		client, err := q.db.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for batch create: %w", err)
+		}
+
 		for {
-			output, err := q.db.session.Client().BatchWriteItem(q.ctx, input)
+			output, err := client.BatchWriteItem(q.ctx, input)
 			if err != nil {
 				return fmt.Errorf("failed to batch create items: %w", err)
+			}
+
+			// Check for unprocessed items
+			if len(output.UnprocessedItems) == 0 {
+				break
+			}
+
+			// Check if context is cancelled before retrying
+			select {
+			case <-q.ctx.Done():
+				return fmt.Errorf("context cancelled during batch create retry: %w", q.ctx.Err())
+			default:
+				// Continue with retry
+			}
+
+			// Retry unprocessed items
+			input.RequestItems = output.UnprocessedItems
+		}
+	}
+
+	return nil
+}
+
+// BatchDelete deletes multiple items by their primary keys
+func (q *query) BatchDelete(keys []any) error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
+	// Get model metadata
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		return err
+	}
+
+	// Process keys in batches of 25 (DynamoDB limit)
+	const batchSize = 25
+
+	for i := 0; i < len(keys); i += batchSize {
+		end := i + batchSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+
+		// Build batch write request
+		writeRequests := make([]types.WriteRequest, 0, end-i)
+
+		for j := i; j < end; j++ {
+			key := keys[j]
+			keyMap := make(map[string]types.AttributeValue)
+
+			// Handle different key formats
+			switch k := key.(type) {
+			case map[string]any:
+				// Key is a map with pk and optional sk
+				if pk, hasPK := k["pk"]; hasPK {
+					av, err := q.db.converter.ToAttributeValue(pk)
+					if err != nil {
+						return fmt.Errorf("failed to convert partition key: %w", err)
+					}
+					keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+				}
+				if sk, hasSK := k["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
+					av, err := q.db.converter.ToAttributeValue(sk)
+					if err != nil {
+						return fmt.Errorf("failed to convert sort key: %w", err)
+					}
+					keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+				}
+			default:
+				// Check if key is a struct with the same type as our model
+				keyValue := reflect.ValueOf(key)
+				if keyValue.Kind() == reflect.Ptr {
+					keyValue = keyValue.Elem()
+				}
+
+				if keyValue.Kind() == reflect.Struct {
+					// Extract primary key fields from struct
+					for _, field := range metadata.Fields {
+						if field.IsPK {
+							fieldValue := keyValue.FieldByIndex([]int{field.Index})
+							av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
+							if err != nil {
+								return fmt.Errorf("failed to convert partition key: %w", err)
+							}
+							keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+						} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
+							fieldValue := keyValue.FieldByIndex([]int{field.Index})
+							av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
+							if err != nil {
+								return fmt.Errorf("failed to convert sort key: %w", err)
+							}
+							keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+						}
+					}
+				} else {
+					// Key is just the partition key value
+					av, err := q.db.converter.ToAttributeValue(key)
+					if err != nil {
+						return fmt.Errorf("failed to convert partition key: %w", err)
+					}
+					keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+				}
+			}
+
+			// Validate that we have at least a partition key
+			if len(keyMap) == 0 {
+				return fmt.Errorf("invalid key at index %d: missing partition key", j)
+			}
+
+			writeRequests = append(writeRequests, types.WriteRequest{
+				DeleteRequest: &types.DeleteRequest{
+					Key: keyMap,
+				},
+			})
+		}
+
+		// Build BatchWriteItem input
+		input := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{
+				metadata.TableName: writeRequests,
+			},
+		}
+
+		// Execute batch write with retries for unprocessed items
+		client, err := q.db.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for batch delete: %w", err)
+		}
+
+		for {
+			output, err := client.BatchWriteItem(q.ctx, input)
+			if err != nil {
+				return fmt.Errorf("failed to batch delete items: %w", err)
 			}
 
 			// Check for unprocessed items
@@ -806,24 +1101,60 @@ func (q *query) WithContext(ctx context.Context) core.Query {
 
 // Helper methods for basic CRUD operations
 
-func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
-	if len(q.conditions) == 0 {
-		return nil
+// lookupField provides consistent field lookup by checking both Go field names and DynamoDB attribute names
+func lookupField(metadata *model.Metadata, fieldName string) (*model.FieldMetadata, bool) {
+	// First check by Go field name
+	if field, exists := metadata.Fields[fieldName]; exists {
+		return field, true
 	}
 
+	// Then check by DynamoDB attribute name
+	if field, exists := metadata.FieldsByDBName[fieldName]; exists {
+		return field, true
+	}
+
+	return nil, false
+}
+
+func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 	pk := make(map[string]any)
 
-	// Check for partition key
+	// First try to extract from conditions
 	for _, cond := range q.conditions {
 		if cond.op != "=" {
 			continue
 		}
 
-		if field, exists := metadata.Fields[cond.field]; exists {
+		// Check field name using enhanced lookup
+		if field, exists := lookupField(metadata, cond.field); exists {
 			if field.IsPK {
 				pk["pk"] = cond.value
 			} else if field.IsSK {
 				pk["sk"] = cond.value
+			}
+		}
+	}
+
+	// If no primary key found in conditions, try to extract from model
+	if _, hasPK := pk["pk"]; !hasPK && q.model != nil {
+		modelValue := reflect.ValueOf(q.model)
+		if modelValue.Kind() == reflect.Ptr {
+			modelValue = modelValue.Elem()
+		}
+
+		// Extract primary key from model
+		if metadata.PrimaryKey.PartitionKey != nil {
+			pkField := modelValue.FieldByIndex([]int{metadata.PrimaryKey.PartitionKey.Index})
+			if !pkField.IsZero() {
+				pk["pk"] = pkField.Interface()
+			}
+		}
+
+		// Extract sort key from model if exists
+		if metadata.PrimaryKey.SortKey != nil {
+			skField := modelValue.FieldByIndex([]int{metadata.PrimaryKey.SortKey.Index})
+			if !skField.IsZero() {
+				pk["sk"] = skField.Interface()
 			}
 		}
 	}
@@ -880,7 +1211,12 @@ func (q *query) getItem(metadata *model.Metadata, pk map[string]any, dest any) e
 	}
 
 	// Execute GetItem
-	output, err := q.db.session.Client().GetItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for get item: %w", err)
+	}
+
+	output, err := client.GetItem(q.ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to get item: %w", err)
 	}
@@ -894,14 +1230,83 @@ func (q *query) getItem(metadata *model.Metadata, pk map[string]any, dest any) e
 	return q.unmarshalItem(output.Item, dest, metadata)
 }
 
+// getItemDirect performs a direct GetItem without expression builder overhead
+func (q *query) getItemDirect(metadata *model.Metadata, pk map[string]any, dest any) error {
+	// Pre-allocate with exact size
+	keyMap := make(map[string]types.AttributeValue, 2)
+
+	// Direct conversion without error handling in hot path
+	if pkValue, hasPK := pk["pk"]; hasPK {
+		if av, err := q.db.converter.ToAttributeValue(pkValue); err == nil {
+			keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+		} else {
+			return fmt.Errorf("failed to convert partition key: %w", err)
+		}
+	}
+
+	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
+		if av, err := q.db.converter.ToAttributeValue(skValue); err == nil {
+			keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+		} else {
+			return fmt.Errorf("failed to convert sort key: %w", err)
+		}
+	}
+
+	// Direct API call
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for direct get item: %w", err)
+	}
+
+	output, err := client.GetItem(q.ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(metadata.TableName),
+		Key:       keyMap,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to get item: %w", err)
+	}
+
+	if output.Item == nil {
+		return customerrors.ErrItemNotFound
+	}
+
+	return q.unmarshalItem(output.Item, dest, metadata)
+}
+
 // unmarshalItem converts DynamoDB item to Go struct
 func (q *query) unmarshalItem(item map[string]types.AttributeValue, dest any, metadata *model.Metadata) error {
-	// Use reflection to populate the destination struct
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr {
 		return fmt.Errorf("destination must be a pointer")
 	}
 	destValue = destValue.Elem()
+
+	// Handle map destination (e.g., when ExecuteWithResult is used with a map)
+	if destValue.Kind() == reflect.Map {
+		// If it's a map, just convert each attribute value
+		if destValue.IsNil() {
+			destValue.Set(reflect.MakeMap(destValue.Type()))
+		}
+
+		for attrName, attrValue := range item {
+			// Convert the attribute value to the appropriate Go type
+			var val any
+			if err := q.db.converter.FromAttributeValue(attrValue, &val); err != nil {
+				return fmt.Errorf("failed to unmarshal field %s: %w", attrName, err)
+			}
+
+			// Set the value in the map
+			destValue.SetMapIndex(reflect.ValueOf(attrName), reflect.ValueOf(val))
+		}
+
+		return nil
+	}
+
+	// Handle struct destination (original behavior)
+	if destValue.Kind() != reflect.Struct {
+		return fmt.Errorf("destination must be a pointer to a struct or map")
+	}
 
 	// Iterate through the item attributes
 	for attrName, attrValue := range item {
@@ -956,7 +1361,12 @@ func (q *query) putItem(metadata *model.Metadata) error {
 	}
 
 	// Execute PutItem
-	_, err = q.db.session.Client().PutItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for put item: %w", err)
+	}
+
+	_, err = client.PutItem(q.ctx, input)
 	if err != nil {
 		// Check if it's a conditional check failure
 		if isConditionalCheckFailedException(err) {
@@ -965,7 +1375,30 @@ func (q *query) putItem(metadata *model.Metadata) error {
 		return fmt.Errorf("failed to put item: %w", err)
 	}
 
+	// Update timestamp fields in the original model
+	q.updateTimestampsInModel(metadata)
+
 	return nil
+}
+
+// updateTimestampsInModel updates the created_at and updated_at fields in the original model
+func (q *query) updateTimestampsInModel(metadata *model.Metadata) {
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+
+	now := time.Now()
+
+	// Update timestamp fields
+	for _, fieldMeta := range metadata.Fields {
+		if fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
+			field := modelValue.FieldByIndex([]int{fieldMeta.Index})
+			if field.CanSet() && field.Type() == reflect.TypeOf(time.Time{}) {
+				field.Set(reflect.ValueOf(now))
+			}
+		}
+	}
 }
 
 // marshalItem converts a Go struct to DynamoDB item
@@ -1047,13 +1480,13 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 
 	// Add key conditions
 	for _, cond := range keyConditions {
-		fieldMeta, _ := metadata.Fields[cond.field]
+		fieldMeta, _ := lookupField(metadata, cond.field)
 		builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
 	}
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1107,7 +1540,13 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 
 	// Execute query and collect results
 	var items []map[string]types.AttributeValue
-	paginator := dynamodb.NewQueryPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for query: %w", err)
+	}
+
+	paginator := dynamodb.NewQueryPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1133,7 +1572,7 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1179,7 +1618,13 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 	// Execute scan and collect results
 	var items []map[string]types.AttributeValue
-	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for scan: %w", err)
+	}
+
+	paginator := dynamodb.NewScanPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1220,15 +1665,27 @@ func (q *query) unmarshalItems(items []map[string]types.AttributeValue, dest any
 
 	// Unmarshal each item
 	for i, item := range items {
-		elem := reflect.New(elemType)
+		var elem reflect.Value
+
+		// Check if element type is already a pointer
+		if elemType.Kind() == reflect.Ptr {
+			// For []*Type, create a new instance of Type (not *Type)
+			elem = reflect.New(elemType.Elem())
+		} else {
+			// For []Type, create a new instance of *Type
+			elem = reflect.New(elemType)
+		}
+
 		if err := q.unmarshalItem(item, elem.Interface(), metadata); err != nil {
 			return fmt.Errorf("failed to unmarshal item %d: %w", i, err)
 		}
 
 		// Set the element in the slice
 		if elemType.Kind() == reflect.Ptr {
+			// For []*Type, elem is already a pointer, just set it
 			newSlice.Index(i).Set(elem)
 		} else {
+			// For []Type, dereference the pointer
 			newSlice.Index(i).Set(elem.Elem())
 		}
 	}
@@ -1244,13 +1701,13 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 
 	// Add key conditions
 	for _, cond := range keyConditions {
-		fieldMeta, _ := metadata.Fields[cond.field]
+		fieldMeta, _ := lookupField(metadata, cond.field)
 		builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
 	}
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1287,7 +1744,13 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 
 	// Execute query and count results
 	var totalCount int64
-	paginator := dynamodb.NewQueryPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get client for query count: %w", err)
+	}
+
+	paginator := dynamodb.NewQueryPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1307,7 +1770,7 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -1341,7 +1804,13 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 
 	// Execute scan and count results
 	var totalCount int64
-	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get client for scan count: %w", err)
+	}
+
+	paginator := dynamodb.NewScanPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1356,10 +1825,10 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 }
 
 func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
-	// Extract primary key from conditions
+	// Extract primary key from conditions or model
 	pk := q.extractPrimaryKey(metadata)
 	if pk == nil {
-		return fmt.Errorf("update requires primary key in conditions")
+		return fmt.Errorf("update requires primary key")
 	}
 
 	// Build key map
@@ -1397,7 +1866,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		// If no fields specified, update all non-zero fields except primary keys and special fields
 		fieldsToUpdate = []string{}
 		for fieldName, fieldMeta := range metadata.Fields {
-			if fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt {
+			if fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
 				continue
 			}
 			fieldValue := modelValue.FieldByIndex([]int{fieldMeta.Index})
@@ -1409,7 +1878,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 
 	// Build SET expressions
 	for _, fieldName := range fieldsToUpdate {
-		fieldMeta, exists := metadata.Fields[fieldName]
+		fieldMeta, exists := lookupField(metadata, fieldName)
 		if !exists {
 			continue
 		}
@@ -1458,7 +1927,12 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	}
 
 	// Execute UpdateItem
-	_, err := q.db.session.Client().UpdateItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for update item: %w", err)
+	}
+
+	_, err = client.UpdateItem(q.ctx, input)
 	if err != nil {
 		if isConditionalCheckFailedException(err) {
 			return customerrors.ErrConditionFailed
@@ -1523,7 +1997,7 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 	// Add any other conditions from the query
 	for _, cond := range q.conditions {
 		// Skip primary key conditions as they're already in the key
-		if fieldMeta, exists := metadata.Fields[cond.field]; exists && (fieldMeta.IsPK || fieldMeta.IsSK) {
+		if fieldMeta, exists := lookupField(metadata, cond.field); exists && (fieldMeta.IsPK || fieldMeta.IsSK) {
 			continue
 		}
 
@@ -1541,7 +2015,12 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 	}
 
 	// Execute DeleteItem
-	_, err := q.db.session.Client().DeleteItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for delete item: %w", err)
+	}
+
+	_, err = client.DeleteItem(q.ctx, input)
 	if err != nil {
 		if isConditionalCheckFailedException(err) {
 			return customerrors.ErrConditionFailed
@@ -1563,23 +2042,29 @@ func (e *errorQuery) Filter(field string, op string, value any) core.Query { ret
 func (e *errorQuery) OrFilter(field string, op string, value any) core.Query {
 	return e
 }
-func (e *errorQuery) FilterGroup(fn func(core.Query)) core.Query { return e }
+func (e *errorQuery) FilterGroup(fn func(q core.Query)) core.Query { return e }
 func (e *errorQuery) OrFilterGroup(fn func(core.Query)) core.Query {
 	return e
 }
-func (e *errorQuery) OrderBy(field string, order string) core.Query              { return e }
-func (e *errorQuery) Limit(limit int) core.Query                                 { return e }
-func (e *errorQuery) Offset(offset int) core.Query                               { return e }
-func (e *errorQuery) Select(fields ...string) core.Query                         { return e }
-func (e *errorQuery) First(dest any) error                                       { return e.err }
-func (e *errorQuery) All(dest any) error                                         { return e.err }
-func (e *errorQuery) Count() (int64, error)                                      { return 0, e.err }
-func (e *errorQuery) Create() error                                              { return e.err }
-func (e *errorQuery) Update(fields ...string) error                              { return e.err }
-func (e *errorQuery) Delete() error                                              { return e.err }
-func (e *errorQuery) Scan(dest any) error                                        { return e.err }
-func (e *errorQuery) BatchGet(keys []any, dest any) error                        { return e.err }
-func (e *errorQuery) BatchCreate(items any) error                                { return e.err }
+func (e *errorQuery) OrderBy(field string, order string) core.Query     { return e }
+func (e *errorQuery) Limit(limit int) core.Query                        { return e }
+func (e *errorQuery) Offset(offset int) core.Query                      { return e }
+func (e *errorQuery) Select(fields ...string) core.Query                { return e }
+func (e *errorQuery) First(dest any) error                              { return e.err }
+func (e *errorQuery) All(dest any) error                                { return e.err }
+func (e *errorQuery) Count() (int64, error)                             { return 0, e.err }
+func (e *errorQuery) Create() error                                     { return e.err }
+func (e *errorQuery) CreateOrUpdate() error                             { return e.err }
+func (e *errorQuery) Update(fields ...string) error                     { return e.err }
+func (e *errorQuery) Delete() error                                     { return e.err }
+func (e *errorQuery) Scan(dest any) error                               { return e.err }
+func (e *errorQuery) BatchGet(keys []any, dest any) error               { return e.err }
+func (e *errorQuery) BatchCreate(items any) error                       { return e.err }
+func (e *errorQuery) BatchDelete(keys []any) error                      { return e.err }
+func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error { return e.err }
+func (e *errorQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	return e.err
+}
 func (e *errorQuery) WithContext(ctx context.Context) core.Query                 { return e }
 func (e *errorQuery) AllPaginated(dest any) (*core.PaginatedResult, error)       { return nil, e.err }
 func (e *errorQuery) UpdateBuilder() core.UpdateBuilder                          { return nil }
@@ -1639,7 +2124,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	var filterConditions []condition
 
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists {
 			return nil, fmt.Errorf("field %s not found in model", cond.field)
 		}
@@ -1665,13 +2150,13 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		// Add key conditions
 		for _, cond := range keyConditions {
-			fieldMeta, _ := metadata.Fields[cond.field]
+			fieldMeta, _ := lookupField(metadata, cond.field)
 			builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
 		}
 
 		// Add filter conditions
 		for _, cond := range filterConditions {
-			fieldMeta, exists := metadata.Fields[cond.field]
+			fieldMeta, exists := lookupField(metadata, cond.field)
 			if exists {
 				builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 			} else {
@@ -1724,7 +2209,12 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		}
 
 		// Execute query
-		output, err := q.db.session.Client().Query(q.ctx, input)
+		client, err := q.db.session.Client()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client for paginated query: %w", err)
+		}
+
+		output, err := client.Query(q.ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query items: %w", err)
 		}
@@ -1738,7 +2228,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		// Add filter conditions
 		for _, cond := range filterConditions {
-			fieldMeta, exists := metadata.Fields[cond.field]
+			fieldMeta, exists := lookupField(metadata, cond.field)
 			if exists {
 				builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 			} else {
@@ -1783,7 +2273,12 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		}
 
 		// Execute scan
-		output, err := q.db.session.Client().Scan(q.ctx, input)
+		client, err := q.db.session.Client()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client for paginated scan: %w", err)
+		}
+
+		output, err := client.Scan(q.ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan items: %w", err)
 		}
@@ -1823,80 +2318,473 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 // UpdateBuilder returns a builder for complex update operations
 func (q *query) UpdateBuilder() core.UpdateBuilder {
-	// Get metadata
-	metadata, err := q.db.registry.GetMetadata(q.model)
-	if err != nil {
-		// Return an error update builder
-		return &errorUpdateBuilder{err: err}
+	// Create a local update builder to avoid circular dependency
+	return &updateBuilder{
+		query:        q,
+		updates:      make(map[string]any),
+		conditions:   make([]updateCondition, 0),
+		returnValues: "NONE",
 	}
+}
 
-	// Create metadata adapter
-	metadataAdapter := &metadataAdapter{metadata: metadata}
+// updateBuilder provides a fluent API for building update operations
+type updateBuilder struct {
+	query        *query
+	updates      map[string]any
+	conditions   []updateCondition
+	returnValues string
+}
 
-	// Create a new query instance from the query package
-	queryInstance := queryPkg.New(q.model, metadataAdapter, &executor{
-		client: q.db.session.Client(),
-		ctx:    q.ctx,
+type updateCondition struct {
+	field     string
+	operator  string
+	value     any
+	logicalOp string // "AND" or "OR"
+}
+
+func (ub *updateBuilder) Set(field string, value any) core.UpdateBuilder {
+	ub.updates[field] = value
+	return ub
+}
+
+func (ub *updateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
+	// Store with special marker for SetIfNotExists operation
+	ub.updates["SETIFNOTEXISTS:"+field] = defaultValue
+	return ub
+}
+
+func (ub *updateBuilder) Add(field string, value any) core.UpdateBuilder {
+	// Store with special marker for ADD operation
+	ub.updates["ADD:"+field] = value
+	return ub
+}
+
+func (ub *updateBuilder) Increment(field string) core.UpdateBuilder {
+	return ub.Add(field, 1)
+}
+
+func (ub *updateBuilder) Decrement(field string) core.UpdateBuilder {
+	return ub.Add(field, -1)
+}
+
+func (ub *updateBuilder) Remove(field string) core.UpdateBuilder {
+	// Store with special marker for REMOVE operation
+	ub.updates["REMOVE:"+field] = true
+	return ub
+}
+
+func (ub *updateBuilder) Delete(field string, value any) core.UpdateBuilder {
+	// Store with special marker for DELETE operation
+	ub.updates["DELETE:"+field] = value
+	return ub
+}
+
+func (ub *updateBuilder) AppendToList(field string, values any) core.UpdateBuilder {
+	ub.updates["APPEND:"+field] = values
+	return ub
+}
+
+func (ub *updateBuilder) PrependToList(field string, values any) core.UpdateBuilder {
+	ub.updates["PREPEND:"+field] = values
+	return ub
+}
+
+func (ub *updateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder {
+	ub.updates[fmt.Sprintf("REMOVE:%s[%d]", field, index)] = true
+	return ub
+}
+
+func (ub *updateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
+	ub.updates[fmt.Sprintf("%s[%d]", field, index)] = value
+	return ub
+}
+
+func (ub *updateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
+	ub.conditions = append(ub.conditions, updateCondition{
+		field:     field,
+		operator:  operator,
+		value:     value,
+		logicalOp: "AND",
 	})
+	return ub
+}
 
-	// Copy conditions from current query and set context
-	for _, cond := range q.conditions {
-		queryInstance.Where(cond.field, cond.op, cond.value)
+func (ub *updateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	ub.conditions = append(ub.conditions, updateCondition{
+		field:     field,
+		operator:  operator,
+		value:     value,
+		logicalOp: "OR",
+	})
+	return ub
+}
+
+func (ub *updateBuilder) ConditionExists(field string) core.UpdateBuilder {
+	return ub.Condition(field, "attribute_exists", nil)
+}
+
+func (ub *updateBuilder) ConditionNotExists(field string) core.UpdateBuilder {
+	return ub.Condition(field, "attribute_not_exists", nil)
+}
+
+func (ub *updateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder {
+	return ub.Condition("version", "=", currentVersion)
+}
+
+func (ub *updateBuilder) ReturnValues(option string) core.UpdateBuilder {
+	ub.returnValues = option
+	return ub
+}
+
+func (ub *updateBuilder) Execute() error {
+	return ub.executeInternal(nil)
+}
+
+func (ub *updateBuilder) ExecuteWithResult(result any) error {
+	return ub.executeInternal(result)
+}
+
+func (ub *updateBuilder) executeInternal(result any) error {
+	// Check Lambda timeout
+	if err := ub.query.checkLambdaTimeout(); err != nil {
+		return err
 	}
 
-	// Return the update builder from the query instance
-	return queryInstance.WithContext(q.ctx).UpdateBuilder()
-}
+	// Get metadata
+	metadata, err := ub.query.db.registry.GetMetadata(ub.query.model)
+	if err != nil {
+		return err
+	}
 
-// errorUpdateBuilder is an UpdateBuilder that always returns an error
-type errorUpdateBuilder struct {
-	err error
-}
+	// Check if we have OR conditions
+	var hasOrConditions bool
+	for _, cond := range ub.conditions {
+		if cond.logicalOp == "OR" {
+			hasOrConditions = true
+			break
+		}
+	}
 
-func (e *errorUpdateBuilder) Set(field string, value any) core.UpdateBuilder { return e }
-func (e *errorUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
-	return e
-}
-func (e *errorUpdateBuilder) Add(field string, value any) core.UpdateBuilder              { return e }
-func (e *errorUpdateBuilder) Increment(field string) core.UpdateBuilder                   { return e }
-func (e *errorUpdateBuilder) Decrement(field string) core.UpdateBuilder                   { return e }
-func (e *errorUpdateBuilder) Remove(field string) core.UpdateBuilder                      { return e }
-func (e *errorUpdateBuilder) Delete(field string, value any) core.UpdateBuilder           { return e }
-func (e *errorUpdateBuilder) AppendToList(field string, values any) core.UpdateBuilder    { return e }
-func (e *errorUpdateBuilder) PrependToList(field string, values any) core.UpdateBuilder   { return e }
-func (e *errorUpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder { return e }
-func (e *errorUpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
-	return e
-}
-func (e *errorUpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
-	return e
-}
-func (e *errorUpdateBuilder) ConditionExists(field string) core.UpdateBuilder          { return e }
-func (e *errorUpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder       { return e }
-func (e *errorUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder { return e }
-func (e *errorUpdateBuilder) ReturnValues(option string) core.UpdateBuilder            { return e }
-func (e *errorUpdateBuilder) Execute() error                                           { return e.err }
-func (e *errorUpdateBuilder) ExecuteWithResult(result any) error                       { return e.err }
+	// Extract primary key from conditions
+	pk := ub.query.extractPrimaryKey(metadata)
+	if pk == nil {
+		return fmt.Errorf("update requires primary key in conditions")
+	}
 
-// executor implements the query executor interface for the query package
-type executor struct {
-	client *dynamodb.Client
-	ctx    context.Context
-}
+	// Build key map
+	keyMap := make(map[string]types.AttributeValue)
 
-func (e *executor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
-	// Implementation would go here
-	return fmt.Errorf("not implemented")
-}
+	// Add partition key
+	if pkValue, hasPK := pk["pk"]; hasPK {
+		av, err := ub.query.db.converter.ToAttributeValue(pkValue)
+		if err != nil {
+			return fmt.Errorf("failed to convert partition key: %w", err)
+		}
+		keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+	}
 
-func (e *executor) ExecuteScan(input *core.CompiledQuery, dest any) error {
-	// Implementation would go here
-	return fmt.Errorf("not implemented")
-}
+	// Add sort key if present
+	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
+		av, err := ub.query.db.converter.ToAttributeValue(skValue)
+		if err != nil {
+			return fmt.Errorf("failed to convert sort key: %w", err)
+		}
+		keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+	}
 
-func (e *executor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
-	// Implementation would go here
-	return fmt.Errorf("not implemented")
+	// Build update expression
+	builder := expr.NewBuilder()
+
+	// Track which fields we've already processed to avoid duplicates
+	processedFields := make(map[string]bool)
+
+	// Process updates
+	for field, value := range ub.updates {
+		// Handle special operation markers
+		if strings.HasPrefix(field, "ADD:") {
+			fieldName := field[4:]
+			fieldMeta, exists := lookupField(metadata, fieldName)
+			if !exists {
+				continue
+			}
+			builder.AddUpdateAdd(fieldMeta.DBName, value)
+			processedFields[fieldName] = true
+		} else if strings.HasPrefix(field, "REMOVE:") {
+			fieldName := field[7:]
+			// Check if it's an indexed remove like "Tags[1]"
+			if idx := strings.Index(fieldName, "["); idx > 0 {
+				// Handle list element removal
+				actualField := fieldName[:idx]
+				fieldMeta, exists := lookupField(metadata, actualField)
+				if !exists {
+					continue
+				}
+				builder.AddUpdateRemove(fieldMeta.DBName + fieldName[idx:])
+			} else {
+				// Regular field removal
+				fieldMeta, exists := lookupField(metadata, fieldName)
+				if !exists {
+					continue
+				}
+				builder.AddUpdateRemove(fieldMeta.DBName)
+				processedFields[fieldName] = true
+			}
+		} else if strings.HasPrefix(field, "DELETE:") {
+			fieldName := field[7:]
+			fieldMeta, exists := lookupField(metadata, fieldName)
+			if !exists {
+				continue
+			}
+			builder.AddUpdateDelete(fieldMeta.DBName, value)
+			processedFields[fieldName] = true
+		} else if strings.HasPrefix(field, "SETIFNOTEXISTS:") {
+			fieldName := field[15:]
+			fieldMeta, exists := lookupField(metadata, fieldName)
+			if !exists {
+				continue
+			}
+			// Skip if we've already processed this field with a regular SET
+			if processedFields[fieldName] {
+				continue
+			}
+			// Use AddUpdateFunction for if_not_exists
+			err := builder.AddUpdateFunction(fieldMeta.DBName, "if_not_exists", fieldMeta.DBName, value)
+			if err != nil {
+				return fmt.Errorf("failed to add if_not_exists for %s: %w", fieldName, err)
+			}
+			processedFields[fieldName] = true
+		} else if strings.HasPrefix(field, "APPEND:") {
+			fieldName := field[7:]
+			fieldMeta, exists := lookupField(metadata, fieldName)
+			if !exists {
+				continue
+			}
+			// Use AddUpdateFunction for list_append operations
+			err := builder.AddUpdateFunction(fieldMeta.DBName, "list_append", fieldMeta.DBName, value)
+			if err != nil {
+				return fmt.Errorf("failed to add list append: %w", err)
+			}
+			processedFields[fieldName] = true
+		} else if strings.HasPrefix(field, "PREPEND:") {
+			fieldName := field[8:]
+			fieldMeta, exists := lookupField(metadata, fieldName)
+			if !exists {
+				continue
+			}
+			// Use AddUpdateFunction for prepend (value first, then field)
+			err := builder.AddUpdateFunction(fieldMeta.DBName, "list_append", value, fieldMeta.DBName)
+			if err != nil {
+				return fmt.Errorf("failed to add list prepend: %w", err)
+			}
+			processedFields[fieldName] = true
+		} else if strings.Contains(field, "[") && strings.Contains(field, "]") {
+			// Handle list element update like "Features[1]"
+			idx := strings.Index(field, "[")
+			fieldName := field[:idx]
+			fieldMeta, exists := lookupField(metadata, fieldName)
+			if !exists {
+				continue
+			}
+			builder.AddUpdateSet(fieldMeta.DBName+field[idx:], value)
+		} else {
+			// Regular SET operation
+			fieldMeta, exists := lookupField(metadata, field)
+			if !exists {
+				continue
+			}
+			// Skip if we've already processed this field
+			if processedFields[field] {
+				continue
+			}
+			builder.AddUpdateSet(fieldMeta.DBName, value)
+			processedFields[field] = true
+		}
+	}
+
+	// Only update updated_at if it hasn't been explicitly set by the user
+	if metadata.UpdatedAtField != nil && !processedFields[metadata.UpdatedAtField.Name] {
+		builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now())
+	}
+
+	// Add conditions from the builder
+	// First, add conditions using the standard method to ensure the first condition works
+	// Then we'll build a custom expression for OR support
+
+	if !hasOrConditions {
+		// All conditions are AND, use the standard approach
+		for _, cond := range ub.conditions {
+			if cond.operator == "attribute_exists" {
+				builder.AddConditionExpression(cond.field, "attribute_exists", nil)
+			} else if cond.operator == "attribute_not_exists" {
+				builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
+			} else {
+				// For regular conditions, check if we need to use DB name
+				fieldMeta, exists := lookupField(metadata, cond.field)
+				if exists {
+					builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
+				} else {
+					builder.AddConditionExpression(cond.field, cond.operator, cond.value)
+				}
+			}
+		}
+	} else {
+		// We have OR conditions, need to build custom expression
+		// Don't add any conditions to the builder yet - we'll handle them all in the custom expression
+	}
+
+	// Build the update expression
+	components := builder.Build()
+
+	// If we have OR conditions, build the condition expression from scratch
+	if hasOrConditions && len(ub.conditions) > 0 {
+		// Build custom condition expression with OR support
+		var conditionExprs []string
+		condNameCounter := 0
+		condValueCounter := 0
+
+		// Process ALL conditions (not just from index 1)
+		for _, cond := range ub.conditions {
+			var expr string
+			var fieldName string
+
+			// Get the correct field name (DB name if available)
+			if fieldMeta, exists := lookupField(metadata, cond.field); exists {
+				fieldName = fieldMeta.DBName
+			} else {
+				fieldName = cond.field
+			}
+
+			// Create name placeholder
+			nameRef := fmt.Sprintf("#cond%d", condNameCounter)
+			condNameCounter++
+
+			if components.ExpressionAttributeNames == nil {
+				components.ExpressionAttributeNames = make(map[string]string)
+			}
+			components.ExpressionAttributeNames[nameRef] = fieldName
+
+			if cond.operator == "attribute_exists" {
+				expr = fmt.Sprintf("attribute_exists(%s)", nameRef)
+			} else if cond.operator == "attribute_not_exists" {
+				expr = fmt.Sprintf("attribute_not_exists(%s)", nameRef)
+			} else {
+				// Regular condition with value
+				valueRef := fmt.Sprintf(":condv%d", condValueCounter)
+				condValueCounter++
+
+				if components.ExpressionAttributeValues == nil {
+					components.ExpressionAttributeValues = make(map[string]types.AttributeValue)
+				}
+
+				// Convert value to AttributeValue
+				av, err := ub.query.db.converter.ToAttributeValue(cond.value)
+				if err != nil {
+					return fmt.Errorf("failed to convert condition value: %w", err)
+				}
+				components.ExpressionAttributeValues[valueRef] = av
+
+				// Build the condition expression
+				switch cond.operator {
+				case "=":
+					expr = fmt.Sprintf("%s = %s", nameRef, valueRef)
+				case "<":
+					expr = fmt.Sprintf("%s < %s", nameRef, valueRef)
+				case ">":
+					expr = fmt.Sprintf("%s > %s", nameRef, valueRef)
+				case "<=":
+					expr = fmt.Sprintf("%s <= %s", nameRef, valueRef)
+				case ">=":
+					expr = fmt.Sprintf("%s >= %s", nameRef, valueRef)
+				case "!=", "<>":
+					expr = fmt.Sprintf("%s <> %s", nameRef, valueRef)
+				case "BEGINS_WITH":
+					expr = fmt.Sprintf("begins_with(%s, %s)", nameRef, valueRef)
+				case "CONTAINS":
+					expr = fmt.Sprintf("contains(%s, %s)", nameRef, valueRef)
+				case "BETWEEN":
+					// Handle BETWEEN operator
+					values, ok := cond.value.([]any)
+					if !ok || len(values) != 2 {
+						return fmt.Errorf("BETWEEN operator requires two values")
+					}
+					valueRef2 := fmt.Sprintf(":condv%d", condValueCounter)
+					condValueCounter++
+					av2, err := ub.query.db.converter.ToAttributeValue(values[1])
+					if err != nil {
+						return fmt.Errorf("failed to convert BETWEEN value: %w", err)
+					}
+					components.ExpressionAttributeValues[valueRef2] = av2
+					expr = fmt.Sprintf("%s BETWEEN %s AND %s", nameRef, valueRef, valueRef2)
+				default:
+					return fmt.Errorf("unsupported operator: %s", cond.operator)
+				}
+			}
+
+			conditionExprs = append(conditionExprs, expr)
+		}
+
+		// Build final condition expression with OR/AND logic
+		if len(conditionExprs) > 0 {
+			var finalExpr strings.Builder
+			finalExpr.WriteString(conditionExprs[0])
+
+			for i := 1; i < len(conditionExprs); i++ {
+				finalExpr.WriteString(" ")
+				finalExpr.WriteString(ub.conditions[i].logicalOp)
+				finalExpr.WriteString(" ")
+				finalExpr.WriteString(conditionExprs[i])
+			}
+
+			// Set the condition expression
+			components.ConditionExpression = finalExpr.String()
+		}
+	}
+
+	// Build UpdateItem input
+	input := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(metadata.TableName),
+		Key:                       keyMap,
+		UpdateExpression:          aws.String(components.UpdateExpression),
+		ExpressionAttributeNames:  components.ExpressionAttributeNames,
+		ExpressionAttributeValues: components.ExpressionAttributeValues,
+	}
+
+	if components.ConditionExpression != "" {
+		input.ConditionExpression = aws.String(components.ConditionExpression)
+	}
+
+	// If result is requested but returnValues is still default, set it to ALL_NEW
+	if result != nil && ub.returnValues == "NONE" {
+		ub.returnValues = "ALL_NEW"
+	}
+
+	// Set return values
+	if ub.returnValues != "NONE" {
+		input.ReturnValues = types.ReturnValue(ub.returnValues)
+	}
+
+	// Execute UpdateItem
+	client, err := ub.query.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for update item: %w", err)
+	}
+
+	output, err := client.UpdateItem(ub.query.ctx, input)
+	if err != nil {
+		if isConditionalCheckFailedException(err) {
+			return customerrors.ErrConditionFailed
+		}
+		return fmt.Errorf("failed to update item: %w", err)
+	}
+
+	// Handle return values if requested
+	if result != nil && output.Attributes != nil {
+		if err := ub.query.unmarshalItem(output.Attributes, result, metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal result: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // ParallelScan configures parallel scanning with segment and total segments
@@ -1937,7 +2825,14 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 	for i := int32(0); i < totalSegments; i++ {
 		wg.Add(1)
 		go func(segment int32) {
-			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// Log the panic with context
+					err := fmt.Errorf("scan segment %d panicked: %v", segment, r)
+					resultsChan <- segmentResult{nil, err}
+				}
+				wg.Done()
+			}()
 
 			// Clone the query for this segment
 			segmentQuery := &query{
@@ -1947,7 +2842,6 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 				builder:       q.builder,
 				conditions:    q.conditions,
 				indexName:     q.indexName,
-				filters:       q.filters,
 				orderBy:       q.orderBy,
 				limit:         q.limit,
 				offset:        q.offset,
@@ -1999,14 +2893,14 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 	// Add filter conditions
 	var filterConditions []condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if !exists || (!fieldMeta.IsPK && !fieldMeta.IsSK) {
 			filterConditions = append(filterConditions, cond)
 		}
 	}
 
 	for _, cond := range filterConditions {
-		fieldMeta, exists := metadata.Fields[cond.field]
+		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
 			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
 		} else {
@@ -2056,7 +2950,13 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 
 	// Execute scan and collect results
 	var items []map[string]types.AttributeValue
-	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for scan segment: %w", err)
+	}
+
+	paginator := dynamodb.NewScanPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -2087,63 +2987,88 @@ func (q *query) SetCursor(cursor string) error {
 	return nil
 }
 
-// metadataAdapter adapts model.Metadata to core.ModelMetadata interface
-type metadataAdapter struct {
-	metadata *model.Metadata
-}
-
-// TableName returns the table name
-func (m *metadataAdapter) TableName() string {
-	return m.metadata.TableName
-}
-
-// PrimaryKey returns the primary key schema
-func (m *metadataAdapter) PrimaryKey() core.KeySchema {
-	if m.metadata.PrimaryKey == nil {
-		return core.KeySchema{}
+// BatchWrite performs mixed batch write operations (puts and deletes)
+func (q *query) BatchWrite(putItems []any, deleteKeys []any) error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
 	}
 
-	pk := core.KeySchema{}
-	if m.metadata.PrimaryKey.PartitionKey != nil {
-		pk.PartitionKey = m.metadata.PrimaryKey.PartitionKey.Name
-	}
-	if m.metadata.PrimaryKey.SortKey != nil {
-		pk.SortKey = m.metadata.PrimaryKey.SortKey.Name
-	}
-
-	return pk
-}
-
-// Indexes returns the index schemas
-func (m *metadataAdapter) Indexes() []core.IndexSchema {
-	indexes := make([]core.IndexSchema, len(m.metadata.Indexes))
-	for i, idx := range m.metadata.Indexes {
-		indexes[i] = core.IndexSchema{
-			Name:            idx.Name,
-			Type:            string(idx.Type),
-			PartitionKey:    idx.PartitionKey.Name,
-			SortKey:         "",
-			ProjectionType:  idx.ProjectionType,
-			ProjectedFields: idx.ProjectedFields,
-		}
-		if idx.SortKey != nil {
-			indexes[i].SortKey = idx.SortKey.Name
+	// Simply combine puts and deletes into batch operations
+	// First, perform all puts using BatchCreate
+	if len(putItems) > 0 {
+		if err := q.BatchCreate(putItems); err != nil {
+			return fmt.Errorf("failed to batch put items: %w", err)
 		}
 	}
-	return indexes
+
+	// Then, perform all deletes using BatchDelete
+	if len(deleteKeys) > 0 {
+		if err := q.BatchDelete(deleteKeys); err != nil {
+			return fmt.Errorf("failed to batch delete items: %w", err)
+		}
+	}
+
+	return nil
 }
 
-// AttributeMetadata returns metadata for a specific field
-func (m *metadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
-	fieldMeta, exists := m.metadata.Fields[field]
-	if !exists {
-		return nil
+// BatchUpdateWithOptions performs batch update operations with custom options
+func (q *query) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	// Check Lambda timeout
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
 	}
 
-	return &core.AttributeMetadata{
-		Name:         fieldMeta.Name,
-		Type:         fieldMeta.Type.String(),
-		DynamoDBName: fieldMeta.DBName,
-		Tags:         fieldMeta.Tags,
+	// For now, perform updates sequentially
+	// In a full implementation, this would support parallel updates with options
+	itemsValue := reflect.ValueOf(items)
+	if itemsValue.Kind() == reflect.Ptr {
+		itemsValue = itemsValue.Elem()
 	}
+	if itemsValue.Kind() != reflect.Slice {
+		return fmt.Errorf("items must be a slice")
+	}
+
+	// Get metadata for the model type
+	if itemsValue.Len() == 0 {
+		return nil // Nothing to update
+	}
+
+	firstItem := itemsValue.Index(0).Interface()
+	metadata, err := q.db.registry.GetMetadata(firstItem)
+	if err != nil {
+		return fmt.Errorf("failed to get metadata: %w", err)
+	}
+
+	for i := 0; i < itemsValue.Len(); i++ {
+		item := itemsValue.Index(i).Interface()
+
+		// Create a new query with the model
+		updateQuery := q.db.Model(item)
+
+		// Extract and set primary key conditions
+		itemValue := reflect.ValueOf(item)
+		if itemValue.Kind() == reflect.Ptr {
+			itemValue = itemValue.Elem()
+		}
+
+		// Add partition key condition
+		if metadata.PrimaryKey.PartitionKey != nil {
+			pkField := itemValue.FieldByIndex([]int{metadata.PrimaryKey.PartitionKey.Index})
+			updateQuery = updateQuery.Where(metadata.PrimaryKey.PartitionKey.Name, "=", pkField.Interface())
+		}
+
+		// Add sort key condition if present
+		if metadata.PrimaryKey.SortKey != nil {
+			skField := itemValue.FieldByIndex([]int{metadata.PrimaryKey.SortKey.Index})
+			updateQuery = updateQuery.Where(metadata.PrimaryKey.SortKey.Name, "=", skField.Interface())
+		}
+
+		// Perform the update
+		if err := updateQuery.Update(fields...); err != nil {
+			return fmt.Errorf("failed to update item %d: %w", i, err)
+		}
+	}
+
+	return nil
 }

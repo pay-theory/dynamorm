@@ -6,6 +6,7 @@ import (
 
 	"github.com/pay-theory/dynamorm/pkg/marshal"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
@@ -447,4 +448,102 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 			}
 		}
 	})
+}
+
+type BenchmarkModel struct {
+	ID        string    `dynamorm:"pk,attr:id"`
+	Name      string    `dynamorm:"attr:name"`
+	CreatedAt time.Time `dynamorm:"attr:created_at"`
+}
+
+func (b BenchmarkModel) TableName() string {
+	return "benchmark_table"
+}
+
+func BenchmarkGetItemDirect(b *testing.B) {
+	// Setup mock or local DynamoDB
+	db, _ := NewBasic(session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
+
+	model := &BenchmarkModel{ID: "test-id"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var result BenchmarkModel
+		_ = db.Model(model).Where("id", "=", "test-id").First(&result)
+	}
+}
+
+func BenchmarkGetItemByAttribute(b *testing.B) {
+	// Test querying by DynamoDB attribute name
+	db, _ := NewBasic(session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var result BenchmarkModel
+		_ = db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").First(&result)
+	}
+}
+
+// BenchmarkGetItemByGoFieldName tests querying by Go field name
+func BenchmarkGetItemByGoFieldName(b *testing.B) {
+	db, _ := NewBasic(session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var result BenchmarkModel
+		_ = db.Model(&BenchmarkModel{}).Where("ID", "=", "test-id").First(&result)
+	}
+}
+
+// BenchmarkGetItemWithProjection tests GetItem with field selection
+func BenchmarkGetItemWithProjection(b *testing.B) {
+	db, _ := NewBasic(session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var result BenchmarkModel
+		_ = db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").Select("Name").First(&result)
+	}
+}
+
+// BenchmarkMetadataCaching tests the metadata cache effectiveness
+func BenchmarkMetadataCaching(b *testing.B) {
+	db, _ := NewBasic(session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
+
+	// Pre-warm the cache
+	_ = db.Model(&BenchmarkModel{})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = db.Model(&BenchmarkModel{})
+	}
+}
+
+// BenchmarkQueryOperation tests Query performance when GetItem isn't used
+func BenchmarkQueryOperation(b *testing.B) {
+	db, _ := NewBasic(session.Config{
+		Region:   "us-east-1",
+		Endpoint: "http://localhost:8000",
+	})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var results []BenchmarkModel
+		_ = db.Model(&BenchmarkModel{}).Where("Name", "=", "test-name").All(&results)
+	}
 }

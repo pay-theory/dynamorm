@@ -128,6 +128,11 @@ func (m *MockQuery) Create() error {
 	return args.Error(0)
 }
 
+func (m *MockQuery) CreateOrUpdate() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 func (m *MockQuery) Update(fields ...string) error {
 	args := m.Called(fields)
 	return args.Error(0)
@@ -165,6 +170,21 @@ func (m *MockQuery) BatchGet(keys []any, dest any) error {
 
 func (m *MockQuery) BatchCreate(items any) error {
 	args := m.Called(items)
+	return args.Error(0)
+}
+
+func (m *MockQuery) BatchDelete(keys []any) error {
+	args := m.Called(keys)
+	return args.Error(0)
+}
+
+func (m *MockQuery) BatchWrite(putItems []any, deleteKeys []any) error {
+	args := m.Called(putItems, deleteKeys)
+	return args.Error(0)
+}
+
+func (m *MockQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	args := m.Called(items, fields, options)
 	return args.Error(0)
 }
 
@@ -244,8 +264,11 @@ func (m *MockUpdateBuilder) SetListElement(field string, index int, value any) U
 }
 
 func (m *MockUpdateBuilder) Condition(field string, operator string, value any) UpdateBuilder {
-	args := m.Called(field, operator, value)
-	return args.Get(0).(UpdateBuilder)
+	return m
+}
+
+func (m *MockUpdateBuilder) OrCondition(field string, operator string, value any) UpdateBuilder {
+	return m
 }
 
 func (m *MockUpdateBuilder) ConditionExists(field string) UpdateBuilder {
@@ -613,6 +636,7 @@ func TestIndexSchema(t *testing.T) {
 // TestAttributeMetadata tests the AttributeMetadata struct
 func TestAttributeMetadata(t *testing.T) {
 	t.Run("Basic attribute", func(t *testing.T) {
+		//nolint:unusedwrite // Fields are used in assertions below
 		attr := &AttributeMetadata{
 			Name:         "UserEmail",
 			Type:         "string",
@@ -632,6 +656,7 @@ func TestAttributeMetadata(t *testing.T) {
 	})
 
 	t.Run("Attribute without tags", func(t *testing.T) {
+		//nolint:unusedwrite // Fields are used in assertions below
 		attr := &AttributeMetadata{
 			Name:         "ID",
 			Type:         "string",
@@ -799,11 +824,11 @@ func TestUpdateBuilderChaining(t *testing.T) {
 	mockBuilder := new(MockUpdateBuilder)
 
 	// Set up all methods to return the same builder instance for chaining
-	mockBuilder.On("Set", "name", "John Doe").Return(mockBuilder)
-	mockBuilder.On("Increment", "view_count").Return(mockBuilder)
-	mockBuilder.On("Add", "tags", []string{"new", "featured"}).Return(mockBuilder)
-	mockBuilder.On("ConditionExists", "id").Return(mockBuilder)
-	mockBuilder.On("ReturnValues", "ALL_NEW").Return(mockBuilder)
+	mockBuilder.On("Set", "name", "John Doe").Return(mockBuilder).Once()
+	mockBuilder.On("Increment", "view_count").Return(mockBuilder).Once()
+	mockBuilder.On("Add", "tags", []string{"new", "featured"}).Return(mockBuilder).Once()
+	mockBuilder.On("ConditionExists", "id").Return(mockBuilder).Once()
+	mockBuilder.On("ReturnValues", "ALL_NEW").Return(mockBuilder).Once()
 
 	// Test method chaining
 	result := mockBuilder.

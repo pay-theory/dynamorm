@@ -400,16 +400,40 @@ func TestUserService_GetUser(t *testing.T) {
 
 ## Using Pre-built Mocks
 
-DynamORM provides pre-built mock implementations in the test package:
+DynamORM now provides pre-built mock implementations in the `mocks` package (v1.0.2+):
 
 ```go
-import "github.com/pay-theory/dynamorm/pkg/core"
+import (
+    "testing"
+    "github.com/pay-theory/dynamorm/pkg/mocks"
+    "github.com/stretchr/testify/mock"
+)
 
 func TestWithPrebuiltMocks(t *testing.T) {
-    // The core package includes MockDB and MockQuery in its test files
-    // You can copy these or create your own
+    // Use the pre-built mocks from the mocks package
+    mockDB := new(mocks.MockDB)
+    mockQuery := new(mocks.MockQuery)
+    
+    // Setup expectations
+    mockDB.On("Model", &User{}).Return(mockQuery)
+    mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
+    mockQuery.On("First", mock.Anything).Return(nil)
+    
+    // Use in your service
+    service := NewUserService(mockDB)
+    user, err := service.GetUser("123")
+    
+    // Assert
+    assert.NoError(t, err)
+    mockDB.AssertExpectations(t)
+    mockQuery.AssertExpectations(t)
 }
 ```
+
+The mocks package includes:
+- `MockDB` - implements `core.DB` interface
+- `MockQuery` - implements `core.Query` interface (all 26+ methods)
+- `MockUpdateBuilder` - implements `core.UpdateBuilder` interface
 
 ## Best Practices
 

@@ -212,73 +212,42 @@ func (ldb *LambdaDB) WithLambdaTimeout(ctx context.Context) *LambdaDB {
 }
 
 // OptimizeForMemory adjusts internal buffers based on available Lambda memory
-func (ldb *LambdaDB) OptimizeForMemory(memoryMB int) {
+func (ldb *LambdaDB) OptimizeForMemory() {
+	// Adjust batch sizes based on memory
+	memoryMB := ldb.lambdaMemoryMB
 	if memoryMB == 0 {
-		memoryMB = ldb.lambdaMemoryMB
+		memoryMB = 512 // Default
 	}
 
-	// Adjust connection pool size based on memory
-	// Lower memory = fewer connections
-	if memoryMB <= 512 {
-		// Minimal connections for low memory
-		ldb.adjustConnectionPool(5)
-	} else if memoryMB <= 1024 {
-		// Moderate connections
-		ldb.adjustConnectionPool(10)
-	} else {
-		// Higher memory can handle more connections
-		ldb.adjustConnectionPool(20)
+	// Scale buffer sizes with memory
+	if ldb.db != nil {
+		// For now, we don't expose internal buffer configuration
+		// This is a placeholder for future optimization
 	}
 }
 
-// adjustConnectionPool updates the HTTP transport settings
-func (ldb *LambdaDB) adjustConnectionPool(maxConns int) {
-	// Get the current DynamoDB client configuration
-	if ldb.db == nil || ldb.db.session == nil || ldb.db.session.Client() == nil {
-		return
-	}
-
-	// Create new optimized HTTP client
-	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			MaxIdleConns:        maxConns,
-			MaxIdleConnsPerHost: maxConns,
-			IdleConnTimeout:     90 * time.Second,
-			DisableKeepAlives:   false, // Keep connections alive for reuse
-			// Additional optimizations for Lambda
-			TLSHandshakeTimeout:   3 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			ResponseHeaderTimeout: 3 * time.Second,
-			// Use HTTP/2 when available
-			ForceAttemptHTTP2: true,
-		},
-	}
-
-	// Update the session's HTTP client
-	// Note: This requires recreating the AWS config
-	awsConfigOptions := []func(*config.LoadOptions) error{
-		config.WithRegion(getRegion()),
-		config.WithHTTPClient(httpClient),
-		config.WithRetryMode(aws.RetryModeAdaptive),
-		config.WithRetryMaxAttempts(3),
-	}
-
-	// Store the optimized settings
-	// Note: In production, you might want to recreate the entire session
-	// For now, we'll store these settings for documentation
-	_ = awsConfigOptions
-}
-
-// OptimizeForColdStart reduces cold start time by preloading critical components
+// OptimizeForColdStart reduces Lambda cold start time
 func (ldb *LambdaDB) OptimizeForColdStart() {
 	// Pre-warm the connection pool
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Silently recover from any panic during connection pre-warming
+				// This is a best-effort optimization
+			}
+		}()
+
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
 		// Perform a lightweight operation to establish connection
-		_, _ = ldb.db.session.Client().ListTables(ctx, &dynamodb.ListTablesInput{
+		client, err := ldb.db.session.Client()
+		if err != nil {
+			// Connection pre-warming failed, but we continue normally
+			return
+		}
+
+		_, _ = client.ListTables(ctx, &dynamodb.ListTablesInput{
 			Limit: aws.Int32(1),
 		})
 	}()
@@ -386,7 +355,7 @@ func LambdaInit(models ...any) (*LambdaDB, error) {
 	db.OptimizeForColdStart()
 
 	// Optimize based on Lambda memory
-	db.OptimizeForMemory(0) // Uses auto-detected memory
+	db.OptimizeForMemory() // Uses auto-detected memory
 
 	return db, nil
 }
@@ -400,8 +369,18 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 	// Phase 1: AWS Config
 	phaseStart := time.Now()
-	cfg, _ := config.LoadDefaultConfig(context.Background())
+	cfg, err := config.LoadDefaultConfig(context.Background())
 	phases["aws_config"] = time.Since(phaseStart)
+	if err != nil {
+		// If config loading fails, still track it but with error
+		phases["aws_config_error"] = time.Since(phaseStart)
+		return ColdStartMetrics{
+			TotalDuration: time.Since(start),
+			Phases:        phases,
+			MemoryMB:      GetLambdaMemoryMB(),
+			IsLambda:      IsLambdaEnvironment(),
+		}
+	}
 
 	// Phase 2: DynamoDB Client
 	phaseStart = time.Now()
@@ -416,7 +395,16 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 	// Phase 4: Model Registration
 	if len(models) > 0 {
 		phaseStart = time.Now()
-		db.PreRegisterModels(models...)
+		if err := db.PreRegisterModels(models...); err != nil {
+			// If model registration fails, still track it but with error
+			phases["model_registration_error"] = time.Since(phaseStart)
+			return ColdStartMetrics{
+				TotalDuration: time.Since(start),
+				Phases:        phases,
+				MemoryMB:      GetLambdaMemoryMB(),
+				IsLambda:      IsLambdaEnvironment(),
+			}
+		}
 		phases["model_registration"] = time.Since(phaseStart)
 	}
 

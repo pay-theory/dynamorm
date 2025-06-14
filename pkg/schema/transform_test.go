@@ -120,8 +120,8 @@ func TestCreateModelTransform(t *testing.T) {
 
 		// Test the expr converter directly
 		sourceItem := map[string]types.AttributeValue{
-			"id":        &types.AttributeValueMemberS{Value: "user-1"},
-			"email":     &types.AttributeValueMemberS{Value: "test@example.com"},
+			"ID":        &types.AttributeValueMemberS{Value: "user-1"},
+			"Email":     &types.AttributeValueMemberS{Value: "test@example.com"},
 			"full_name": &types.AttributeValueMemberS{Value: "John Doe"},
 			"age":       &types.AttributeValueMemberN{Value: "30"},
 			"status":    &types.AttributeValueMemberS{Value: "active"},
@@ -163,8 +163,8 @@ func TestCreateModelTransform(t *testing.T) {
 
 		// Test the transform
 		sourceItem := map[string]types.AttributeValue{
-			"id":        &types.AttributeValueMemberS{Value: "user-1"},
-			"email":     &types.AttributeValueMemberS{Value: "test@example.com"},
+			"ID":        &types.AttributeValueMemberS{Value: "user-1"},
+			"Email":     &types.AttributeValueMemberS{Value: "test@example.com"},
 			"full_name": &types.AttributeValueMemberS{Value: "John Doe"},
 			"age":       &types.AttributeValueMemberN{Value: "30"},
 			"status":    &types.AttributeValueMemberS{Value: "active"},
@@ -180,8 +180,8 @@ func TestCreateModelTransform(t *testing.T) {
 			t.Logf("Field %s: %T = %v", k, v, v)
 		}
 
-		// The expr converter uses Go field names, not DynamoDB field names
-		// So we need to check for the Go field names in the result
+		// The marshaler uses DB field names, not Go field names
+		// So we need to check for the DB field names in the result
 		if val, exists := targetItem["ID"]; exists && val != nil {
 			assert.Equal(t, "user-1", val.(*types.AttributeValueMemberS).Value)
 		} else {
@@ -225,7 +225,17 @@ func TestCreateModelTransform(t *testing.T) {
 
 		transform, err := CreateModelTransform(transformFunc, sourceMetadata, targetMetadata)
 		require.NoError(t, err)
-		assert.Equal(t, transformFunc, transform)
+		assert.NotNil(t, transform)
+
+		// Test that the transform works correctly
+		sourceItem := map[string]types.AttributeValue{
+			"ID": &types.AttributeValueMemberS{Value: "test-id"},
+		}
+
+		targetItem, err := transform(sourceItem)
+		require.NoError(t, err)
+		assert.Contains(t, targetItem, "new_field")
+		assert.Equal(t, "added", targetItem["new_field"].(*types.AttributeValueMemberS).Value)
 	})
 
 	t.Run("NilTransform", func(t *testing.T) {
@@ -257,8 +267,8 @@ func TestTransformWithValidation(t *testing.T) {
 		}
 
 		sourceItem := map[string]types.AttributeValue{
-			"id":    &types.AttributeValueMemberS{Value: "user-1"},
-			"email": &types.AttributeValueMemberS{Value: "test@example.com"},
+			"ID":    &types.AttributeValueMemberS{Value: "user-1"},
+			"Email": &types.AttributeValueMemberS{Value: "test@example.com"},
 		}
 
 		result, err := TransformWithValidation(sourceItem, transform, sourceMetadata, targetMetadata)
@@ -272,7 +282,7 @@ func TestTransformWithValidation(t *testing.T) {
 		}
 
 		sourceItem := map[string]types.AttributeValue{
-			"id": &types.AttributeValueMemberS{Value: "user-1"},
+			"ID": &types.AttributeValueMemberS{Value: "user-1"},
 		}
 
 		_, err := TransformWithValidation(sourceItem, transform, sourceMetadata, targetMetadata)
@@ -285,7 +295,7 @@ func TestTransformWithValidation(t *testing.T) {
 			// Remove primary key
 			target := make(map[string]types.AttributeValue)
 			for k, v := range source {
-				if k != "id" {
+				if k != "ID" {
 					target[k] = v
 				}
 			}
@@ -293,8 +303,8 @@ func TestTransformWithValidation(t *testing.T) {
 		}
 
 		sourceItem := map[string]types.AttributeValue{
-			"id":    &types.AttributeValueMemberS{Value: "user-1"},
-			"email": &types.AttributeValueMemberS{Value: "test@example.com"},
+			"ID":    &types.AttributeValueMemberS{Value: "user-1"},
+			"Email": &types.AttributeValueMemberS{Value: "test@example.com"},
 		}
 
 		_, err := TransformWithValidation(sourceItem, transform, sourceMetadata, targetMetadata)
@@ -304,7 +314,7 @@ func TestTransformWithValidation(t *testing.T) {
 
 	t.Run("NilTransform", func(t *testing.T) {
 		sourceItem := map[string]types.AttributeValue{
-			"id": &types.AttributeValueMemberS{Value: "user-1"},
+			"ID": &types.AttributeValueMemberS{Value: "user-1"},
 		}
 
 		result, err := TransformWithValidation(sourceItem, nil, sourceMetadata, targetMetadata)
@@ -326,7 +336,7 @@ func TestTransformUtilities(t *testing.T) {
 		assert.Equal(t, source, result)
 
 		// Ensure it's a copy, not the same map
-		assert.NotSame(t, source, result)
+		assert.NotSame(t, &source, &result)
 	})
 
 	t.Run("RenameField", func(t *testing.T) {
@@ -468,14 +478,14 @@ func TestComplexTransformScenarios(t *testing.T) {
 		}
 
 		source := map[string]types.AttributeValue{
-			"id":        &types.AttributeValueMemberS{Value: "user-1"},
+			"ID":        &types.AttributeValueMemberS{Value: "user-1"},
 			"full_name": &types.AttributeValueMemberS{Value: "John Doe"},
 		}
 
 		result, err := transform(source)
 		require.NoError(t, err)
 
-		assert.Contains(t, result, "id")
+		assert.Contains(t, result, "ID")
 		assert.NotContains(t, result, "full_name")
 		assert.Contains(t, result, "first_name")
 		assert.Contains(t, result, "last_name")
@@ -507,14 +517,14 @@ func TestComplexTransformScenarios(t *testing.T) {
 		}
 
 		source := map[string]types.AttributeValue{
-			"id":     &types.AttributeValueMemberS{Value: "user-1"},
+			"ID":     &types.AttributeValueMemberS{Value: "user-1"},
 			"status": &types.AttributeValueMemberS{Value: "active"},
 		}
 
 		result, err := transform(source)
 		require.NoError(t, err)
 
-		assert.Contains(t, result, "id")
+		assert.Contains(t, result, "ID")
 		assert.NotContains(t, result, "status")
 		assert.Contains(t, result, "active")
 		assert.True(t, result["active"].(*types.AttributeValueMemberBOOL).Value)

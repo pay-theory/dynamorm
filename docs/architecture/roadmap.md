@@ -314,7 +314,7 @@ dynamorm schema diff
 - Basic query builder
 - Simple type support
 
-### v0.2.0 - Beta Release
+### v1.0.1 - Beta Release
 - Index management
 - Query optimization
 - Migration support

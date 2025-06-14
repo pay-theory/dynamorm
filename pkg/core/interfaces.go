@@ -96,6 +96,9 @@ type Query interface {
 	// Create creates a new item
 	Create() error
 
+	// CreateOrUpdate creates a new item or updates an existing one (upsert)
+	CreateOrUpdate() error
+
 	// Update updates the matching items
 	Update(fields ...string) error
 
@@ -119,6 +122,15 @@ type Query interface {
 
 	// BatchCreate creates multiple items
 	BatchCreate(items any) error
+
+	// BatchDelete deletes multiple items by their primary keys
+	BatchDelete(keys []any) error
+
+	// BatchWrite performs mixed batch write operations (puts and deletes)
+	BatchWrite(putItems []any, deleteKeys []any) error
+
+	// BatchUpdateWithOptions performs batch update operations with custom options
+	BatchUpdateWithOptions(items []any, fields []string, options ...any) error
 
 	// Cursor sets the pagination cursor for the query
 	Cursor(cursor string) Query
@@ -167,6 +179,9 @@ type UpdateBuilder interface {
 
 	// Condition adds a condition that must be met for the update to succeed
 	Condition(field string, operator string, value any) UpdateBuilder
+
+	// OrCondition adds a condition with OR logic
+	OrCondition(field string, operator string, value any) UpdateBuilder
 
 	// ConditionExists adds a condition that the field must exist
 	ConditionExists(field string) UpdateBuilder

@@ -7,7 +7,7 @@ import (
 // Payment represents a payment transaction with idempotency support
 type Payment struct {
 	ID             string            `dynamorm:"pk" json:"id"`
-	IdempotencyKey string            `dynamorm:"index:gsi-idempotency,unique" json:"idempotency_key"`
+	IdempotencyKey string            `dynamorm:"index:gsi-idempotency" json:"idempotency_key"`
 	MerchantID     string            `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
 	Amount         int64             `json:"amount"` // Always in cents
 	Currency       string            `json:"currency"`

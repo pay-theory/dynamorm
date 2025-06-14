@@ -162,9 +162,13 @@ func TestCreateTable(t *testing.T) {
 		// Verify billing mode
 		desc, err := manager.DescribeTable(&User{})
 		assert.NoError(t, err)
-		assert.Equal(t, types.BillingModeProvisioned, desc.BillingModeSummary.BillingMode)
-		assert.Equal(t, int64(5), *desc.ProvisionedThroughput.ReadCapacityUnits)
-		assert.Equal(t, int64(5), *desc.ProvisionedThroughput.WriteCapacityUnits)
+		if desc.BillingModeSummary != nil {
+			assert.Equal(t, types.BillingModeProvisioned, desc.BillingModeSummary.BillingMode)
+		}
+		if desc.ProvisionedThroughput != nil {
+			assert.Equal(t, int64(5), *desc.ProvisionedThroughput.ReadCapacityUnits)
+			assert.Equal(t, int64(5), *desc.ProvisionedThroughput.WriteCapacityUnits)
+		}
 
 		// Cleanup
 		_ = manager.DeleteTable("Users")

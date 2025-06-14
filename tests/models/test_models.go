@@ -27,7 +27,7 @@ type TestProduct struct {
 // TestOrder is a test model for complex queries
 type TestOrder struct {
 	OrderID    string      `dynamorm:"pk"`
-	CustomerID string      `dynamorm:"sk"`
+	CustomerID string      `dynamorm:"sk,index:gsi-customer,pk"`
 	Status     string      `dynamorm:"index:gsi-status,pk"`
 	Total      float64     `dynamorm:"index:gsi-status,sk"`
 	Items      []OrderItem `dynamorm:""`
