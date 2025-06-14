@@ -156,14 +156,14 @@ func NewSession(cfg *Config) (*Session, error) {
 }
 
 // Client returns the DynamoDB client
-func (s *Session) Client() *dynamodb.Client {
+func (s *Session) Client() (*dynamodb.Client, error) {
 	if s == nil {
-		panic("session is nil")
+		return nil, fmt.Errorf("session is nil")
 	}
 	if s.client == nil {
-		panic("DynamoDB client is nil")
+		return nil, fmt.Errorf("DynamoDB client is nil")
 	}
-	return s.client
+	return s.client, nil
 }
 
 // Config returns the session configuration

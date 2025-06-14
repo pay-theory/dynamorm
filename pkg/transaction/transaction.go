@@ -139,12 +139,19 @@ func (tx *Transaction) Update(model any) error {
 			currentVersion := versionValue.Int()
 			conditionExpression = "#ver = :currentVer"
 			expressionAttributeNames["#ver"] = metadata.VersionField.DBName
-			av, _ := tx.converter.ToAttributeValue(currentVersion)
+
+			av, err := tx.converter.ToAttributeValue(currentVersion)
+			if err != nil {
+				return fmt.Errorf("failed to convert current version: %w", err)
+			}
 			expressionAttributeValues[":currentVer"] = av
 
 			// Increment version
 			updateExpression += fmt.Sprintf(", #ver = :newVer")
-			newAv, _ := tx.converter.ToAttributeValue(currentVersion + 1)
+			newAv, err := tx.converter.ToAttributeValue(currentVersion + 1)
+			if err != nil {
+				return fmt.Errorf("failed to convert new version: %w", err)
+			}
 			expressionAttributeValues[":newVer"] = newAv
 		}
 	}
@@ -166,7 +173,11 @@ func (tx *Transaction) Update(model any) error {
 		if !alreadyUpdated {
 			updateExpression += fmt.Sprintf(", #upd = :updTime")
 			expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
-			av, _ := tx.converter.ToAttributeValue(time.Now())
+
+			av, err := tx.converter.ToAttributeValue(time.Now())
+			if err != nil {
+				return fmt.Errorf("failed to convert updated_at timestamp: %w", err)
+			}
 			expressionAttributeValues[":updTime"] = av
 		}
 	}
@@ -224,7 +235,11 @@ func (tx *Transaction) Delete(model any) error {
 			deleteItem.ExpressionAttributeNames = map[string]string{
 				"#ver": metadata.VersionField.DBName,
 			}
-			av, _ := tx.converter.ToAttributeValue(versionValue.Interface())
+
+			av, err := tx.converter.ToAttributeValue(versionValue.Interface())
+			if err != nil {
+				return fmt.Errorf("failed to convert version for delete condition: %w", err)
+			}
 			deleteItem.ExpressionAttributeValues = map[string]types.AttributeValue{
 				":ver": av,
 			}
@@ -275,7 +290,12 @@ func (tx *Transaction) Commit() error {
 			TransactItems: tx.writes,
 		}
 
-		_, err := tx.session.Client().TransactWriteItems(tx.ctx, input)
+		client, err := tx.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for transaction commit: %w", err)
+		}
+
+		_, err = client.TransactWriteItems(tx.ctx, input)
 		if err != nil {
 			return tx.handleTransactionError(err)
 		}
@@ -287,7 +307,12 @@ func (tx *Transaction) Commit() error {
 			TransactItems: tx.reads,
 		}
 
-		output, err := tx.session.Client().TransactGetItems(tx.ctx, input)
+		client, err := tx.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for transaction reads: %w", err)
+		}
+
+		output, err := client.TransactGetItems(tx.ctx, input)
 		if err != nil {
 			return tx.handleTransactionError(err)
 		}

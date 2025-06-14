@@ -301,10 +301,27 @@ func (db *DB) WithLambdaTimeout(ctx context.Context) core.DB {
 
 // WithLambdaTimeoutBuffer sets a custom timeout buffer for Lambda execution
 func (db *DB) WithLambdaTimeoutBuffer(buffer time.Duration) core.DB {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	db.lambdaTimeoutBuffer = buffer
-	return db
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	// Create new instance instead of modifying existing one to avoid race conditions
+	newDB := &DB{
+		session:             db.session,
+		registry:            db.registry,
+		converter:           db.converter,
+		marshaler:           db.marshaler,
+		ctx:                 db.ctx,
+		lambdaDeadline:      db.lambdaDeadline,
+		lambdaTimeoutBuffer: buffer, // Set the new buffer value
+	}
+
+	// Copy metadata cache
+	db.metadataCache.Range(func(key, value any) bool {
+		newDB.metadataCache.Store(key, value)
+		return true
+	})
+
+	return newDB
 }
 
 // query implements the core.Query interface
@@ -650,7 +667,12 @@ func (q *query) CreateOrUpdate() error {
 	}
 
 	// Execute PutItem
-	_, err = q.db.session.Client().PutItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for put item: %w", err)
+	}
+
+	_, err = client.PutItem(q.ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to put item: %w", err)
 	}
@@ -820,8 +842,14 @@ func (q *query) BatchGet(keys []any, dest any) error {
 	// Execute batch get
 	var allItems []map[string]types.AttributeValue
 
+	// Get client once for the entire batch operation
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for batch get: %w", err)
+	}
+
 	for {
-		output, err := q.db.session.Client().BatchGetItem(q.ctx, input)
+		output, err := client.BatchGetItem(q.ctx, input)
 		if err != nil {
 			return fmt.Errorf("failed to batch get items: %w", err)
 		}
@@ -906,8 +934,13 @@ func (q *query) BatchCreate(items any) error {
 		}
 
 		// Execute batch write with retries for unprocessed items
+		client, err := q.db.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for batch create: %w", err)
+		}
+
 		for {
-			output, err := q.db.session.Client().BatchWriteItem(q.ctx, input)
+			output, err := client.BatchWriteItem(q.ctx, input)
 			if err != nil {
 				return fmt.Errorf("failed to batch create items: %w", err)
 			}
@@ -1036,8 +1069,13 @@ func (q *query) BatchDelete(keys []any) error {
 		}
 
 		// Execute batch write with retries for unprocessed items
+		client, err := q.db.session.Client()
+		if err != nil {
+			return fmt.Errorf("failed to get client for batch delete: %w", err)
+		}
+
 		for {
-			output, err := q.db.session.Client().BatchWriteItem(q.ctx, input)
+			output, err := client.BatchWriteItem(q.ctx, input)
 			if err != nil {
 				return fmt.Errorf("failed to batch delete items: %w", err)
 			}
@@ -1173,7 +1211,12 @@ func (q *query) getItem(metadata *model.Metadata, pk map[string]any, dest any) e
 	}
 
 	// Execute GetItem
-	output, err := q.db.session.Client().GetItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for get item: %w", err)
+	}
+
+	output, err := client.GetItem(q.ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to get item: %w", err)
 	}
@@ -1210,7 +1253,12 @@ func (q *query) getItemDirect(metadata *model.Metadata, pk map[string]any, dest 
 	}
 
 	// Direct API call
-	output, err := q.db.session.Client().GetItem(q.ctx, &dynamodb.GetItemInput{
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for direct get item: %w", err)
+	}
+
+	output, err := client.GetItem(q.ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(metadata.TableName),
 		Key:       keyMap,
 	})
@@ -1313,7 +1361,12 @@ func (q *query) putItem(metadata *model.Metadata) error {
 	}
 
 	// Execute PutItem
-	_, err = q.db.session.Client().PutItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for put item: %w", err)
+	}
+
+	_, err = client.PutItem(q.ctx, input)
 	if err != nil {
 		// Check if it's a conditional check failure
 		if isConditionalCheckFailedException(err) {
@@ -1487,7 +1540,13 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 
 	// Execute query and collect results
 	var items []map[string]types.AttributeValue
-	paginator := dynamodb.NewQueryPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for query: %w", err)
+	}
+
+	paginator := dynamodb.NewQueryPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1559,7 +1618,13 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 	// Execute scan and collect results
 	var items []map[string]types.AttributeValue
-	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for scan: %w", err)
+	}
+
+	paginator := dynamodb.NewScanPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1679,7 +1744,13 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 
 	// Execute query and count results
 	var totalCount int64
-	paginator := dynamodb.NewQueryPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get client for query count: %w", err)
+	}
+
+	paginator := dynamodb.NewQueryPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1733,7 +1804,13 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 
 	// Execute scan and count results
 	var totalCount int64
-	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get client for scan count: %w", err)
+	}
+
+	paginator := dynamodb.NewScanPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)
@@ -1850,7 +1927,12 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	}
 
 	// Execute UpdateItem
-	_, err := q.db.session.Client().UpdateItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for update item: %w", err)
+	}
+
+	_, err = client.UpdateItem(q.ctx, input)
 	if err != nil {
 		if isConditionalCheckFailedException(err) {
 			return customerrors.ErrConditionFailed
@@ -1933,7 +2015,12 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 	}
 
 	// Execute DeleteItem
-	_, err := q.db.session.Client().DeleteItem(q.ctx, input)
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for delete item: %w", err)
+	}
+
+	_, err = client.DeleteItem(q.ctx, input)
 	if err != nil {
 		if isConditionalCheckFailedException(err) {
 			return customerrors.ErrConditionFailed
@@ -2122,7 +2209,12 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		}
 
 		// Execute query
-		output, err := q.db.session.Client().Query(q.ctx, input)
+		client, err := q.db.session.Client()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client for paginated query: %w", err)
+		}
+
+		output, err := client.Query(q.ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query items: %w", err)
 		}
@@ -2181,7 +2273,12 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		}
 
 		// Execute scan
-		output, err := q.db.session.Client().Scan(q.ctx, input)
+		client, err := q.db.session.Client()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get client for paginated scan: %w", err)
+		}
+
+		output, err := client.Scan(q.ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan items: %w", err)
 		}
@@ -2667,7 +2764,12 @@ func (ub *updateBuilder) executeInternal(result any) error {
 	}
 
 	// Execute UpdateItem
-	output, err := ub.query.db.session.Client().UpdateItem(ub.query.ctx, input)
+	client, err := ub.query.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for update item: %w", err)
+	}
+
+	output, err := client.UpdateItem(ub.query.ctx, input)
 	if err != nil {
 		if isConditionalCheckFailedException(err) {
 			return customerrors.ErrConditionFailed
@@ -2723,7 +2825,14 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 	for i := int32(0); i < totalSegments; i++ {
 		wg.Add(1)
 		go func(segment int32) {
-			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// Log the panic with context
+					err := fmt.Errorf("scan segment %d panicked: %v", segment, r)
+					resultsChan <- segmentResult{nil, err}
+				}
+				wg.Done()
+			}()
 
 			// Clone the query for this segment
 			segmentQuery := &query{
@@ -2841,7 +2950,13 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 
 	// Execute scan and collect results
 	var items []map[string]types.AttributeValue
-	paginator := dynamodb.NewScanPaginator(q.db.session.Client(), input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for scan segment: %w", err)
+	}
+
+	paginator := dynamodb.NewScanPaginator(client, input)
 
 	for paginator.HasMorePages() {
 		output, err := paginator.NextPage(q.ctx)

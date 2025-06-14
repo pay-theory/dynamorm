@@ -237,7 +237,8 @@ func TestSession_Getters(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("Client", func(t *testing.T) {
-		client := sess.Client()
+		client, err := sess.Client()
+		assert.NoError(t, err)
 		assert.NotNil(t, client)
 		assert.IsType(t, &dynamodb.Client{}, client)
 	})
@@ -304,7 +305,9 @@ func TestSessionIntegration(t *testing.T) {
 		assert.NotNil(t, sess)
 
 		// Verify all getters work correctly
-		assert.NotNil(t, sess.Client())
+		client, err := sess.Client()
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
 		assert.Equal(t, cfg, sess.Config())
 		assert.Equal(t, "us-west-2", sess.AWSConfig().Region)
 
@@ -388,7 +391,7 @@ func BenchmarkSessionGetters(b *testing.B) {
 
 	b.Run("Client", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = sess.Client()
+			_, _ = sess.Client()
 		}
 	})
 

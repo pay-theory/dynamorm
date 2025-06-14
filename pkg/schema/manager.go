@@ -101,13 +101,27 @@ func (m *Manager) CreateTable(model any, opts ...TableOption) error {
 
 	// Create table
 	ctx := context.Background()
-	_, err = m.session.Client().CreateTable(ctx, input)
+	client, err := m.session.Client()
 	if err != nil {
+		return fmt.Errorf("failed to get client for table creation: %w", err)
+	}
+
+	_, err = client.CreateTable(ctx, input)
+	if err != nil {
+		// Check if table already exists
+		var existsErr *types.ResourceInUseException
+		if errors.As(err, &existsErr) {
+			// Table already exists, which is fine
+			return nil
+		}
 		return fmt.Errorf("failed to create table %s: %w", metadata.TableName, err)
 	}
 
 	// Wait for table to be active
-	return m.waitForTableActive(metadata.TableName)
+	waiter := dynamodb.NewTableExistsWaiter(client)
+	return waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(metadata.TableName),
+	}, 5*time.Minute)
 }
 
 // buildKeySchema builds the primary key schema
@@ -256,10 +270,15 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 // waitForTableActive waits for a table to become active
 func (m *Manager) waitForTableActive(tableName string) error {
 	ctx := context.Background()
-	waiter := dynamodb.NewTableExistsWaiter(m.session.Client())
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table waiter: %w", err)
+	}
+
+	waiter := dynamodb.NewTableExistsWaiter(client)
 
 	// Wait up to 5 minutes for table to be active
-	err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+	err = waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	}, 5*time.Minute)
 
@@ -273,7 +292,12 @@ func (m *Manager) waitForTableActive(tableName string) error {
 // TableExists checks if a table exists
 func (m *Manager) TableExists(tableName string) (bool, error) {
 	ctx := context.Background()
-	_, err := m.session.Client().DescribeTable(ctx, &dynamodb.DescribeTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return false, fmt.Errorf("failed to get client for table exists check: %w", err)
+	}
+
+	_, err = client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	})
 
@@ -291,7 +315,12 @@ func (m *Manager) TableExists(tableName string) (bool, error) {
 // DeleteTable deletes a DynamoDB table
 func (m *Manager) DeleteTable(tableName string) error {
 	ctx := context.Background()
-	_, err := m.session.Client().DeleteTable(ctx, &dynamodb.DeleteTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table deletion: %w", err)
+	}
+
+	_, err = client.DeleteTable(ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(tableName),
 	})
 
@@ -300,7 +329,7 @@ func (m *Manager) DeleteTable(tableName string) error {
 	}
 
 	// Wait for table to be deleted
-	waiter := dynamodb.NewTableNotExistsWaiter(m.session.Client())
+	waiter := dynamodb.NewTableNotExistsWaiter(client)
 	return waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	}, 5*time.Minute)
@@ -314,7 +343,12 @@ func (m *Manager) DescribeTable(model any) (*types.TableDescription, error) {
 	}
 
 	ctx := context.Background()
-	output, err := m.session.Client().DescribeTable(ctx, &dynamodb.DescribeTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for table description: %w", err)
+	}
+
+	output, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(metadata.TableName),
 	})
 
@@ -412,7 +446,12 @@ func (m *Manager) UpdateTable(model any, opts ...TableOption) error {
 	}
 
 	ctx := context.Background()
-	_, err = m.session.Client().UpdateTable(ctx, input)
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table update: %w", err)
+	}
+
+	_, err = client.UpdateTable(ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to update table %s: %w", metadata.TableName, err)
 	}

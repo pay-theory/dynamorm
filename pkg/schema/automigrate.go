@@ -157,7 +157,12 @@ func (m *Manager) createBackup(ctx context.Context, sourceTable, backupName stri
 		BackupName: &backupName,
 	}
 
-	_, err = m.session.Client().CreateBackup(ctx, backupRequest)
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for backup creation: %w", err)
+	}
+
+	_, err = client.CreateBackup(ctx, backupRequest)
 	if err != nil {
 		// If backup fails, try table copy instead
 		return m.copyTable(ctx, sourceTable, backupName)
@@ -169,7 +174,12 @@ func (m *Manager) createBackup(ctx context.Context, sourceTable, backupName stri
 // copyTable creates a copy of a table
 func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string) error {
 	// Get source table description
-	desc, err := m.session.Client().DescribeTable(ctx, &dynamodb.DescribeTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table description: %w", err)
+	}
+
+	desc, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: &sourceTable,
 	})
 	if err != nil {
@@ -223,13 +233,13 @@ func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string
 		}
 	}
 
-	_, err = m.session.Client().CreateTable(ctx, createInput)
+	_, err = client.CreateTable(ctx, createInput)
 	if err != nil {
 		return fmt.Errorf("failed to create target table: %w", err)
 	}
 
 	// Wait for table to be active
-	waiter := dynamodb.NewTableExistsWaiter(m.session.Client())
+	waiter := dynamodb.NewTableExistsWaiter(client)
 	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: &targetTable,
 	}, 5*time.Minute); err != nil {
@@ -244,6 +254,12 @@ func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string
 func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
 	ctx := opts.Context
 
+	// Get client once for the entire operation
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for data copy: %w", err)
+	}
+
 	// Scan source table
 	var lastEvaluatedKey map[string]types.AttributeValue
 	for {
@@ -255,14 +271,14 @@ func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetad
 			scanInput.ExclusiveStartKey = lastEvaluatedKey
 		}
 
-		result, err := m.session.Client().Scan(ctx, scanInput)
+		result, err := client.Scan(ctx, scanInput)
 		if err != nil {
 			return fmt.Errorf("failed to scan source table: %w", err)
 		}
 
 		// Process items
 		if len(result.Items) > 0 {
-			if err := m.processItems(ctx, result.Items, opts, sourceMetadata, targetMetadata); err != nil {
+			if err := m.processItems(ctx, client, result.Items, opts, sourceMetadata, targetMetadata); err != nil {
 				return fmt.Errorf("failed to process items: %w", err)
 			}
 		}
@@ -278,7 +294,7 @@ func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetad
 }
 
 // processItems processes and writes items to the target table
-func (m *Manager) processItems(ctx context.Context, items []map[string]types.AttributeValue,
+func (m *Manager) processItems(ctx context.Context, client *dynamodb.Client, items []map[string]types.AttributeValue,
 	opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
 
 	// Prepare batch write requests
@@ -325,7 +341,7 @@ func (m *Manager) processItems(ctx context.Context, items []map[string]types.Att
 					},
 				}
 
-				result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
+				result, err := client.BatchWriteItem(ctx, batchInput)
 				if err != nil {
 					return fmt.Errorf("failed to write items to target table: %w", err)
 				}
@@ -384,6 +400,11 @@ func (m *Manager) applyTransform(item map[string]types.AttributeValue, transform
 
 // copyTableData copies all data from source to target table
 func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable string, batchSize int) error {
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table data copy: %w", err)
+	}
+
 	var lastEvaluatedKey map[string]types.AttributeValue
 
 	for {
@@ -396,7 +417,7 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 			scanInput.ExclusiveStartKey = lastEvaluatedKey
 		}
 
-		result, err := m.session.Client().Scan(ctx, scanInput)
+		result, err := client.Scan(ctx, scanInput)
 		if err != nil {
 			return fmt.Errorf("failed to scan source table: %w", err)
 		}
@@ -424,7 +445,7 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 					},
 				}
 
-				result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
+				result, err := client.BatchWriteItem(ctx, batchInput)
 				if err != nil {
 					return fmt.Errorf("failed to write batch: %w", err)
 				}
