@@ -73,7 +73,7 @@ func TestLambdaTimeout(t *testing.T) {
 	// Operations should fail with timeout
 	type TestModel struct {
 		ID   string `dynamorm:"pk"`
-		Data string `dynamorm:"attr"`
+		Data string
 	}
 
 	// First register the model

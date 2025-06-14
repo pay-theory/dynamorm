@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func (tc *TestContext) CreateTable(t *testing.T, model any) {
 	tableName := getTableName(model)
 	tc.TablesCreated = append(tc.TablesCreated, tableName)
 
-	// Wait for table to be ready
+	// Wait for table to be ready with timeout
 	tc.WaitForTable(t, tableName)
 }
 
@@ -123,18 +124,25 @@ func (tc *TestContext) CreateTableIfNotExists(t *testing.T, model any) {
 
 	tableName := getTableName(model)
 
+	// Set timeout for the entire operation
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	// Check if table exists
-	_, err := tc.DynamoDBClient.DescribeTable(context.TODO(), &dynamodb.DescribeTableInput{
+	_, err := tc.DynamoDBClient.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: &tableName,
 	})
 
 	if err != nil {
 		// Table doesn't exist, create it
+		t.Logf("Creating table %s", tableName)
 		tc.CreateTable(t, model)
 	} else {
-		// Table exists, add to cleanup list and clear its data
-		tc.TablesCreated = append(tc.TablesCreated, tableName)
-		tc.ClearTableData(t, tableName)
+		// CRITICAL FIX: Delete and recreate table to ensure schema changes take effect
+		// This is essential for integration tests where model schemas may change
+		t.Logf("Table %s already exists, deleting and recreating to ensure fresh schema", tableName)
+		tc.DeleteTable(t, tableName)
+		tc.CreateTable(t, model)
 	}
 }
 
@@ -250,20 +258,42 @@ func (tc *TestContext) batchDeleteItems(t *testing.T, tableName string, items []
 func (tc *TestContext) WaitForTable(t *testing.T, tableName string) {
 	t.Helper()
 
-	ctx := context.TODO()
-	for i := 0; i < 30; i++ {
+	ctx, cancel := context.WithTimeout(context.TODO(), 30*time.Second)
+	defer cancel()
+
+	// Reduce attempts for faster feedback
+	maxAttempts := 30 // 30 seconds
+
+	for i := 0; i < maxAttempts; i++ {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("Table %s creation timed out after 30 seconds", tableName)
+			return
+		default:
+		}
+
 		resp, err := tc.DynamoDBClient.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 			TableName: &tableName,
 		})
 
 		if err == nil && resp.Table != nil && resp.Table.TableStatus == types.TableStatusActive {
+			t.Logf("Table %s is now active", tableName)
 			return
+		}
+
+		// Log status every 5 seconds for debugging
+		if i > 0 && i%5 == 0 {
+			if resp != nil && resp.Table != nil {
+				t.Logf("Table %s status: %s (attempt %d/%d)", tableName, resp.Table.TableStatus, i+1, maxAttempts)
+			} else if err != nil {
+				t.Logf("Table %s describe error: %v (attempt %d/%d)", tableName, err, i+1, maxAttempts)
+			}
 		}
 
 		time.Sleep(1 * time.Second)
 	}
 
-	t.Fatalf("Table %s did not become active", tableName)
+	t.Fatalf("Table %s did not become active after %d seconds", tableName, maxAttempts)
 }
 
 // DeleteTable deletes a table (alternative cleanup strategy)
@@ -370,24 +400,35 @@ func getTableName(model any) string {
 	case *TestContact, TestContact:
 		return "TestContacts"
 	default:
-		// Fallback: try to extract from type name
-		typeName := fmt.Sprintf("%T", model)
-		// Handle models from models package
-		if strings.Contains(typeName, "models.") {
-			// Extract the base type name
-			parts := strings.Split(typeName, ".")
-			if len(parts) > 1 {
-				baseName := parts[len(parts)-1]
-				// Remove pointer prefix if present
-				baseName = strings.TrimPrefix(baseName, "*")
-				// Return pluralized form
-				if !strings.HasSuffix(baseName, "s") {
-					return baseName + "s"
-				}
-				return baseName
+		// Fallback: Extract base type name from reflect.Type
+		typ := reflect.TypeOf(model)
+		if typ.Kind() == reflect.Ptr {
+			typ = typ.Elem()
+		}
+
+		baseName := typ.Name()
+		if baseName == "" {
+			// Last resort: use full type name and clean it up
+			fullName := typ.String()
+			// Remove package prefix if present
+			if lastDot := strings.LastIndex(fullName, "."); lastDot != -1 {
+				baseName = fullName[lastDot+1:]
+			} else {
+				baseName = fullName
 			}
 		}
-		return typeName + "s"
+
+		// Ensure valid DynamoDB table name
+		baseName = strings.ReplaceAll(baseName, "*", "")
+		baseName = strings.ReplaceAll(baseName, ".", "_")
+		baseName = strings.ReplaceAll(baseName, "/", "_")
+
+		// Add 's' suffix if not present
+		if !strings.HasSuffix(baseName, "s") {
+			baseName += "s"
+		}
+
+		return baseName
 	}
 }
 

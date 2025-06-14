@@ -22,6 +22,7 @@ go.work
 # Build directories
 bin/
 dist/
+build/
 
 # IDE specific files
 .idea/
@@ -30,7 +31,6 @@ dist/
 *.swp
 *.swo
 *~
-.DS_Store
 
 # Environment files
 .env
@@ -75,4 +75,21 @@ Thumbs.db
 .cursor/
 
 # Project specific
-/dynamorm 
+/dynamorm
+/main
+main
+
+# Additional common files
+*.pid
+*.seed
+*.pid.lock
+node_modules/
+.npm
+.nyc_output
+.grunt
+bower_components/
+.lock-wscript
+jspm_packages/
+.serverless/
+.fusebox/
+.dynamodb/ 

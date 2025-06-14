@@ -228,6 +228,11 @@ type Tx struct {
 	db DB
 }
 
+// SetDB sets the database reference for the transaction
+func (tx *Tx) SetDB(db DB) {
+	tx.db = db
+}
+
 // Model returns a new query builder for the given model within the transaction
 func (tx *Tx) Model(model any) Query {
 	return tx.db.Model(model)

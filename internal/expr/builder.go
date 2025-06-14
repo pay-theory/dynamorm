@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -209,6 +210,26 @@ func (b *Builder) AddProjection(fields ...string) {
 
 // AddUpdateSet adds a SET update expression
 func (b *Builder) AddUpdateSet(field string, value any) {
+	// Check if this is a list index operation (e.g., "field[1]")
+	if strings.Contains(field, "[") && strings.Contains(field, "]") {
+		// Parse field[index] syntax
+		parts := strings.Split(field, "[")
+		if len(parts) == 2 {
+			fieldName := parts[0]
+			indexPart := parts[1]
+			if strings.HasSuffix(indexPart, "]") {
+				index := strings.TrimSuffix(indexPart, "]")
+				// Create placeholder for field name but keep index as-is
+				nameRef := b.addNameSecure(fieldName)
+				valueRef := b.addValueSecure(value)
+				expr := fmt.Sprintf("%s[%s] = %s", nameRef, index, valueRef)
+				b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
+				return
+			}
+		}
+	}
+
+	// Standard field set
 	nameRef := b.addNameSecure(field)
 	valueRef := b.addValueSecure(value)
 	expr := fmt.Sprintf("%s = %s", nameRef, valueRef)
@@ -225,6 +246,25 @@ func (b *Builder) AddUpdateAdd(field string, value any) {
 
 // AddUpdateRemove adds a REMOVE update expression
 func (b *Builder) AddUpdateRemove(field string) {
+	// Check if this is a list index operation (e.g., "field[1]")
+	if strings.Contains(field, "[") && strings.Contains(field, "]") {
+		// Parse field[index] syntax
+		parts := strings.Split(field, "[")
+		if len(parts) == 2 {
+			fieldName := parts[0]
+			indexPart := parts[1]
+			if strings.HasSuffix(indexPart, "]") {
+				index := strings.TrimSuffix(indexPart, "]")
+				// Create placeholder for field name but keep index as-is
+				nameRef := b.addNameSecure(fieldName)
+				expression := fmt.Sprintf("%s[%s]", nameRef, index)
+				b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], expression)
+				return
+			}
+		}
+	}
+
+	// Standard field removal
 	nameRef := b.addNameSecure(field)
 	b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], nameRef)
 }
@@ -232,7 +272,7 @@ func (b *Builder) AddUpdateRemove(field string) {
 // AddUpdateDelete adds a DELETE update expression (for removing elements from a set)
 func (b *Builder) AddUpdateDelete(field string, value any) {
 	nameRef := b.addNameSecure(field)
-	valueRef := b.addValueSecure(value)
+	valueRef := b.addValueAsSet(value)
 	expr := fmt.Sprintf("%s %s", nameRef, valueRef)
 	b.updateExpressions["DELETE"] = append(b.updateExpressions["DELETE"], expr)
 }
@@ -626,4 +666,122 @@ func (b *Builder) AddUpdateFunction(field string, function string, args ...any) 
 	default:
 		return fmt.Errorf("unsupported update function: %s", function)
 	}
+}
+
+// addValueAsSet adds an attribute value specifically as a DynamoDB set
+func (b *Builder) addValueAsSet(value any) string {
+	// Security validation
+	if err := validation.ValidateValue(value); err != nil {
+		log.Printf("🔒 SECURITY: Rejecting invalid value: %s", err.Error())
+		// Return a safe placeholder for invalid values
+		b.valueCounter++
+		placeholder := fmt.Sprintf(":invalid%d", b.valueCounter)
+		b.values[placeholder] = &types.AttributeValueMemberNULL{Value: true}
+		return placeholder
+	}
+
+	b.valueCounter++
+	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
+
+	// Convert value to a DynamoDB set type
+	av, err := b.convertToSetAttributeValue(value)
+	if err != nil {
+		log.Printf("🔒 SECURITY: Failed to convert value to set safely: %s", err.Error())
+		// Store as NULL for safety
+		av = &types.AttributeValueMemberNULL{Value: true}
+	}
+
+	b.values[placeholder] = av
+	return placeholder
+}
+
+// convertToSetAttributeValue converts a value to a DynamoDB set AttributeValue
+func (b *Builder) convertToSetAttributeValue(value any) (types.AttributeValue, error) {
+	// First validate the value
+	if err := validation.ValidateValue(value); err != nil {
+		return nil, fmt.Errorf("security validation failed: %w", err)
+	}
+
+	// Handle direct string slice case first
+	if strSlice, ok := value.([]string); ok {
+		if len(strSlice) == 0 {
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		}
+		return &types.AttributeValueMemberSS{Value: strSlice}, nil
+	}
+
+	// Handle direct []any case
+	if anySlice, ok := value.([]any); ok {
+		if len(anySlice) == 0 {
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		}
+		// Convert []any to appropriate set type based on first element
+		if len(anySlice) > 0 {
+			switch anySlice[0].(type) {
+			case string:
+				strSet := make([]string, len(anySlice))
+				for i, v := range anySlice {
+					if s, ok := v.(string); ok {
+						strSet[i] = s
+					} else {
+						return nil, fmt.Errorf("mixed types in string set")
+					}
+				}
+				return &types.AttributeValueMemberSS{Value: strSet}, nil
+			}
+		}
+	}
+
+	// Fallback to reflection for other types
+	v := reflect.ValueOf(value)
+	if v.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("DELETE operation requires a slice value for sets, got %s", v.Kind())
+	}
+
+	if v.Len() == 0 {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
+	}
+
+	elemType := v.Type().Elem()
+
+	switch elemType.Kind() {
+	case reflect.String:
+		set := make([]string, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			set[i] = v.Index(i).String()
+		}
+		return &types.AttributeValueMemberSS{Value: set}, nil
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		set := make([]string, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			av, err := ConvertToAttributeValue(v.Index(i).Interface())
+			if err != nil {
+				return nil, err
+			}
+			if n, ok := av.(*types.AttributeValueMemberN); ok {
+				set[i] = n.Value
+			} else {
+				return nil, fmt.Errorf("expected number type for number set")
+			}
+		}
+		return &types.AttributeValueMemberNS{Value: set}, nil
+
+	case reflect.Slice:
+		if elemType.Elem().Kind() == reflect.Uint8 {
+			// [][]byte
+			set := make([][]byte, v.Len())
+			for i := 0; i < v.Len(); i++ {
+				set[i] = v.Index(i).Bytes()
+			}
+			return &types.AttributeValueMemberBS{Value: set}, nil
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported set element type: %s", elemType)
+	}
+
+	return nil, fmt.Errorf("unsupported set type")
 }

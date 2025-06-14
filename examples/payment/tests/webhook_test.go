@@ -249,11 +249,14 @@ func TestJWTValidation(t *testing.T) {
 				if tt.errorMsg != "" {
 					assert.Contains(t, err.Error(), tt.errorMsg)
 				}
+				assert.Nil(t, claims)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, claims)
-				assert.Equal(t, "merchant-123", claims.MerchantID)
-				assert.Equal(t, "test@example.com", claims.Email)
+				if claims != nil {
+					assert.Equal(t, "merchant-123", claims.MerchantID)
+					assert.Equal(t, "test@example.com", claims.Email)
+				}
 			}
 		})
 	}

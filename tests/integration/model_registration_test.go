@@ -45,6 +45,16 @@ func TestModelWithContext(t *testing.T) {
 	t.Run("ModelRegistrationWithContext", func(t *testing.T) {
 		ctx := context.Background()
 
+		// Clean up any existing data first
+		var existing []ModelRegTest
+		_ = testCtx.DB.Model(&ModelRegTest{}).All(&existing)
+		for _, item := range existing {
+			_ = testCtx.DB.Model(&ModelRegTest{}).
+				Where("ID", "=", item.ID).
+				Where("Name", "=", item.Name).
+				Delete()
+		}
+
 		// Create a record using WithContext
 		model := &ModelRegTest{
 			ID:   "test-1",

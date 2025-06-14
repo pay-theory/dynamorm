@@ -1377,3 +1377,21 @@ func (q *Query) OrFilterGroup(fn func(core.Query)) core.Query {
 	q.builder.AddGroupFilter("OR", components)
 	return q
 }
+
+// UpdateBuilder returns a builder for complex update operations
+func (q *Query) UpdateBuilder() core.UpdateBuilder {
+	return NewUpdateBuilder(q)
+}
+
+// NewWithConditions creates a new Query instance with all necessary fields
+func NewWithConditions(model any, metadata core.ModelMetadata, executor QueryExecutor, conditions []Condition, ctx context.Context) *Query {
+	return &Query{
+		model:      model,
+		metadata:   metadata,
+		executor:   executor,
+		conditions: conditions,
+		ctx:        ctx,
+		filters:    make([]Filter, 0),
+		builder:    expr.NewBuilder(),
+	}
+}

@@ -5,8 +5,8 @@ import "time"
 // TestUser is a test model for user data
 type TestUser struct {
 	ID        string    `dynamorm:"pk"`
-	Email     string    `dynamorm:"index:gsi-email"`
-	CreatedAt time.Time `dynamorm:"sk"`
+	Email     string    `dynamorm:"sk,index:gsi-email,pk"`
+	CreatedAt time.Time `dynamorm:"index:gsi-email,sk"`
 	Age       int       `dynamorm:""`
 	Status    string    `dynamorm:""`
 	Tags      []string  `dynamorm:""`
@@ -16,7 +16,7 @@ type TestUser struct {
 // TestProduct is a test model for product data
 type TestProduct struct {
 	SKU         string    `dynamorm:"pk"`
-	Category    string    `dynamorm:"index:gsi-category,pk"`
+	Category    string    `dynamorm:"sk,index:gsi-category,pk"`
 	Price       float64   `dynamorm:"index:gsi-category,sk"`
 	Name        string    `dynamorm:""`
 	Description string    `dynamorm:""`

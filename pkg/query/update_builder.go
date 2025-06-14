@@ -25,8 +25,8 @@ type updateCondition struct {
 	value    any
 }
 
-// NewUpdateBuilder creates a new update builder for the query
-func (q *Query) UpdateBuilder() core.UpdateBuilder {
+// NewUpdateBuilder creates a new UpdateBuilder with the given query
+func NewUpdateBuilder(q *Query) core.UpdateBuilder {
 	return &UpdateBuilder{
 		query:        q,
 		expr:         expr.NewBuilder(),
@@ -35,27 +35,41 @@ func (q *Query) UpdateBuilder() core.UpdateBuilder {
 	}
 }
 
+// mapFieldToDynamoDBName maps a Go field name to its DynamoDB attribute name
+func (ub *UpdateBuilder) mapFieldToDynamoDBName(field string) string {
+	if ub.query.metadata != nil {
+		if fieldMeta := ub.query.metadata.AttributeMetadata(field); fieldMeta != nil {
+			return fieldMeta.DynamoDBName
+		}
+	}
+	return field
+}
+
 // Set adds a SET expression to update a field
 func (ub *UpdateBuilder) Set(field string, value any) core.UpdateBuilder {
-	ub.expr.AddUpdateSet(field, value)
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+	ub.expr.AddUpdateSet(dbFieldName, value)
 	return ub
 }
 
 // SetIfNotExists sets a field only if it doesn't exist
 func (ub *UpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
-	// Use if_not_exists function
-	err := ub.expr.AddUpdateFunction(field, "if_not_exists", field, defaultValue)
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+	// DynamoDB if_not_exists function syntax: SET field = if_not_exists(field, default_value)
+	// The 'value' parameter is ignored as DynamoDB if_not_exists only checks existence, not value comparison
+	err := ub.expr.AddUpdateFunction(dbFieldName, "if_not_exists", dbFieldName, defaultValue)
 	if err != nil {
-		// Log error in production
-		// For now, fall back to regular set
-		ub.expr.AddUpdateSet(field, defaultValue)
+		// Log error in production, for now fall back to regular set
+		// TODO: Add proper error handling
+		ub.expr.AddUpdateSet(dbFieldName, defaultValue)
 	}
 	return ub
 }
 
 // Add increments a numeric field (atomic counter)
 func (ub *UpdateBuilder) Add(field string, value any) core.UpdateBuilder {
-	ub.expr.AddUpdateAdd(field, value)
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+	ub.expr.AddUpdateAdd(dbFieldName, value)
 	return ub
 }
 
@@ -71,59 +85,90 @@ func (ub *UpdateBuilder) Decrement(field string) core.UpdateBuilder {
 
 // Remove removes an attribute from the item
 func (ub *UpdateBuilder) Remove(field string) core.UpdateBuilder {
-	ub.expr.AddUpdateRemove(field)
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+	ub.expr.AddUpdateRemove(dbFieldName)
 	return ub
 }
 
 // Delete removes elements from a set
 func (ub *UpdateBuilder) Delete(field string, value any) core.UpdateBuilder {
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+
 	// DynamoDB DELETE action is for removing elements from a set
-	ub.expr.AddUpdateDelete(field, value)
+	// Ensure the value is properly formatted as a set
+	var setValue any
+
+	// Convert single values to slices for set operations
+	switch v := value.(type) {
+	case string:
+		setValue = []string{v}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		setValue = []any{v}
+	case []byte:
+		setValue = [][]byte{v}
+	case []string, []int, []float64, [][]byte:
+		setValue = v
+	default:
+		// For other types, try to convert to a slice if it's not already
+		rv := reflect.ValueOf(value)
+		if rv.Kind() == reflect.Slice {
+			setValue = value
+		} else {
+			// Wrap single value in a slice
+			setValue = []any{value}
+		}
+	}
+
+	ub.expr.AddUpdateDelete(dbFieldName, setValue)
 	return ub
 }
 
 // AppendToList appends values to the end of a list
 func (ub *UpdateBuilder) AppendToList(field string, values any) core.UpdateBuilder {
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
 	// Use list_append function to append values
 	// list_append(field, values) appends to the end
-	err := ub.expr.AddUpdateFunction(field, "list_append", field, values)
+	err := ub.expr.AddUpdateFunction(dbFieldName, "list_append", dbFieldName, values)
 	if err != nil {
 		// Log error in production
 		// Fall back to regular set (not ideal but better than failing)
-		ub.expr.AddUpdateSet(field, values)
+		ub.expr.AddUpdateSet(dbFieldName, values)
 	}
 	return ub
 }
 
 // PrependToList prepends values to the beginning of a list
 func (ub *UpdateBuilder) PrependToList(field string, values any) core.UpdateBuilder {
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
 	// Use list_append function to prepend values
 	// list_append(values, field) prepends to the beginning
-	err := ub.expr.AddUpdateFunction(field, "list_append", values, field)
+	err := ub.expr.AddUpdateFunction(dbFieldName, "list_append", values, dbFieldName)
 	if err != nil {
 		// Log error in production
 		// Fall back to regular set (not ideal but better than failing)
-		ub.expr.AddUpdateSet(field, values)
+		ub.expr.AddUpdateSet(dbFieldName, values)
 	}
 	return ub
 }
 
 // RemoveFromListAt removes an element from a list at a specific index
 func (ub *UpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder {
-	ub.expr.AddUpdateRemove(fmt.Sprintf("%s[%d]", field, index))
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+	ub.expr.AddUpdateRemove(fmt.Sprintf("%s[%d]", dbFieldName, index))
 	return ub
 }
 
 // SetListElement sets a specific element in a list
 func (ub *UpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
-	ub.expr.AddUpdateSet(fmt.Sprintf("%s[%d]", field, index), value)
+	dbFieldName := ub.mapFieldToDynamoDBName(field)
+	ub.expr.AddUpdateSet(fmt.Sprintf("%s[%d]", dbFieldName, index), value)
 	return ub
 }
 
 // Condition adds a condition that must be met for the update to succeed
 func (ub *UpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
 	ub.conditions = append(ub.conditions, updateCondition{
-		field:    field,
+		field:    field, // Keep original field name here, mapping happens in Execute()
 		operator: operator,
 		value:    value,
 	})
@@ -149,7 +194,7 @@ func (ub *UpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder {
 
 // ConditionVersion adds optimistic locking based on version field
 func (ub *UpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder {
-	return ub.Condition("version", "=", currentVersion)
+	return ub.Condition("Version", "=", currentVersion)
 }
 
 // ReturnValues sets what values to return after the update
@@ -161,6 +206,14 @@ func (ub *UpdateBuilder) ReturnValues(option string) core.UpdateBuilder {
 
 // Execute performs the update operation
 func (ub *UpdateBuilder) Execute() error {
+	// Check if query or metadata is nil
+	if ub.query == nil {
+		return fmt.Errorf("query is nil")
+	}
+	if ub.query.metadata == nil {
+		return fmt.Errorf("query metadata is nil")
+	}
+
 	// Validate we have key conditions
 	primaryKey := ub.query.metadata.PrimaryKey()
 
@@ -205,7 +258,13 @@ func (ub *UpdateBuilder) Execute() error {
 
 	// Add conditions to expression builder
 	for _, cond := range ub.conditions {
-		err := ub.expr.AddConditionExpression(cond.field, cond.operator, cond.value)
+		// Map field name to DynamoDB attribute name
+		fieldName := cond.field
+		if fieldMeta := ub.query.metadata.AttributeMetadata(cond.field); fieldMeta != nil {
+			fieldName = fieldMeta.DynamoDBName
+		}
+
+		err := ub.expr.AddConditionExpression(fieldName, cond.operator, cond.value)
 		if err != nil {
 			return fmt.Errorf("failed to add condition: %w", err)
 		}
@@ -216,13 +275,17 @@ func (ub *UpdateBuilder) Execute() error {
 
 	// Compile the update query
 	compiled := &core.CompiledQuery{
-		Operation:                 "UpdateItem",
-		TableName:                 ub.query.metadata.TableName(),
-		UpdateExpression:          components.UpdateExpression,
-		ConditionExpression:       components.ConditionExpression,
-		ExpressionAttributeNames:  components.ExpressionAttributeNames,
-		ExpressionAttributeValues: components.ExpressionAttributeValues,
-		ReturnValues:              ub.returnValues,
+		Operation:                "UpdateItem",
+		TableName:                ub.query.metadata.TableName(),
+		UpdateExpression:         components.UpdateExpression,
+		ConditionExpression:      components.ConditionExpression,
+		ExpressionAttributeNames: components.ExpressionAttributeNames,
+		ReturnValues:             ub.returnValues,
+	}
+
+	// Only include ExpressionAttributeValues if it's not empty
+	if len(components.ExpressionAttributeValues) > 0 {
+		compiled.ExpressionAttributeValues = components.ExpressionAttributeValues
 	}
 
 	// Convert key to AttributeValues
@@ -282,7 +345,13 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 
 	// Add conditions to expression builder
 	for _, cond := range ub.conditions {
-		err := ub.expr.AddConditionExpression(cond.field, cond.operator, cond.value)
+		// Map field name to DynamoDB attribute name
+		fieldName := cond.field
+		if fieldMeta := ub.query.metadata.AttributeMetadata(cond.field); fieldMeta != nil {
+			fieldName = fieldMeta.DynamoDBName
+		}
+
+		err := ub.expr.AddConditionExpression(fieldName, cond.operator, cond.value)
 		if err != nil {
 			return fmt.Errorf("failed to add condition: %w", err)
 		}
@@ -293,13 +362,17 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 
 	// Compile the update query
 	compiled := &core.CompiledQuery{
-		Operation:                 "UpdateItem",
-		TableName:                 ub.query.metadata.TableName(),
-		UpdateExpression:          components.UpdateExpression,
-		ConditionExpression:       components.ConditionExpression,
-		ExpressionAttributeNames:  components.ExpressionAttributeNames,
-		ExpressionAttributeValues: components.ExpressionAttributeValues,
-		ReturnValues:              ub.returnValues,
+		Operation:                "UpdateItem",
+		TableName:                ub.query.metadata.TableName(),
+		UpdateExpression:         components.UpdateExpression,
+		ConditionExpression:      components.ConditionExpression,
+		ExpressionAttributeNames: components.ExpressionAttributeNames,
+		ReturnValues:             ub.returnValues,
+	}
+
+	// Only include ExpressionAttributeValues if it's not empty
+	if len(components.ExpressionAttributeValues) > 0 {
+		compiled.ExpressionAttributeValues = components.ExpressionAttributeValues
 	}
 
 	// Convert key to AttributeValues

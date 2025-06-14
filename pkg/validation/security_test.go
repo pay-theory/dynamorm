@@ -42,20 +42,24 @@ func TestFieldNameValidation(t *testing.T) {
 	})
 
 	t.Run("RejectSQLInjectionPatterns", func(t *testing.T) {
-		dangerousNames := []string{
-			"field'; DROP TABLE users; --",
-			"field\"; DELETE FROM table; --",
-			"field/*comment*/",
-			"field UNION SELECT",
-			"field<script>alert('xss')</script>",
-			"field'OR'1'='1",
+		testCases := []struct {
+			name            string
+			fieldName       string
+			expectedMessage string
+		}{
+			{"field with quotes and SQL", "field'; DROP TABLE users; --", "dangerous pattern"},
+			{"field with quotes and DELETE", "field\"; DELETE FROM table; --", "dangerous pattern"},
+			{"field with comment", "field/*comment*/", "dangerous pattern"},
+			{"field with UNION keyword", "field UNION SELECT", "suspicious SQL keyword"},
+			{"field with script tag", "field<script>alert('xss')</script>", "dangerous pattern"},
+			{"field with SQL injection", "field'OR'1'='1", "dangerous pattern"},
 		}
 
-		for _, name := range dangerousNames {
-			t.Run(name, func(t *testing.T) {
-				err := ValidateFieldName(name)
-				assert.Error(t, err, "Should reject dangerous field name: %s", name)
-				assert.Contains(t, err.Error(), "dangerous pattern")
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := ValidateFieldName(tc.fieldName)
+				assert.Error(t, err, "Should reject dangerous field name: %s", tc.fieldName)
+				assert.Contains(t, err.Error(), tc.expectedMessage)
 			})
 		}
 	})
@@ -148,18 +152,22 @@ func TestOperatorValidation(t *testing.T) {
 	})
 
 	t.Run("RejectInjectionPatterns", func(t *testing.T) {
-		injectionOps := []string{
-			"'; DROP TABLE; --",
-			"UNION SELECT",
-			"/*comment*/",
-			"<script>",
+		testCases := []struct {
+			name            string
+			operator        string
+			expectedMessage string
+		}{
+			{"SQL injection with quotes", "'; DROP TABLE; --", "is not allowed"},
+			{"UNION SELECT operator", "UNION SELECT", "is not allowed"},
+			{"comment operator", "/*comment*/", "is not allowed"},
+			{"script tag operator", "<script>", "is not allowed"},
 		}
 
-		for _, op := range injectionOps {
-			t.Run(op, func(t *testing.T) {
-				err := ValidateOperator(op)
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := ValidateOperator(tc.operator)
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "dangerous pattern")
+				assert.Contains(t, err.Error(), tc.expectedMessage)
 			})
 		}
 	})
@@ -392,17 +400,21 @@ func TestTableNameValidation(t *testing.T) {
 	})
 
 	t.Run("RejectDangerousPatterns", func(t *testing.T) {
-		dangerousNames := []string{
-			"users'; DROP TABLE",
-			"table--comment",
-			"table/*comment*/",
+		testCases := []struct {
+			name            string
+			tableName       string
+			expectedMessage string
+		}{
+			{"table with SQL injection", "users'; DROP TABLE", "can only contain"},
+			{"table with comment", "table--comment", "dangerous pattern"},
+			{"table with block comment", "table/*comment*/", "can only contain"},
 		}
 
-		for _, name := range dangerousNames {
-			t.Run(name, func(t *testing.T) {
-				err := ValidateTableName(name)
-				assert.Error(t, err, "Should reject dangerous table name: %s", name)
-				assert.Contains(t, err.Error(), "dangerous pattern")
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := ValidateTableName(tc.tableName)
+				assert.Error(t, err, "Should reject dangerous table name: %s", tc.tableName)
+				assert.Contains(t, err.Error(), tc.expectedMessage)
 			})
 		}
 	})

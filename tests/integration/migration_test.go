@@ -244,7 +244,7 @@ func TestAutoMigrate(t *testing.T) {
 
 			// Add tags based on category
 			var tags []types.AttributeValue
-			if categoryAttr, exists := source["category"]; exists {
+			if categoryAttr, exists := source["Category"]; exists {
 				if categoryStr, ok := categoryAttr.(*types.AttributeValueMemberS); ok {
 					switch categoryStr.Value {
 					case "electronics":
@@ -334,7 +334,6 @@ func TestMigrationWithBackup(t *testing.T) {
 
 	tests.RequireDynamoDBLocal(t)
 
-	// Create DB with TestContext
 	testCtx := InitTestDB(t)
 
 	t.Run("MigrationWithBackup", func(t *testing.T) {

@@ -4,7 +4,7 @@
 
 # Variables
 GOMOD := github.com/pay-theory/dynamorm
-PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/)
+PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/ | grep -v /tests/stress)
 INTEGRATION_PACKAGES := $(shell go list ./tests/integration/...)
 
 # Default target

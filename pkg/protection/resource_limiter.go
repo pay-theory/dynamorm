@@ -107,8 +107,10 @@ type MemoryMonitor struct {
 	alertCallback func(MemoryAlert)
 	stopChan      chan struct{}
 	stats         *ResourceStats
-	running       bool
-	mu            sync.Mutex
+	running       int32          // Use int32 for atomic operations (0 = stopped, 1 = running)
+	mu            sync.RWMutex   // For callback access only
+	stopOnce      sync.Once      // Ensure stopChan is only closed once
+	wg            sync.WaitGroup // Wait for monitor goroutine to exit
 }
 
 // MemoryAlert represents a memory usage alert
@@ -123,10 +125,16 @@ type MemoryAlert struct {
 
 // NewResourceProtector creates a new resource protector
 func NewResourceProtector(config ResourceLimits) *ResourceProtector {
+	// Calculate burst size with minimum of 1
+	batchBurstSize := int(config.BatchRateLimit / 10)
+	if batchBurstSize < 1 {
+		batchBurstSize = 1
+	}
+
 	rp := &ResourceProtector{
 		config:           config,
 		globalLimiter:    NewSimpleLimiter(config.RequestsPerSecond, config.BurstSize),
-		batchLimiter:     NewSimpleLimiter(config.BatchRateLimit, int(config.BatchRateLimit/10)),
+		batchLimiter:     NewSimpleLimiter(config.BatchRateLimit, batchBurstSize),
 		requestSemaphore: make(chan struct{}, config.MaxConcurrentReq),
 		batchSemaphore:   make(chan struct{}, config.MaxConcurrentBatch),
 		stats:            &ResourceStats{LastStatsUpdate: time.Now()},
@@ -275,7 +283,9 @@ func (bl *BatchLimiter) ReleaseBatch() {
 
 // StartMemoryMonitoring starts memory monitoring
 func (rp *ResourceProtector) StartMemoryMonitoring(alertCallback func(MemoryAlert)) {
+	rp.memoryMonitor.mu.Lock()
 	rp.memoryMonitor.alertCallback = alertCallback
+	rp.memoryMonitor.mu.Unlock()
 	rp.memoryMonitor.Start()
 }
 
@@ -289,11 +299,19 @@ func (mm *MemoryMonitor) Start() {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
 
-	if mm.running {
+	if atomic.LoadInt32(&mm.running) == 1 {
 		return
 	}
 
-	mm.running = true
+	// Wait for any previous monitor goroutine to exit
+	mm.wg.Wait()
+
+	// Recreate channel and reset sync.Once for restart capability
+	mm.stopChan = make(chan struct{})
+	mm.stopOnce = sync.Once{}
+
+	atomic.StoreInt32(&mm.running, 1)
+	mm.wg.Add(1)
 	go mm.monitorLoop()
 }
 
@@ -302,22 +320,33 @@ func (mm *MemoryMonitor) Stop() {
 	mm.mu.Lock()
 	defer mm.mu.Unlock()
 
-	if !mm.running {
+	if atomic.LoadInt32(&mm.running) == 0 {
 		return
 	}
 
-	mm.running = false
-	close(mm.stopChan)
+	atomic.StoreInt32(&mm.running, 0)
+
+	// Use sync.Once to ensure channel is only closed once
+	mm.stopOnce.Do(func() {
+		close(mm.stopChan)
+	})
 }
 
 // monitorLoop runs the memory monitoring loop
 func (mm *MemoryMonitor) monitorLoop() {
+	defer mm.wg.Done() // Signal completion when exiting
+
 	ticker := time.NewTicker(mm.limits.MemoryCheckInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
+			// Check if still running before processing
+			if atomic.LoadInt32(&mm.running) == 0 {
+				return
+			}
+
 			mm.checkMemory()
 		case <-mm.stopChan:
 			return
@@ -331,9 +360,11 @@ func (mm *MemoryMonitor) checkMemory() {
 	runtime.ReadMemStats(&memStats)
 
 	currentMB := int64(memStats.Alloc / 1024 / 1024)
+
+	// Store current memory with atomic operation (stats fields are accessed atomically elsewhere)
 	atomic.StoreInt64(&mm.stats.CurrentMemoryMB, currentMB)
 
-	// Update peak memory
+	// Update peak memory with atomic compare-and-swap
 	for {
 		peak := atomic.LoadInt64(&mm.stats.PeakMemoryMB)
 		if currentMB <= peak || atomic.CompareAndSwapInt64(&mm.stats.PeakMemoryMB, peak, currentMB) {
@@ -356,8 +387,13 @@ func (mm *MemoryMonitor) checkMemory() {
 			Severity:     mm.determineSeverity(usagePercent),
 		}
 
-		if mm.alertCallback != nil {
-			mm.alertCallback(alert)
+		// Safely access the callback with read lock
+		mm.mu.RLock()
+		callback := mm.alertCallback
+		mm.mu.RUnlock()
+
+		if callback != nil {
+			callback(alert)
 		}
 
 		// Force garbage collection if memory usage is very high
@@ -386,8 +422,23 @@ func (rp *ResourceProtector) GetStats() ResourceStats {
 	rp.mu.RLock()
 	defer rp.mu.RUnlock()
 
-	stats := *rp.stats
-	stats.LastStatsUpdate = time.Now()
+	// Use atomic operations for fields that are updated atomically
+	stats := ResourceStats{
+		TotalRequests:      atomic.LoadInt64(&rp.stats.TotalRequests),
+		RejectedRequests:   atomic.LoadInt64(&rp.stats.RejectedRequests),
+		ConcurrentRequests: atomic.LoadInt64(&rp.stats.ConcurrentRequests),
+		MaxConcurrentReq:   atomic.LoadInt64(&rp.stats.MaxConcurrentReq),
+		TotalBatchOps:      atomic.LoadInt64(&rp.stats.TotalBatchOps),
+		RejectedBatchOps:   atomic.LoadInt64(&rp.stats.RejectedBatchOps),
+		ConcurrentBatchOps: atomic.LoadInt64(&rp.stats.ConcurrentBatchOps),
+		MaxConcurrentBatch: atomic.LoadInt64(&rp.stats.MaxConcurrentBatch),
+		CurrentMemoryMB:    atomic.LoadInt64(&rp.stats.CurrentMemoryMB),
+		PeakMemoryMB:       atomic.LoadInt64(&rp.stats.PeakMemoryMB),
+		MemoryAlerts:       atomic.LoadInt64(&rp.stats.MemoryAlerts),
+		RateLimitHits:      atomic.LoadInt64(&rp.stats.RateLimitHits),
+		LastStatsUpdate:    time.Now(),
+	}
+
 	return stats
 }
 

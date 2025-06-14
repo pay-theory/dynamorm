@@ -63,12 +63,13 @@ type NotificationProvider interface {
 
 // NotificationService handles sending notifications
 type NotificationService struct {
-	providers []NotificationProvider
-	queue     chan *Notification
-	workers   int
-	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
+	providers   []NotificationProvider
+	providersMu sync.RWMutex // Add mutex for providers slice
+	queue       chan *Notification
+	workers     int
+	wg          sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewNotificationService creates a new notification service
@@ -95,6 +96,8 @@ func NewNotificationService(workers int) *NotificationService {
 
 // RegisterProvider registers a notification provider
 func (s *NotificationService) RegisterProvider(provider NotificationProvider) {
+	s.providersMu.Lock()
+	defer s.providersMu.Unlock()
 	s.providers = append(s.providers, provider)
 	log.Printf("Registered notification provider: %s", provider.Name())
 }
@@ -163,6 +166,8 @@ func (s *NotificationService) Send(notification *Notification) error {
 
 // SendSync sends a notification synchronously
 func (s *NotificationService) SendSync(ctx context.Context, notification *Notification) error {
+	s.providersMu.RLock()
+	defer s.providersMu.RUnlock()
 	for _, provider := range s.providers {
 		if provider.CanHandle(notification) {
 			if err := provider.Send(ctx, notification); err != nil {

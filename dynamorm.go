@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
@@ -109,6 +109,8 @@ func (db *DB) Transaction(fn func(tx *core.Tx) error) error {
 	// For now, we'll use a simple wrapper that doesn't support full transaction features
 	// Users should use TransactionFunc for full transaction support
 	tx := &core.Tx{}
+	// Set the db field to avoid nil pointer panic
+	tx.SetDB(db)
 	return fn(tx)
 }
 
@@ -548,7 +550,12 @@ func (q *query) All(dest any) error {
 		}
 
 		if fieldMeta.IsPK || (q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata)) {
-			if cond.op == "=" || cond.op == "BEGINS_WITH" {
+			// DynamoDB supports these operators for key conditions:
+			// Partition key: = (equality only)
+			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
+			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
+				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
+				cond.op == "BETWEEN" {
 				keyConditions = append(keyConditions, cond)
 				useQuery = true
 			} else {
@@ -597,7 +604,12 @@ func (q *query) Count() (int64, error) {
 		}
 
 		if fieldMeta.IsPK || (q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata)) {
-			if cond.op == "=" || cond.op == "BEGINS_WITH" {
+			// DynamoDB supports these operators for key conditions:
+			// Partition key: = (equality only)
+			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
+			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
+				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
+				cond.op == "BETWEEN" {
 				keyConditions = append(keyConditions, cond)
 				useQuery = true
 			} else {
@@ -1568,9 +1580,13 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 
 // executeScan performs a DynamoDB Scan operation
 func (q *query) executeScan(metadata *model.Metadata, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
-	builder := expr.NewBuilder()
+	// Use the existing builder from the query to preserve Filter() conditions
+	builder := q.builder
+	if builder == nil {
+		builder = expr.NewBuilder()
+	}
 
-	// Add filter conditions
+	// Add filter conditions from parameters (these come from Where() conditions)
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
@@ -1766,9 +1782,13 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 
 // executeScanCount performs a DynamoDB Scan operation to count items
 func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []condition) (int64, error) {
-	builder := expr.NewBuilder()
+	// Use the existing builder from the query to preserve Filter() conditions
+	builder := q.builder
+	if builder == nil {
+		builder = expr.NewBuilder()
+	}
 
-	// Add filter conditions
+	// Add filter conditions from parameters (these come from Where() conditions)
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
 		if exists {
@@ -2318,474 +2338,55 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 // UpdateBuilder returns a builder for complex update operations
 func (q *query) UpdateBuilder() core.UpdateBuilder {
-	// Create a local update builder to avoid circular dependency
-	return &updateBuilder{
-		query:        q,
-		updates:      make(map[string]any),
-		conditions:   make([]updateCondition, 0),
-		returnValues: "NONE",
-	}
-}
-
-// updateBuilder provides a fluent API for building update operations
-type updateBuilder struct {
-	query        *query
-	updates      map[string]any
-	conditions   []updateCondition
-	returnValues string
-}
-
-type updateCondition struct {
-	field     string
-	operator  string
-	value     any
-	logicalOp string // "AND" or "OR"
-}
-
-func (ub *updateBuilder) Set(field string, value any) core.UpdateBuilder {
-	ub.updates[field] = value
-	return ub
-}
-
-func (ub *updateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
-	// Store with special marker for SetIfNotExists operation
-	ub.updates["SETIFNOTEXISTS:"+field] = defaultValue
-	return ub
-}
-
-func (ub *updateBuilder) Add(field string, value any) core.UpdateBuilder {
-	// Store with special marker for ADD operation
-	ub.updates["ADD:"+field] = value
-	return ub
-}
-
-func (ub *updateBuilder) Increment(field string) core.UpdateBuilder {
-	return ub.Add(field, 1)
-}
-
-func (ub *updateBuilder) Decrement(field string) core.UpdateBuilder {
-	return ub.Add(field, -1)
-}
-
-func (ub *updateBuilder) Remove(field string) core.UpdateBuilder {
-	// Store with special marker for REMOVE operation
-	ub.updates["REMOVE:"+field] = true
-	return ub
-}
-
-func (ub *updateBuilder) Delete(field string, value any) core.UpdateBuilder {
-	// Store with special marker for DELETE operation
-	ub.updates["DELETE:"+field] = value
-	return ub
-}
-
-func (ub *updateBuilder) AppendToList(field string, values any) core.UpdateBuilder {
-	ub.updates["APPEND:"+field] = values
-	return ub
-}
-
-func (ub *updateBuilder) PrependToList(field string, values any) core.UpdateBuilder {
-	ub.updates["PREPEND:"+field] = values
-	return ub
-}
-
-func (ub *updateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder {
-	ub.updates[fmt.Sprintf("REMOVE:%s[%d]", field, index)] = true
-	return ub
-}
-
-func (ub *updateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
-	ub.updates[fmt.Sprintf("%s[%d]", field, index)] = value
-	return ub
-}
-
-func (ub *updateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
-	ub.conditions = append(ub.conditions, updateCondition{
-		field:     field,
-		operator:  operator,
-		value:     value,
-		logicalOp: "AND",
-	})
-	return ub
-}
-
-func (ub *updateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
-	ub.conditions = append(ub.conditions, updateCondition{
-		field:     field,
-		operator:  operator,
-		value:     value,
-		logicalOp: "OR",
-	})
-	return ub
-}
-
-func (ub *updateBuilder) ConditionExists(field string) core.UpdateBuilder {
-	return ub.Condition(field, "attribute_exists", nil)
-}
-
-func (ub *updateBuilder) ConditionNotExists(field string) core.UpdateBuilder {
-	return ub.Condition(field, "attribute_not_exists", nil)
-}
-
-func (ub *updateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder {
-	return ub.Condition("version", "=", currentVersion)
-}
-
-func (ub *updateBuilder) ReturnValues(option string) core.UpdateBuilder {
-	ub.returnValues = option
-	return ub
-}
-
-func (ub *updateBuilder) Execute() error {
-	return ub.executeInternal(nil)
-}
-
-func (ub *updateBuilder) ExecuteWithResult(result any) error {
-	return ub.executeInternal(result)
-}
-
-func (ub *updateBuilder) executeInternal(result any) error {
-	// Check Lambda timeout
-	if err := ub.query.checkLambdaTimeout(); err != nil {
-		return err
-	}
-
 	// Get metadata
-	metadata, err := ub.query.db.registry.GetMetadata(ub.query.model)
+	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
-		return err
+		// Return an error-producing UpdateBuilder
+		return &errorUpdateBuilder{err: err}
 	}
 
-	// Check if we have OR conditions
-	var hasOrConditions bool
-	for _, cond := range ub.conditions {
-		if cond.logicalOp == "OR" {
-			hasOrConditions = true
-			break
-		}
-	}
+	// Create Query struct for pkg/query using the proper constructor
+	adapter := &metadataAdapter{metadata: metadata}
+	executor := &queryExecutor{db: q.db}
+	conditions := convertConditions(q.conditions)
 
-	// Extract primary key from conditions
-	pk := ub.query.extractPrimaryKey(metadata)
-	if pk == nil {
-		return fmt.Errorf("update requires primary key in conditions")
-	}
+	pkgQuery := queryPkg.NewWithConditions(q.model, adapter, executor, conditions, q.ctx)
 
-	// Build key map
-	keyMap := make(map[string]types.AttributeValue)
-
-	// Add partition key
-	if pkValue, hasPK := pk["pk"]; hasPK {
-		av, err := ub.query.db.converter.ToAttributeValue(pkValue)
-		if err != nil {
-			return fmt.Errorf("failed to convert partition key: %w", err)
-		}
-		keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-	}
-
-	// Add sort key if present
-	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-		av, err := ub.query.db.converter.ToAttributeValue(skValue)
-		if err != nil {
-			return fmt.Errorf("failed to convert sort key: %w", err)
-		}
-		keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-	}
-
-	// Build update expression
-	builder := expr.NewBuilder()
-
-	// Track which fields we've already processed to avoid duplicates
-	processedFields := make(map[string]bool)
-
-	// Process updates
-	for field, value := range ub.updates {
-		// Handle special operation markers
-		if strings.HasPrefix(field, "ADD:") {
-			fieldName := field[4:]
-			fieldMeta, exists := lookupField(metadata, fieldName)
-			if !exists {
-				continue
-			}
-			builder.AddUpdateAdd(fieldMeta.DBName, value)
-			processedFields[fieldName] = true
-		} else if strings.HasPrefix(field, "REMOVE:") {
-			fieldName := field[7:]
-			// Check if it's an indexed remove like "Tags[1]"
-			if idx := strings.Index(fieldName, "["); idx > 0 {
-				// Handle list element removal
-				actualField := fieldName[:idx]
-				fieldMeta, exists := lookupField(metadata, actualField)
-				if !exists {
-					continue
-				}
-				builder.AddUpdateRemove(fieldMeta.DBName + fieldName[idx:])
-			} else {
-				// Regular field removal
-				fieldMeta, exists := lookupField(metadata, fieldName)
-				if !exists {
-					continue
-				}
-				builder.AddUpdateRemove(fieldMeta.DBName)
-				processedFields[fieldName] = true
-			}
-		} else if strings.HasPrefix(field, "DELETE:") {
-			fieldName := field[7:]
-			fieldMeta, exists := lookupField(metadata, fieldName)
-			if !exists {
-				continue
-			}
-			builder.AddUpdateDelete(fieldMeta.DBName, value)
-			processedFields[fieldName] = true
-		} else if strings.HasPrefix(field, "SETIFNOTEXISTS:") {
-			fieldName := field[15:]
-			fieldMeta, exists := lookupField(metadata, fieldName)
-			if !exists {
-				continue
-			}
-			// Skip if we've already processed this field with a regular SET
-			if processedFields[fieldName] {
-				continue
-			}
-			// Use AddUpdateFunction for if_not_exists
-			err := builder.AddUpdateFunction(fieldMeta.DBName, "if_not_exists", fieldMeta.DBName, value)
-			if err != nil {
-				return fmt.Errorf("failed to add if_not_exists for %s: %w", fieldName, err)
-			}
-			processedFields[fieldName] = true
-		} else if strings.HasPrefix(field, "APPEND:") {
-			fieldName := field[7:]
-			fieldMeta, exists := lookupField(metadata, fieldName)
-			if !exists {
-				continue
-			}
-			// Use AddUpdateFunction for list_append operations
-			err := builder.AddUpdateFunction(fieldMeta.DBName, "list_append", fieldMeta.DBName, value)
-			if err != nil {
-				return fmt.Errorf("failed to add list append: %w", err)
-			}
-			processedFields[fieldName] = true
-		} else if strings.HasPrefix(field, "PREPEND:") {
-			fieldName := field[8:]
-			fieldMeta, exists := lookupField(metadata, fieldName)
-			if !exists {
-				continue
-			}
-			// Use AddUpdateFunction for prepend (value first, then field)
-			err := builder.AddUpdateFunction(fieldMeta.DBName, "list_append", value, fieldMeta.DBName)
-			if err != nil {
-				return fmt.Errorf("failed to add list prepend: %w", err)
-			}
-			processedFields[fieldName] = true
-		} else if strings.Contains(field, "[") && strings.Contains(field, "]") {
-			// Handle list element update like "Features[1]"
-			idx := strings.Index(field, "[")
-			fieldName := field[:idx]
-			fieldMeta, exists := lookupField(metadata, fieldName)
-			if !exists {
-				continue
-			}
-			builder.AddUpdateSet(fieldMeta.DBName+field[idx:], value)
-		} else {
-			// Regular SET operation
-			fieldMeta, exists := lookupField(metadata, field)
-			if !exists {
-				continue
-			}
-			// Skip if we've already processed this field
-			if processedFields[field] {
-				continue
-			}
-			builder.AddUpdateSet(fieldMeta.DBName, value)
-			processedFields[field] = true
-		}
-	}
-
-	// Only update updated_at if it hasn't been explicitly set by the user
-	if metadata.UpdatedAtField != nil && !processedFields[metadata.UpdatedAtField.Name] {
-		builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now())
-	}
-
-	// Add conditions from the builder
-	// First, add conditions using the standard method to ensure the first condition works
-	// Then we'll build a custom expression for OR support
-
-	if !hasOrConditions {
-		// All conditions are AND, use the standard approach
-		for _, cond := range ub.conditions {
-			if cond.operator == "attribute_exists" {
-				builder.AddConditionExpression(cond.field, "attribute_exists", nil)
-			} else if cond.operator == "attribute_not_exists" {
-				builder.AddConditionExpression(cond.field, "attribute_not_exists", nil)
-			} else {
-				// For regular conditions, check if we need to use DB name
-				fieldMeta, exists := lookupField(metadata, cond.field)
-				if exists {
-					builder.AddConditionExpression(fieldMeta.DBName, cond.operator, cond.value)
-				} else {
-					builder.AddConditionExpression(cond.field, cond.operator, cond.value)
-				}
-			}
-		}
-	} else {
-		// We have OR conditions, need to build custom expression
-		// Don't add any conditions to the builder yet - we'll handle them all in the custom expression
-	}
-
-	// Build the update expression
-	components := builder.Build()
-
-	// If we have OR conditions, build the condition expression from scratch
-	if hasOrConditions && len(ub.conditions) > 0 {
-		// Build custom condition expression with OR support
-		var conditionExprs []string
-		condNameCounter := 0
-		condValueCounter := 0
-
-		// Process ALL conditions (not just from index 1)
-		for _, cond := range ub.conditions {
-			var expr string
-			var fieldName string
-
-			// Get the correct field name (DB name if available)
-			if fieldMeta, exists := lookupField(metadata, cond.field); exists {
-				fieldName = fieldMeta.DBName
-			} else {
-				fieldName = cond.field
-			}
-
-			// Create name placeholder
-			nameRef := fmt.Sprintf("#cond%d", condNameCounter)
-			condNameCounter++
-
-			if components.ExpressionAttributeNames == nil {
-				components.ExpressionAttributeNames = make(map[string]string)
-			}
-			components.ExpressionAttributeNames[nameRef] = fieldName
-
-			if cond.operator == "attribute_exists" {
-				expr = fmt.Sprintf("attribute_exists(%s)", nameRef)
-			} else if cond.operator == "attribute_not_exists" {
-				expr = fmt.Sprintf("attribute_not_exists(%s)", nameRef)
-			} else {
-				// Regular condition with value
-				valueRef := fmt.Sprintf(":condv%d", condValueCounter)
-				condValueCounter++
-
-				if components.ExpressionAttributeValues == nil {
-					components.ExpressionAttributeValues = make(map[string]types.AttributeValue)
-				}
-
-				// Convert value to AttributeValue
-				av, err := ub.query.db.converter.ToAttributeValue(cond.value)
-				if err != nil {
-					return fmt.Errorf("failed to convert condition value: %w", err)
-				}
-				components.ExpressionAttributeValues[valueRef] = av
-
-				// Build the condition expression
-				switch cond.operator {
-				case "=":
-					expr = fmt.Sprintf("%s = %s", nameRef, valueRef)
-				case "<":
-					expr = fmt.Sprintf("%s < %s", nameRef, valueRef)
-				case ">":
-					expr = fmt.Sprintf("%s > %s", nameRef, valueRef)
-				case "<=":
-					expr = fmt.Sprintf("%s <= %s", nameRef, valueRef)
-				case ">=":
-					expr = fmt.Sprintf("%s >= %s", nameRef, valueRef)
-				case "!=", "<>":
-					expr = fmt.Sprintf("%s <> %s", nameRef, valueRef)
-				case "BEGINS_WITH":
-					expr = fmt.Sprintf("begins_with(%s, %s)", nameRef, valueRef)
-				case "CONTAINS":
-					expr = fmt.Sprintf("contains(%s, %s)", nameRef, valueRef)
-				case "BETWEEN":
-					// Handle BETWEEN operator
-					values, ok := cond.value.([]any)
-					if !ok || len(values) != 2 {
-						return fmt.Errorf("BETWEEN operator requires two values")
-					}
-					valueRef2 := fmt.Sprintf(":condv%d", condValueCounter)
-					condValueCounter++
-					av2, err := ub.query.db.converter.ToAttributeValue(values[1])
-					if err != nil {
-						return fmt.Errorf("failed to convert BETWEEN value: %w", err)
-					}
-					components.ExpressionAttributeValues[valueRef2] = av2
-					expr = fmt.Sprintf("%s BETWEEN %s AND %s", nameRef, valueRef, valueRef2)
-				default:
-					return fmt.Errorf("unsupported operator: %s", cond.operator)
-				}
-			}
-
-			conditionExprs = append(conditionExprs, expr)
-		}
-
-		// Build final condition expression with OR/AND logic
-		if len(conditionExprs) > 0 {
-			var finalExpr strings.Builder
-			finalExpr.WriteString(conditionExprs[0])
-
-			for i := 1; i < len(conditionExprs); i++ {
-				finalExpr.WriteString(" ")
-				finalExpr.WriteString(ub.conditions[i].logicalOp)
-				finalExpr.WriteString(" ")
-				finalExpr.WriteString(conditionExprs[i])
-			}
-
-			// Set the condition expression
-			components.ConditionExpression = finalExpr.String()
-		}
-	}
-
-	// Build UpdateItem input
-	input := &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(metadata.TableName),
-		Key:                       keyMap,
-		UpdateExpression:          aws.String(components.UpdateExpression),
-		ExpressionAttributeNames:  components.ExpressionAttributeNames,
-		ExpressionAttributeValues: components.ExpressionAttributeValues,
-	}
-
-	if components.ConditionExpression != "" {
-		input.ConditionExpression = aws.String(components.ConditionExpression)
-	}
-
-	// If result is requested but returnValues is still default, set it to ALL_NEW
-	if result != nil && ub.returnValues == "NONE" {
-		ub.returnValues = "ALL_NEW"
-	}
-
-	// Set return values
-	if ub.returnValues != "NONE" {
-		input.ReturnValues = types.ReturnValue(ub.returnValues)
-	}
-
-	// Execute UpdateItem
-	client, err := ub.query.db.session.Client()
-	if err != nil {
-		return fmt.Errorf("failed to get client for update item: %w", err)
-	}
-
-	output, err := client.UpdateItem(ub.query.ctx, input)
-	if err != nil {
-		if isConditionalCheckFailedException(err) {
-			return customerrors.ErrConditionFailed
-		}
-		return fmt.Errorf("failed to update item: %w", err)
-	}
-
-	// Handle return values if requested
-	if result != nil && output.Attributes != nil {
-		if err := ub.query.unmarshalItem(output.Attributes, result, metadata); err != nil {
-			return fmt.Errorf("failed to unmarshal result: %w", err)
-		}
-	}
-
-	return nil
+	return queryPkg.NewUpdateBuilder(pkgQuery)
 }
+
+// errorUpdateBuilder is a simple error-returning UpdateBuilder
+type errorUpdateBuilder struct {
+	err error
+}
+
+func (e *errorUpdateBuilder) Set(field string, value any) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) Add(field string, value any) core.UpdateBuilder              { return e }
+func (e *errorUpdateBuilder) Increment(field string) core.UpdateBuilder                   { return e }
+func (e *errorUpdateBuilder) Decrement(field string) core.UpdateBuilder                   { return e }
+func (e *errorUpdateBuilder) Remove(field string) core.UpdateBuilder                      { return e }
+func (e *errorUpdateBuilder) Delete(field string, value any) core.UpdateBuilder           { return e }
+func (e *errorUpdateBuilder) AppendToList(field string, values any) core.UpdateBuilder    { return e }
+func (e *errorUpdateBuilder) PrependToList(field string, values any) core.UpdateBuilder   { return e }
+func (e *errorUpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) ConditionExists(field string) core.UpdateBuilder          { return e }
+func (e *errorUpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder       { return e }
+func (e *errorUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) ReturnValues(option string) core.UpdateBuilder            { return e }
+func (e *errorUpdateBuilder) Execute() error                                           { return e.err }
+func (e *errorUpdateBuilder) ExecuteWithResult(result any) error                       { return e.err }
 
 // ParallelScan configures parallel scanning with segment and total segments
 func (q *query) ParallelScan(segment int32, totalSegments int32) core.Query {
@@ -3071,4 +2672,162 @@ func (q *query) BatchUpdateWithOptions(items []any, fields []string, options ...
 	}
 
 	return nil
+}
+
+// convertConditions converts dynamorm conditions to pkg/query conditions
+func convertConditions(conditions []condition) []queryPkg.Condition {
+	result := make([]queryPkg.Condition, len(conditions))
+	for i, cond := range conditions {
+		result[i] = queryPkg.Condition{
+			Field:    cond.field,
+			Operator: cond.op,
+			Value:    cond.value,
+		}
+	}
+	return result
+}
+
+// queryExecutor implements the executor interface for pkg/query
+type queryExecutor struct {
+	db *DB
+}
+
+// ExecuteQuery implements QueryExecutor interface
+func (qe *queryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
+	// For now, return not implemented
+	return fmt.Errorf("ExecuteQuery not implemented")
+}
+
+// ExecuteScan implements QueryExecutor interface
+func (qe *queryExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
+	// For now, return not implemented
+	return fmt.Errorf("ExecuteScan not implemented")
+}
+
+// ExecuteUpdateItem implements UpdateItemExecutor interface
+func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	client, err := qe.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for update item: %w", err)
+	}
+
+	updateInput := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(input.TableName),
+		Key:                       key,
+		UpdateExpression:          aws.String(input.UpdateExpression),
+		ExpressionAttributeNames:  input.ExpressionAttributeNames,
+		ExpressionAttributeValues: input.ExpressionAttributeValues,
+	}
+
+	if input.ConditionExpression != "" {
+		updateInput.ConditionExpression = aws.String(input.ConditionExpression)
+	}
+
+	if input.ReturnValues != "" {
+		updateInput.ReturnValues = types.ReturnValue(input.ReturnValues)
+	}
+
+	_, err = client.UpdateItem(context.Background(), updateInput)
+	if err != nil {
+		if isConditionalCheckFailedException(err) {
+			return customerrors.ErrConditionFailed
+		}
+		return fmt.Errorf("failed to update item: %w", err)
+	}
+
+	return nil
+}
+
+// ExecuteUpdateItemWithResult implements UpdateItemWithResultExecutor interface
+func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error) {
+	client, err := qe.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for update item: %w", err)
+	}
+
+	updateInput := &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(input.TableName),
+		Key:                       key,
+		UpdateExpression:          aws.String(input.UpdateExpression),
+		ExpressionAttributeNames:  input.ExpressionAttributeNames,
+		ExpressionAttributeValues: input.ExpressionAttributeValues,
+	}
+
+	if input.ConditionExpression != "" {
+		updateInput.ConditionExpression = aws.String(input.ConditionExpression)
+	}
+
+	if input.ReturnValues != "" {
+		updateInput.ReturnValues = types.ReturnValue(input.ReturnValues)
+	}
+
+	output, err := client.UpdateItem(context.Background(), updateInput)
+	if err != nil {
+		if isConditionalCheckFailedException(err) {
+			return nil, customerrors.ErrConditionFailed
+		}
+		return nil, fmt.Errorf("failed to update item: %w", err)
+	}
+
+	return &core.UpdateResult{
+		Attributes: output.Attributes,
+	}, nil
+}
+
+// metadataAdapter adapts *model.Metadata to core.ModelMetadata interface
+type metadataAdapter struct {
+	metadata *model.Metadata
+}
+
+func (ma *metadataAdapter) TableName() string {
+	return ma.metadata.TableName
+}
+
+func (ma *metadataAdapter) PrimaryKey() core.KeySchema {
+	if ma.metadata.PrimaryKey == nil {
+		return core.KeySchema{}
+	}
+
+	schema := core.KeySchema{}
+	if ma.metadata.PrimaryKey.PartitionKey != nil {
+		schema.PartitionKey = ma.metadata.PrimaryKey.PartitionKey.Name
+	}
+	if ma.metadata.PrimaryKey.SortKey != nil {
+		schema.SortKey = ma.metadata.PrimaryKey.SortKey.Name
+	}
+	return schema
+}
+
+func (ma *metadataAdapter) Indexes() []core.IndexSchema {
+	indexes := make([]core.IndexSchema, len(ma.metadata.Indexes))
+	for i, idx := range ma.metadata.Indexes {
+		schema := core.IndexSchema{
+			Name:            idx.Name,
+			Type:            string(idx.Type),
+			ProjectionType:  idx.ProjectionType,
+			ProjectedFields: idx.ProjectedFields,
+		}
+		if idx.PartitionKey != nil {
+			schema.PartitionKey = idx.PartitionKey.Name
+		}
+		if idx.SortKey != nil {
+			schema.SortKey = idx.SortKey.Name
+		}
+		indexes[i] = schema
+	}
+	return indexes
+}
+
+func (ma *metadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
+	fieldMeta, exists := ma.metadata.Fields[field]
+	if !exists {
+		return nil
+	}
+
+	return &core.AttributeMetadata{
+		Name:         fieldMeta.Name,
+		Type:         fieldMeta.Type.String(),
+		DynamoDBName: fieldMeta.DBName,
+		Tags:         fieldMeta.Tags,
+	}
 }

@@ -155,16 +155,30 @@ func TestConcurrentQueries(t *testing.T) {
 	// Log performance metrics
 	totalOps := concurrency * iterations
 	opsPerSec := float64(totalOps) / duration.Seconds()
-	memIncrease := endMem - startMem
+
+	// Calculate memory increase safely
+	var memIncrease uint64
+	var memIncreaseMB int64
+	if endMem >= startMem {
+		memIncrease = endMem - startMem
+		memIncreaseMB = int64(memIncrease / (1024 * 1024))
+	} else {
+		// Memory decreased (possible due to GC)
+		memDecrease := startMem - endMem
+		memIncreaseMB = -int64(memDecrease / (1024 * 1024))
+	}
 
 	t.Logf("Concurrent test results:")
 	t.Logf("- Total operations: %d", totalOps)
 	t.Logf("- Duration: %v", duration)
 	t.Logf("- Operations/sec: %.2f", opsPerSec)
-	t.Logf("- Memory increase: %d MB", memIncrease/(1024*1024))
+	t.Logf("- Memory change: %d MB", memIncreaseMB)
 
 	// Verify memory usage is reasonable (less than 100MB increase)
-	assert.Less(t, memIncrease, uint64(100*1024*1024), "Memory usage increased by more than 100MB")
+	// Only check if memory actually increased
+	if memIncreaseMB > 0 {
+		assert.Less(t, memIncrease, uint64(100*1024*1024), "Memory usage increased by more than 100MB")
+	}
 }
 
 // TestLargeItemHandling tests handling of items near DynamoDB limits
@@ -351,17 +365,21 @@ func TestMemoryStability(t *testing.T) {
 	// Run sustained load for 1 minute
 	duration := 1 * time.Minute
 	done := make(chan bool)
-	errors := make(chan error, 1000)
+	errors := make(chan error, 5000) // Increase buffer to handle more errors
 
 	// Force garbage collection and get initial baseline
 	runtime.GC()
 	runtime.GC()                       // Run twice to ensure cleanup
 	time.Sleep(100 * time.Millisecond) // Allow GC to complete
 
-	// Track memory samples
-	memorySamples := []uint64{}
+	// Track memory samples with thread-safe access
+	var memorySamples []uint64
+	var memorySamplesMutex sync.Mutex
+
 	// Take initial sample after GC
+	memorySamplesMutex.Lock()
 	memorySamples = append(memorySamples, getMemStats())
+	memorySamplesMutex.Unlock()
 
 	sampleTicker := time.NewTicker(5 * time.Second)
 	defer sampleTicker.Stop()
@@ -370,7 +388,9 @@ func TestMemoryStability(t *testing.T) {
 		for {
 			select {
 			case <-sampleTicker.C:
+				memorySamplesMutex.Lock()
 				memorySamples = append(memorySamples, getMemStats())
+				memorySamplesMutex.Unlock()
 			case <-done:
 				return
 			}
@@ -468,11 +488,16 @@ drainLoop:
 		}
 	}
 
-	// Analyze memory usage
-	if len(memorySamples) > 2 {
-		firstSample := memorySamples[0]
-		lastSample := memorySamples[len(memorySamples)-1]
-		avgSample := calculateAverage(memorySamples)
+	// Analyze memory usage (thread-safe access)
+	memorySamplesMutex.Lock()
+	samplesCopy := make([]uint64, len(memorySamples))
+	copy(samplesCopy, memorySamples)
+	memorySamplesMutex.Unlock()
+
+	if len(samplesCopy) > 2 {
+		firstSample := samplesCopy[0]
+		lastSample := samplesCopy[len(samplesCopy)-1]
+		avgSample := calculateAverage(samplesCopy)
 
 		// Calculate memory growth with safety checks
 		var memGrowth float64

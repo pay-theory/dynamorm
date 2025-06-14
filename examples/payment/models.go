@@ -58,7 +58,7 @@ const (
 type Customer struct {
 	ID             string            `dynamorm:"pk" json:"id"`
 	MerchantID     string            `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
-	Email          string            `dynamorm:"index:gsi-email,encrypted" json:"email"`
+	Email          string            `dynamorm:"index:gsi-email,pk,encrypted" json:"email"`
 	Name           string            `dynamorm:"encrypted" json:"name"`
 	Phone          string            `dynamorm:"encrypted" json:"phone,omitempty"`
 	PaymentMethods []PaymentMethod   `dynamorm:"json,encrypted:pci" json:"payment_methods"`
@@ -88,7 +88,7 @@ type PaymentMethod struct {
 type Merchant struct {
 	ID              string         `dynamorm:"pk" json:"id"`
 	Name            string         `json:"name"`
-	Email           string         `dynamorm:"index:gsi-email" json:"email"`
+	Email           string         `dynamorm:"index:gsi-email,pk" json:"email"`
 	Status          string         `json:"status"`
 	ProcessorConfig map[string]any `dynamorm:"json,encrypted" json:"-"`
 	WebhookURL      string         `json:"webhook_url,omitempty"`
