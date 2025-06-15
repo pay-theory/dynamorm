@@ -207,7 +207,7 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 
 		fieldMeta, err := parseFieldMetadata(field, i)
 		if err != nil {
-			return nil, fmt.Errorf("field %s: %w", field.Name, err)
+			return nil, fmt.Errorf("field validation failed: %w", err)
 		}
 
 		// Register field
@@ -220,7 +220,7 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 				metadata.PrimaryKey = &KeySchema{}
 			}
 			if metadata.PrimaryKey.PartitionKey != nil {
-				return nil, fmt.Errorf("field %s: %w", field.Name, errors.ErrDuplicatePrimaryKey)
+				return nil, fmt.Errorf("duplicate primary key definition: %w", errors.ErrDuplicatePrimaryKey)
 			}
 			metadata.PrimaryKey.PartitionKey = fieldMeta
 		}
@@ -230,7 +230,7 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 				metadata.PrimaryKey = &KeySchema{}
 			}
 			if metadata.PrimaryKey.SortKey != nil {
-				return nil, fmt.Errorf("field %s: duplicate sort key definition", field.Name)
+				return nil, fmt.Errorf("duplicate sort key definition")
 			}
 			metadata.PrimaryKey.SortKey = fieldMeta
 		}
@@ -271,13 +271,13 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 
 			if role.IsPK {
 				if index.PartitionKey != nil {
-					return nil, fmt.Errorf("field %s: duplicate partition key for index %s", field.Name, indexName)
+					return nil, fmt.Errorf("duplicate partition key for index")
 				}
 				index.PartitionKey = fieldMeta
 			}
 			if role.IsSK {
 				if index.SortKey != nil {
-					return nil, fmt.Errorf("field %s: duplicate sort key for index %s", field.Name, indexName)
+					return nil, fmt.Errorf("duplicate sort key for index")
 				}
 				index.SortKey = fieldMeta
 			}
@@ -296,7 +296,7 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 			index.PartitionKey = metadata.PrimaryKey.PartitionKey
 		} else if index.PartitionKey == nil {
 			// GSIs must have their own partition key
-			return nil, fmt.Errorf("index %s: missing partition key", index.Name)
+			return nil, fmt.Errorf("missing partition key for index")
 		}
 		metadata.Indexes = append(metadata.Indexes, *index)
 	}

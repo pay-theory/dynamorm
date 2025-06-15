@@ -145,6 +145,7 @@ func (f *MarshalerFactory) createUnsafeMarshaler(ack *SecurityAcknowledgment) (M
 		atomic.AddInt64(&unsafeUsageCounter, 1)
 		atomic.AddInt64(&securityWarnings, 1)
 
+		// SECURITY: Log warning without exposing sensitive details
 		log.Printf("⚠️  SECURITY WARNING: Using deprecated unsafe marshaler")
 		log.Printf("   - Memory corruption risk: CRITICAL")
 		log.Printf("   - Security vulnerability: HIGH")
@@ -152,8 +153,9 @@ func (f *MarshalerFactory) createUnsafeMarshaler(ack *SecurityAcknowledgment) (M
 		log.Printf("   - Usage count: %d", atomic.LoadInt64(&unsafeUsageCounter))
 		log.Printf("   - Consider migrating to safe marshaler")
 
+		// SECURITY: Don't log developer signature to prevent exposure
 		if ack != nil {
-			log.Printf("   - Acknowledged by: %s", ack.DeveloperSignature)
+			log.Printf("   - Security acknowledgment: present")
 		}
 	}
 
@@ -202,6 +204,7 @@ func ValidateConfig(config Config) error {
 		}
 
 		if config.RequireExplicitUnsafeAck && !config.WarnOnUnsafeUsage {
+			// SECURITY: Log warning without exposing configuration details
 			log.Printf("⚠️  WARNING: Unsafe marshaler acknowledgment required but warnings disabled")
 		}
 	}
@@ -221,6 +224,7 @@ func init() {
 		case "unsafe":
 			globalConfig.MarshalerType = UnsafeMarshalerType
 			globalConfig.AllowUnsafeMarshaler = true
+			// SECURITY: Log warning without exposing environment details
 			log.Printf("⚠️  SECURITY WARNING: Unsafe marshaler enabled via environment variable")
 		}
 	}

@@ -61,10 +61,9 @@ type DynamORMError struct {
 
 // Error implements the error interface
 func (e *DynamORMError) Error() string {
-	if e.Context != nil && len(e.Context) > 0 {
-		return fmt.Sprintf("dynamorm: %s failed for %s: %v (context: %v)", e.Op, e.Model, e.Err, e.Context)
-	}
-	return fmt.Sprintf("dynamorm: %s failed for %s: %v", e.Op, e.Model, e.Err)
+	// SECURITY: Don't expose model names or context data in error messages
+	// Only return the operation and underlying error for secure logging
+	return fmt.Sprintf("dynamorm: %s operation failed: %v", e.Op, e.Err)
 }
 
 // Unwrap returns the underlying error

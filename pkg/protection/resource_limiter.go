@@ -169,7 +169,7 @@ func (rp *ResourceProtector) SecureBodyReader(r *http.Request) ([]byte, error) {
 		atomic.AddInt64(&rp.stats.RejectedRequests, 1)
 		return nil, &ProtectionError{
 			Type:   "ConcurrencyLimitExceeded",
-			Detail: fmt.Sprintf("Maximum concurrent requests (%d) exceeded", rp.config.MaxConcurrentReq),
+			Detail: "Maximum concurrent requests exceeded",
 		}
 	}
 
@@ -210,7 +210,7 @@ func (rp *ResourceProtector) SecureBodyReader(r *http.Request) ([]byte, error) {
 		atomic.AddInt64(&rp.stats.RejectedRequests, 1)
 		return nil, &ProtectionError{
 			Type:   "RequestTimeout",
-			Detail: fmt.Sprintf("Request timeout after %v", rp.config.MaxRequestTimeout),
+			Detail: "Request timeout exceeded",
 		}
 	}
 }
@@ -232,7 +232,7 @@ func (bl *BatchLimiter) AcquireBatch(ctx context.Context, batchSize int) error {
 		atomic.AddInt64(&bl.protector.stats.RejectedBatchOps, 1)
 		return &ProtectionError{
 			Type:   "BatchSizeExceeded",
-			Detail: fmt.Sprintf("Batch size %d exceeds maximum %d", batchSize, bl.protector.config.MaxBatchSize),
+			Detail: "Batch size exceeds maximum allowed",
 		}
 	}
 
@@ -256,7 +256,7 @@ func (bl *BatchLimiter) AcquireBatch(ctx context.Context, batchSize int) error {
 		atomic.AddInt64(&bl.protector.stats.RejectedBatchOps, 1)
 		return &ProtectionError{
 			Type:   "BatchConcurrencyExceeded",
-			Detail: fmt.Sprintf("Maximum concurrent batch operations (%d) exceeded", bl.protector.config.MaxConcurrentBatch),
+			Detail: "Maximum concurrent batch operations exceeded",
 		}
 	}
 

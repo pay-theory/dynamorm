@@ -3,7 +3,6 @@ package expr
 import (
 	"errors"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 
@@ -339,17 +338,17 @@ func (b *Builder) Build() ExpressionComponents {
 func (b *Builder) buildCondition(field string, operator string, value any) (string, error) {
 	// SECURITY: Validate all inputs before processing
 	if err := validation.ValidateFieldName(field); err != nil {
-		log.Printf("🔒 SECURITY: Field validation failed for '%s': %s", field, err.Error())
+		// SECURITY: Log validation failure without exposing field name
 		return "", fmt.Errorf("invalid field name: %w", err)
 	}
 
 	if err := validation.ValidateOperator(operator); err != nil {
-		log.Printf("🔒 SECURITY: Operator validation failed for '%s': %s", operator, err.Error())
+		// SECURITY: Log validation failure without exposing operator
 		return "", fmt.Errorf("invalid operator: %w", err)
 	}
 
 	if err := validation.ValidateValue(value); err != nil {
-		log.Printf("🔒 SECURITY: Value validation failed: %s", err.Error())
+		// SECURITY: Log validation failure without exposing value
 		return "", fmt.Errorf("invalid value: %w", err)
 	}
 
@@ -429,7 +428,7 @@ func (b *Builder) buildCondition(field string, operator string, value any) (stri
 		return fmt.Sprintf("attribute_not_exists(%s)", nameRef), nil
 
 	default:
-		return "", fmt.Errorf("%w: %s", dynamormErrors.ErrInvalidOperator, operator)
+		return "", fmt.Errorf("%w: unsupported operator", dynamormErrors.ErrInvalidOperator)
 	}
 }
 
@@ -437,7 +436,7 @@ func (b *Builder) buildCondition(field string, operator string, value any) (stri
 func (b *Builder) addNameSecure(name string) string {
 	// Additional security check
 	if err := validation.ValidateFieldName(name); err != nil {
-		log.Printf("🔒 SECURITY: Rejecting invalid field name '%s': %s", name, err.Error())
+		// SECURITY: Return safe placeholder without logging field name
 		return "#invalid"
 	}
 
@@ -456,7 +455,7 @@ func (b *Builder) addNameSecure(name string) string {
 		for i, part := range parts {
 			// Validate each part
 			if err := validation.ValidateFieldName(part); err != nil {
-				log.Printf("🔒 SECURITY: Invalid field part '%s' in '%s': %s", part, name, err.Error())
+				// SECURITY: Return safe placeholder without logging details
 				return "#invalid"
 			}
 
@@ -501,8 +500,7 @@ func (b *Builder) isReservedWord(word string) bool {
 func (b *Builder) addValueSecure(value any) string {
 	// Security validation
 	if err := validation.ValidateValue(value); err != nil {
-		log.Printf("🔒 SECURITY: Rejecting invalid value: %s", err.Error())
-		// Return a safe placeholder for invalid values
+		// SECURITY: Return safe placeholder without logging value details
 		b.valueCounter++
 		placeholder := fmt.Sprintf(":invalid%d", b.valueCounter)
 		b.values[placeholder] = &types.AttributeValueMemberNULL{Value: true}
@@ -515,8 +513,7 @@ func (b *Builder) addValueSecure(value any) string {
 	// Convert value to AttributeValue securely
 	av, err := ConvertToAttributeValueSecure(value)
 	if err != nil {
-		log.Printf("🔒 SECURITY: Failed to convert value safely: %s", err.Error())
-		// Store as NULL for safety
+		// SECURITY: Store as NULL for safety without logging details
 		av = &types.AttributeValueMemberNULL{Value: true}
 	}
 
@@ -529,27 +526,27 @@ func (b *Builder) convertToSliceSecure(value any) ([]any, error) {
 	switch v := value.(type) {
 	case []any:
 		// Validate each element
-		for i, item := range v {
+		for _, item := range v {
 			if err := validation.ValidateValue(item); err != nil {
 				return nil, &validation.SecurityError{
 					Type:   "InvalidValue",
-					Field:  fmt.Sprintf("slice_item_%d", i),
-					Detail: fmt.Sprintf("invalid slice item at index %d: %s", i, err.Error()),
+					Field:  "",
+					Detail: "invalid slice item",
 				}
 			}
 		}
 		return v, nil
 	case []string:
 		result := make([]any, len(v))
-		for i, s := range v {
+		for idx, s := range v {
 			if err := validation.ValidateValue(s); err != nil {
 				return nil, &validation.SecurityError{
 					Type:   "InvalidValue",
-					Field:  fmt.Sprintf("string_item_%d", i),
-					Detail: fmt.Sprintf("invalid string item at index %d: %s", i, err.Error()),
+					Field:  "",
+					Detail: "invalid string item",
 				}
 			}
-			result[i] = s
+			result[idx] = s
 		}
 		return result, nil
 	case []int:
@@ -618,7 +615,7 @@ func (b *Builder) AddAdvancedFunction(function string, field string, args ...any
 		return fmt.Sprintf("list_append(%s, %s)", nameRef, valueRef), nil
 
 	default:
-		return "", fmt.Errorf("unsupported function: %s", function)
+		return "", fmt.Errorf("unsupported function")
 	}
 }
 
@@ -664,7 +661,7 @@ func (b *Builder) AddUpdateFunction(field string, function string, args ...any) 
 		return nil
 
 	default:
-		return fmt.Errorf("unsupported update function: %s", function)
+		return fmt.Errorf("unsupported update function")
 	}
 }
 
@@ -672,8 +669,7 @@ func (b *Builder) AddUpdateFunction(field string, function string, args ...any) 
 func (b *Builder) addValueAsSet(value any) string {
 	// Security validation
 	if err := validation.ValidateValue(value); err != nil {
-		log.Printf("🔒 SECURITY: Rejecting invalid value: %s", err.Error())
-		// Return a safe placeholder for invalid values
+		// SECURITY: Return safe placeholder without logging value details
 		b.valueCounter++
 		placeholder := fmt.Sprintf(":invalid%d", b.valueCounter)
 		b.values[placeholder] = &types.AttributeValueMemberNULL{Value: true}
@@ -686,8 +682,7 @@ func (b *Builder) addValueAsSet(value any) string {
 	// Convert value to a DynamoDB set type
 	av, err := b.convertToSetAttributeValue(value)
 	if err != nil {
-		log.Printf("🔒 SECURITY: Failed to convert value to set safely: %s", err.Error())
-		// Store as NULL for safety
+		// SECURITY: Store as NULL for safety without logging details
 		av = &types.AttributeValueMemberNULL{Value: true}
 	}
 

@@ -16,7 +16,9 @@ type SecurityError struct {
 }
 
 func (e *SecurityError) Error() string {
-	return fmt.Sprintf("security validation failed [%s]: %s - %s", e.Type, e.Field, e.Detail)
+	// SECURITY: Don't expose user-generated field names or content in error messages
+	// Only return the error type for secure logging
+	return fmt.Sprintf("security validation failed: %s", e.Type)
 }
 
 // Field validation constants
@@ -80,7 +82,7 @@ func ValidateFieldName(field string) error {
 	if field == "" {
 		return &SecurityError{
 			Type:   "InvalidField",
-			Field:  field,
+			Field:  "",
 			Detail: "field name cannot be empty",
 		}
 	}
@@ -88,8 +90,8 @@ func ValidateFieldName(field string) error {
 	if len(field) > MaxFieldNameLength {
 		return &SecurityError{
 			Type:   "InvalidField",
-			Field:  field,
-			Detail: fmt.Sprintf("field name exceeds maximum length of %d characters", MaxFieldNameLength),
+			Field:  "",
+			Detail: "field name exceeds maximum length",
 		}
 	}
 
@@ -99,8 +101,8 @@ func ValidateFieldName(field string) error {
 		if strings.Contains(fieldLower, pattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  field,
-				Detail: fmt.Sprintf("field name contains dangerous pattern: %s", pattern),
+				Field:  "",
+				Detail: "field name contains dangerous pattern",
 			}
 		}
 	}
@@ -124,8 +126,8 @@ func ValidateFieldName(field string) error {
 				if isStandaloneOrSuspiciousKeyword(fieldLower, keyword) {
 					return &SecurityError{
 						Type:   "InjectionAttempt",
-						Field:  field,
-						Detail: fmt.Sprintf("field name contains suspicious SQL keyword: %s", keyword),
+						Field:  "",
+						Detail: "field name contains suspicious content",
 					}
 				}
 			}
@@ -137,7 +139,7 @@ func ValidateFieldName(field string) error {
 		if unicode.IsControl(r) {
 			return &SecurityError{
 				Type:   "InvalidField",
-				Field:  field,
+				Field:  "",
 				Detail: "field name contains control characters",
 			}
 		}
@@ -149,8 +151,8 @@ func ValidateFieldName(field string) error {
 		if len(parts) > MaxNestedDepth {
 			return &SecurityError{
 				Type:   "InvalidField",
-				Field:  field,
-				Detail: fmt.Sprintf("nested field depth exceeds maximum of %d", MaxNestedDepth),
+				Field:  "",
+				Detail: "nested field depth exceeds maximum",
 			}
 		}
 
@@ -158,8 +160,8 @@ func ValidateFieldName(field string) error {
 			if err := validateFieldPart(part); err != nil {
 				return &SecurityError{
 					Type:   "InvalidField",
-					Field:  field,
-					Detail: fmt.Sprintf("invalid field part '%s': %s", part, err.Error()),
+					Field:  "",
+					Detail: "invalid field part",
 				}
 			}
 		}
@@ -248,7 +250,7 @@ func ValidateOperator(op string) error {
 	if op == "" {
 		return &SecurityError{
 			Type:   "InvalidOperator",
-			Field:  op,
+			Field:  "",
 			Detail: "operator cannot be empty",
 		}
 	}
@@ -256,8 +258,8 @@ func ValidateOperator(op string) error {
 	if len(op) > MaxOperatorLength {
 		return &SecurityError{
 			Type:   "InvalidOperator",
-			Field:  op,
-			Detail: fmt.Sprintf("operator exceeds maximum length of %d characters", MaxOperatorLength),
+			Field:  "",
+			Detail: "operator exceeds maximum length",
 		}
 	}
 
@@ -266,8 +268,8 @@ func ValidateOperator(op string) error {
 	if !allowedOperators[opUpper] {
 		return &SecurityError{
 			Type:   "InvalidOperator",
-			Field:  op,
-			Detail: fmt.Sprintf("operator '%s' is not allowed", op),
+			Field:  "",
+			Detail: "operator not allowed",
 		}
 	}
 
@@ -277,8 +279,8 @@ func ValidateOperator(op string) error {
 		if strings.Contains(opLower, pattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  op,
-				Detail: fmt.Sprintf("operator contains dangerous pattern: %s", pattern),
+				Field:  "",
+				Detail: "operator contains dangerous pattern",
 			}
 		}
 	}
@@ -342,8 +344,8 @@ func validateStringValue(s string) error {
 	if len(s) > MaxValueStringLength {
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "string_value",
-			Detail: fmt.Sprintf("string value exceeds maximum length of %d characters", MaxValueStringLength),
+			Field:  "",
+			Detail: "string value exceeds maximum length",
 		}
 	}
 
@@ -353,8 +355,8 @@ func validateStringValue(s string) error {
 		if strings.Contains(stringLower, pattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  "string_value",
-				Detail: fmt.Sprintf("string value contains dangerous pattern: %s", pattern),
+				Field:  "",
+				Detail: "string value contains dangerous pattern",
 			}
 		}
 	}
@@ -369,8 +371,8 @@ func validateStringValue(s string) error {
 		if strings.Contains(stringLower, pattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  "string_value",
-				Detail: fmt.Sprintf("string value contains dangerous pattern: %s", pattern),
+				Field:  "",
+				Detail: "string value contains dangerous pattern",
 			}
 		}
 	}
@@ -383,17 +385,17 @@ func validateSliceValue(slice []any) error {
 	if len(slice) > 100 { // DynamoDB IN operator limit
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "slice_value",
+			Field:  "",
 			Detail: "slice value exceeds maximum length of 100 items",
 		}
 	}
 
-	for i, item := range slice {
+	for _, item := range slice {
 		if err := ValidateValue(item); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "slice_value",
-				Detail: fmt.Sprintf("invalid item at index %d: %s", i, err.Error()),
+				Field:  "",
+				Detail: "invalid item in collection",
 			}
 		}
 	}
@@ -406,8 +408,8 @@ func validateMapValue(m map[string]any) error {
 	if len(m) > 100 { // Reasonable limit for map size
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "map_value",
-			Detail: "map value exceeds maximum of 100 keys",
+			Field:  "",
+			Detail: "map value exceeds maximum keys",
 		}
 	}
 
@@ -415,16 +417,16 @@ func validateMapValue(m map[string]any) error {
 		if err := ValidateFieldName(key); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "map_key",
-				Detail: fmt.Sprintf("invalid map key '%s': %s", key, err.Error()),
+				Field:  "",
+				Detail: "invalid map key",
 			}
 		}
 
 		if err := ValidateValue(value); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "map_value",
-				Detail: fmt.Sprintf("invalid map value for key '%s': %s", key, err.Error()),
+				Field:  "",
+				Detail: "invalid map value",
 			}
 		}
 	}
@@ -437,8 +439,8 @@ func validateTypedMapValue(m map[string]string) error {
 	if len(m) > 100 { // Reasonable limit for map size
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "map_value",
-			Detail: fmt.Sprintf("map value exceeds maximum of 100 keys"),
+			Field:  "",
+			Detail: "map value exceeds maximum keys",
 		}
 	}
 
@@ -446,16 +448,16 @@ func validateTypedMapValue(m map[string]string) error {
 		if err := ValidateFieldName(key); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "map_key",
-				Detail: fmt.Sprintf("invalid map key '%s': %s", key, err.Error()),
+				Field:  "",
+				Detail: "invalid map key",
 			}
 		}
 
 		if err := ValidateValue(value); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "map_value",
-				Detail: fmt.Sprintf("invalid map value for key '%s': %s", key, err.Error()),
+				Field:  "",
+				Detail: "invalid map value",
 			}
 		}
 	}
@@ -468,8 +470,8 @@ func validateTypedMapIntValue(m map[string]int) error {
 	if len(m) > 100 { // Reasonable limit for map size
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "map_value",
-			Detail: fmt.Sprintf("map value exceeds maximum of 100 keys"),
+			Field:  "",
+			Detail: "map value exceeds maximum keys",
 		}
 	}
 
@@ -477,16 +479,16 @@ func validateTypedMapIntValue(m map[string]int) error {
 		if err := ValidateFieldName(key); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "map_key",
-				Detail: fmt.Sprintf("invalid map key '%s': %s", key, err.Error()),
+				Field:  "",
+				Detail: "invalid map key",
 			}
 		}
 
 		if err := ValidateValue(value); err != nil {
 			return &SecurityError{
 				Type:   "InvalidValue",
-				Field:  "map_value",
-				Detail: fmt.Sprintf("invalid map value for key '%s': %s", key, err.Error()),
+				Field:  "",
+				Detail: "invalid map value",
 			}
 		}
 	}
@@ -511,8 +513,8 @@ func validateBasicValue(value any) error {
 	default:
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "basic_value",
-			Detail: fmt.Sprintf("unsupported value type: %T", value),
+			Field:  "",
+			Detail: "unsupported value type",
 		}
 	}
 }
@@ -522,8 +524,8 @@ func ValidateExpression(expression string) error {
 	if len(expression) > MaxExpressionLength {
 		return &SecurityError{
 			Type:   "InvalidExpression",
-			Field:  "expression",
-			Detail: fmt.Sprintf("expression exceeds maximum length of %d characters", MaxExpressionLength),
+			Field:  "",
+			Detail: "expression exceeds maximum length",
 		}
 	}
 
@@ -533,8 +535,8 @@ func ValidateExpression(expression string) error {
 		if strings.Contains(exprLower, pattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  "expression",
-				Detail: fmt.Sprintf("expression contains dangerous pattern: %s", pattern),
+				Field:  "",
+				Detail: "expression contains dangerous pattern",
 			}
 		}
 	}
@@ -549,8 +551,8 @@ func ValidateExpression(expression string) error {
 		if strings.Contains(exprLower, pattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  "expression",
-				Detail: fmt.Sprintf("expression contains dangerous pattern: %s", pattern),
+				Field:  "",
+				Detail: "expression contains dangerous pattern",
 			}
 		}
 	}
@@ -563,8 +565,8 @@ func ValidateTableName(name string) error {
 	if len(name) < 3 || len(name) > 255 {
 		return &SecurityError{
 			Type:   "InvalidTableName",
-			Field:  name,
-			Detail: "table name must be 3-255 characters",
+			Field:  "",
+			Detail: "table name length invalid",
 		}
 	}
 
@@ -573,8 +575,8 @@ func ValidateTableName(name string) error {
 	if !pattern.MatchString(name) {
 		return &SecurityError{
 			Type:   "InvalidTableName",
-			Field:  name,
-			Detail: "table name can only contain letters, numbers, dots, dashes, and underscores",
+			Field:  "",
+			Detail: "table name contains invalid characters",
 		}
 	}
 
@@ -584,8 +586,8 @@ func ValidateTableName(name string) error {
 		if strings.Contains(nameLower, dangerousPattern) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
-				Field:  name,
-				Detail: fmt.Sprintf("table name contains dangerous pattern: %s", dangerousPattern),
+				Field:  "",
+				Detail: "table name contains dangerous pattern",
 			}
 		}
 	}
@@ -602,8 +604,8 @@ func ValidateIndexName(name string) error {
 	if len(name) < 3 || len(name) > 255 {
 		return &SecurityError{
 			Type:   "InvalidIndexName",
-			Field:  name,
-			Detail: "index name must be 3-255 characters",
+			Field:  "",
+			Detail: "index name length invalid",
 		}
 	}
 
@@ -612,8 +614,8 @@ func ValidateIndexName(name string) error {
 	if !pattern.MatchString(name) {
 		return &SecurityError{
 			Type:   "InvalidIndexName",
-			Field:  name,
-			Detail: "index name can only contain letters, numbers, dots, dashes, and underscores",
+			Field:  "",
+			Detail: "index name contains invalid characters",
 		}
 	}
 
@@ -625,8 +627,8 @@ func validateSliceLength(length int) error {
 	if length > 100 { // DynamoDB IN operator limit
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "slice_value",
-			Detail: fmt.Sprintf("slice value exceeds maximum length of 100 items"),
+			Field:  "",
+			Detail: "slice value exceeds maximum length",
 		}
 	}
 
@@ -638,8 +640,8 @@ func validateMapLength(length int) error {
 	if length > 100 { // Reasonable limit for map size
 		return &SecurityError{
 			Type:   "InvalidValue",
-			Field:  "map_value",
-			Detail: fmt.Sprintf("map value exceeds maximum of 100 keys"),
+			Field:  "",
+			Detail: "map value exceeds maximum keys",
 		}
 	}
 
