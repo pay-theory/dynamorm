@@ -132,7 +132,8 @@ type FieldMetadata struct {
 	Name        string               // Go field name
 	Type        reflect.Type         // Go type
 	DBName      string               // DynamoDB attribute name
-	Index       int                  // Field index in struct
+	Index       int                  // Field index in struct (deprecated, use IndexPath)
+	IndexPath   []int                // Field index path for nested/embedded structs
 	Tags        map[string]string    // Parsed tags
 	IsPK        bool                 // Is partition key
 	IsSK        bool                 // Is sort key
@@ -196,22 +197,70 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 
 	indexMap := make(map[string]*IndexSchema)
 
-	// Parse fields
+	// Parse fields recursively to handle embedded structs
+	if err := parseFields(modelType, metadata, indexMap, []int{}); err != nil {
+		return nil, err
+	}
+
+	// Validate primary key
+	if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
+		return nil, errors.ErrMissingPrimaryKey
+	}
+
+	// Convert index map to slice
+	for _, index := range indexMap {
+		// LSIs share the partition key with the main table
+		if index.Type == LocalSecondaryIndex {
+			index.PartitionKey = metadata.PrimaryKey.PartitionKey
+		} else if index.PartitionKey == nil {
+			// GSIs must have their own partition key
+			return nil, fmt.Errorf("missing partition key for index")
+		}
+		metadata.Indexes = append(metadata.Indexes, *index)
+	}
+
+	return metadata, nil
+}
+
+// parseFields recursively parses fields including embedded structs
+func parseFields(modelType reflect.Type, metadata *Metadata, indexMap map[string]*IndexSchema, indexPath []int) error {
 	for i := 0; i < modelType.NumField(); i++ {
 		field := modelType.Field(i)
+		currentPath := append(indexPath, i)
 
 		// Skip unexported fields
 		if !field.IsExported() {
 			continue
 		}
 
-		fieldMeta, err := parseFieldMetadata(field, i)
-		if err != nil {
-			return nil, fmt.Errorf("field validation failed: %w", err)
+		// Handle embedded structs
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			// Recursively parse embedded struct fields
+			if err := parseFields(field.Type, metadata, indexMap, currentPath); err != nil {
+				return err
+			}
+			continue
 		}
 
-		// Register field
-		metadata.Fields[field.Name] = fieldMeta
+		// Parse regular field
+		fieldMeta, err := parseFieldMetadata(field, currentPath)
+		if err != nil {
+			return fmt.Errorf("field validation failed: %w", err)
+		}
+
+		// Skip nil fields (e.g., fields with tag "-")
+		if fieldMeta == nil {
+			continue
+		}
+
+		// Register field with full path name for embedded fields
+		fullFieldName := field.Name
+		if len(indexPath) > 0 {
+			// For embedded fields, we need a unique name
+			// We'll use the field name directly since Go ensures uniqueness at each level
+			fullFieldName = field.Name
+		}
+		metadata.Fields[fullFieldName] = fieldMeta
 		metadata.FieldsByDBName[fieldMeta.DBName] = fieldMeta
 
 		// Handle primary key
@@ -220,7 +269,7 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 				metadata.PrimaryKey = &KeySchema{}
 			}
 			if metadata.PrimaryKey.PartitionKey != nil {
-				return nil, fmt.Errorf("duplicate primary key definition: %w", errors.ErrDuplicatePrimaryKey)
+				return fmt.Errorf("duplicate primary key definition: %w", errors.ErrDuplicatePrimaryKey)
 			}
 			metadata.PrimaryKey.PartitionKey = fieldMeta
 		}
@@ -230,7 +279,7 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 				metadata.PrimaryKey = &KeySchema{}
 			}
 			if metadata.PrimaryKey.SortKey != nil {
-				return nil, fmt.Errorf("duplicate sort key definition")
+				return fmt.Errorf("duplicate sort key definition")
 			}
 			metadata.PrimaryKey.SortKey = fieldMeta
 		}
@@ -271,46 +320,30 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 
 			if role.IsPK {
 				if index.PartitionKey != nil {
-					return nil, fmt.Errorf("duplicate partition key for index")
+					return fmt.Errorf("duplicate partition key for index %s", indexName)
 				}
 				index.PartitionKey = fieldMeta
 			}
 			if role.IsSK {
 				if index.SortKey != nil {
-					return nil, fmt.Errorf("duplicate sort key for index")
+					return fmt.Errorf("duplicate sort key for index %s", indexName)
 				}
 				index.SortKey = fieldMeta
 			}
 		}
 	}
 
-	// Validate primary key
-	if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
-		return nil, errors.ErrMissingPrimaryKey
-	}
-
-	// Convert index map to slice
-	for _, index := range indexMap {
-		// LSIs share the partition key with the main table
-		if index.Type == LocalSecondaryIndex {
-			index.PartitionKey = metadata.PrimaryKey.PartitionKey
-		} else if index.PartitionKey == nil {
-			// GSIs must have their own partition key
-			return nil, fmt.Errorf("missing partition key for index")
-		}
-		metadata.Indexes = append(metadata.Indexes, *index)
-	}
-
-	return metadata, nil
+	return nil
 }
 
 // parseFieldMetadata parses metadata for a single field
-func parseFieldMetadata(field reflect.StructField, index int) (*FieldMetadata, error) {
+func parseFieldMetadata(field reflect.StructField, indexPath []int) (*FieldMetadata, error) {
 	meta := &FieldMetadata{
 		Name:      field.Name,
 		Type:      field.Type,
 		DBName:    field.Name,
-		Index:     index,
+		Index:     indexPath[len(indexPath)-1], // Keep for backward compatibility
+		IndexPath: indexPath,
 		Tags:      make(map[string]string),
 		IndexInfo: make(map[string]IndexRole),
 	}

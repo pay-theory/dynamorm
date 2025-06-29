@@ -150,7 +150,7 @@ func (m *SafeMarshaler) buildSafeStructMarshaler(typ reflect.Type, metadata *mod
 		}
 
 		fm := safeFieldMarshaler{
-			fieldIndex:  []int{fieldMeta.Index},
+			fieldIndex:  fieldMeta.IndexPath,
 			dbName:      fieldMeta.DBName,
 			typ:         field.Type,
 			omitEmpty:   fieldMeta.OmitEmpty,

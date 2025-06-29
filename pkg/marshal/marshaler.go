@@ -146,7 +146,7 @@ func (m *Marshaler) buildStructMarshaler(typ reflect.Type, metadata *model.Metad
 	}
 
 	for _, fieldMeta := range metadata.Fields {
-		field := typ.FieldByIndex([]int{fieldMeta.Index})
+		field := typ.FieldByIndex(fieldMeta.IndexPath)
 
 		// Count non-omitempty fields
 		if !fieldMeta.OmitEmpty || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt || fieldMeta.IsVersion {
