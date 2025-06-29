@@ -98,12 +98,28 @@ The codebase includes specific optimizations for Lambda in `lambda.go`:
    - `dynamorm:"pk"` - Partition key
    - `dynamorm:"sk"` - Sort key
    - `dynamorm:"created_at"` - Custom attribute name
+   - `dynamorm:"index:gsi1,pk"` - GSI partition key
+   - `dynamorm:"index:gsi1,sk"` - GSI sort key
 
-2. **Error Handling**: Custom error types in `/pkg/errors/` with retry strategies
+2. **Embedded Structs**: DynamORM supports embedded structs for code reuse:
+   ```go
+   type BaseModel struct {
+       PK        string    `dynamorm:"pk"`
+       SK        string    `dynamorm:"sk"`
+       UpdatedAt time.Time `dynamorm:"updated_at"`
+   }
+   
+   type Customer struct {
+       BaseModel  // Embedded fields are recognized
+       Name string
+   }
+   ```
 
-3. **Performance**: Focus on reducing allocations and reusing resources
+3. **Error Handling**: Custom error types in `/pkg/errors/` with retry strategies
 
-4. **Multi-Account**: Built-in support via `WithMultiAccount()` option
+4. **Performance**: Focus on reducing allocations and reusing resources
+
+5. **Multi-Account**: Built-in support via `WithMultiAccount()` option
 
 ## Development Workflow
 

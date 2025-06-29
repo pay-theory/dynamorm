@@ -811,14 +811,14 @@ func (q *query) BatchGet(keys []any, dest any) error {
 				// Extract primary key fields from struct
 				for _, field := range metadata.Fields {
 					if field.IsPK {
-						fieldValue := keyValue.FieldByIndex([]int{field.Index})
+						fieldValue := keyValue.FieldByIndex(field.IndexPath)
 						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
 						if err != nil {
 							return fmt.Errorf("failed to convert partition key: %w", err)
 						}
 						keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
 					} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
-						fieldValue := keyValue.FieldByIndex([]int{field.Index})
+						fieldValue := keyValue.FieldByIndex(field.IndexPath)
 						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
 						if err != nil {
 							return fmt.Errorf("failed to convert sort key: %w", err)
@@ -1036,14 +1036,14 @@ func (q *query) BatchDelete(keys []any) error {
 					// Extract primary key fields from struct
 					for _, field := range metadata.Fields {
 						if field.IsPK {
-							fieldValue := keyValue.FieldByIndex([]int{field.Index})
+							fieldValue := keyValue.FieldByIndex(field.IndexPath)
 							av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
 							if err != nil {
 								return fmt.Errorf("failed to convert partition key: %w", err)
 							}
 							keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
 						} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
-							fieldValue := keyValue.FieldByIndex([]int{field.Index})
+							fieldValue := keyValue.FieldByIndex(field.IndexPath)
 							av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
 							if err != nil {
 								return fmt.Errorf("failed to convert sort key: %w", err)
@@ -1156,7 +1156,7 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 
 		// Extract primary key from model
 		if metadata.PrimaryKey.PartitionKey != nil {
-			pkField := modelValue.FieldByIndex([]int{metadata.PrimaryKey.PartitionKey.Index})
+			pkField := modelValue.FieldByIndex(metadata.PrimaryKey.PartitionKey.IndexPath)
 			if !pkField.IsZero() {
 				pk["pk"] = pkField.Interface()
 			}
@@ -1164,7 +1164,7 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 
 		// Extract sort key from model if exists
 		if metadata.PrimaryKey.SortKey != nil {
-			skField := modelValue.FieldByIndex([]int{metadata.PrimaryKey.SortKey.Index})
+			skField := modelValue.FieldByIndex(metadata.PrimaryKey.SortKey.IndexPath)
 			if !skField.IsZero() {
 				pk["sk"] = skField.Interface()
 			}
@@ -1329,7 +1329,7 @@ func (q *query) unmarshalItem(item map[string]types.AttributeValue, dest any, me
 		}
 
 		// Get the struct field
-		structField := destValue.FieldByIndex([]int{field.Index})
+		structField := destValue.FieldByIndex(field.IndexPath)
 		if !structField.CanSet() {
 			continue
 		}
@@ -1405,7 +1405,7 @@ func (q *query) updateTimestampsInModel(metadata *model.Metadata) {
 	// Update timestamp fields
 	for _, fieldMeta := range metadata.Fields {
 		if fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
-			field := modelValue.FieldByIndex([]int{fieldMeta.Index})
+			field := modelValue.FieldByIndex(fieldMeta.IndexPath)
 			if field.CanSet() && field.Type() == reflect.TypeOf(time.Time{}) {
 				field.Set(reflect.ValueOf(now))
 			}
@@ -1430,7 +1430,7 @@ func (q *query) marshalItem(model any, metadata *model.Metadata) (map[string]typ
 
 	// Process each field
 	for fieldName, fieldMeta := range metadata.Fields {
-		fieldValue := modelValue.FieldByIndex([]int{fieldMeta.Index})
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
 
 		// Skip zero values if omitempty
 		if fieldMeta.OmitEmpty && fieldValue.IsZero() {
@@ -1889,7 +1889,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 			if fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
 				continue
 			}
-			fieldValue := modelValue.FieldByIndex([]int{fieldMeta.Index})
+			fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
 			if !fieldValue.IsZero() || !fieldMeta.OmitEmpty {
 				fieldsToUpdate = append(fieldsToUpdate, fieldName)
 			}
@@ -1903,7 +1903,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 			continue
 		}
 
-		fieldValue := modelValue.FieldByIndex([]int{fieldMeta.Index})
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
 
 		// Handle special fields
 		if fieldMeta.IsUpdatedAt {
@@ -1926,7 +1926,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 
 	// Add version check if version field exists
 	if metadata.VersionField != nil {
-		currentVersion := modelValue.FieldByIndex([]int{metadata.VersionField.Index}).Int()
+		currentVersion := modelValue.FieldByIndex(metadata.VersionField.IndexPath).Int()
 		builder.AddConditionExpression(metadata.VersionField.DBName, "=", currentVersion)
 	}
 
@@ -2007,7 +2007,7 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 		if modelValue.Kind() == reflect.Ptr {
 			modelValue = modelValue.Elem()
 		}
-		versionValue := modelValue.FieldByIndex([]int{metadata.VersionField.Index})
+		versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
 		if !versionValue.IsZero() {
 			builder.AddConditionExpression(metadata.VersionField.DBName, "=", versionValue.Int())
 			hasConditions = true
@@ -2655,13 +2655,13 @@ func (q *query) BatchUpdateWithOptions(items []any, fields []string, options ...
 
 		// Add partition key condition
 		if metadata.PrimaryKey.PartitionKey != nil {
-			pkField := itemValue.FieldByIndex([]int{metadata.PrimaryKey.PartitionKey.Index})
+			pkField := itemValue.FieldByIndex(metadata.PrimaryKey.PartitionKey.IndexPath)
 			updateQuery = updateQuery.Where(metadata.PrimaryKey.PartitionKey.Name, "=", pkField.Interface())
 		}
 
 		// Add sort key condition if present
 		if metadata.PrimaryKey.SortKey != nil {
-			skField := itemValue.FieldByIndex([]int{metadata.PrimaryKey.SortKey.Index})
+			skField := itemValue.FieldByIndex(metadata.PrimaryKey.SortKey.IndexPath)
 			updateQuery = updateQuery.Where(metadata.PrimaryKey.SortKey.Name, "=", skField.Interface())
 		}
 

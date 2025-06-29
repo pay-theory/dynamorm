@@ -155,7 +155,7 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 			}
 
 			// Get the struct field
-			structField := sourceModel.FieldByIndex([]int{field.Index})
+			structField := sourceModel.FieldByIndex(field.IndexPath)
 			if !structField.CanSet() {
 				continue
 			}
