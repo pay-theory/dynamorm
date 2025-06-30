@@ -2819,9 +2819,14 @@ func (ma *metadataAdapter) Indexes() []core.IndexSchema {
 }
 
 func (ma *metadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
+	// First check by Go field name
 	fieldMeta, exists := ma.metadata.Fields[field]
 	if !exists {
-		return nil
+		// Then check by DynamoDB attribute name
+		fieldMeta, exists = ma.metadata.FieldsByDBName[field]
+		if !exists {
+			return nil
+		}
 	}
 
 	return &core.AttributeMetadata{

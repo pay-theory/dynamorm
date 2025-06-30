@@ -69,10 +69,11 @@ type VersionedStruct struct {
 // Helper function to create field metadata
 func createFieldMetadata(name, dbName string, index int, typ reflect.Type, opts ...func(*model.FieldMetadata)) *model.FieldMetadata {
 	fm := &model.FieldMetadata{
-		Name:   name,
-		DBName: dbName,
-		Index:  index,
-		Type:   typ,
+		Name:      name,
+		DBName:    dbName,
+		Index:     index,
+		IndexPath: []int{index}, // Add IndexPath for embedded struct support
+		Type:      typ,
 	}
 	for _, opt := range opts {
 		opt(fm)

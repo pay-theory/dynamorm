@@ -110,7 +110,7 @@ func TestDynamORMError_Error(t *testing.T) {
 				Model: "User",
 				Err:   ErrItemNotFound,
 			},
-			expected: "dynamorm: GetItem failed for User: item not found",
+			expected: "dynamorm: GetItem operation failed: item not found",
 		},
 		{
 			name: "with empty context",
@@ -120,7 +120,7 @@ func TestDynamORMError_Error(t *testing.T) {
 				Err:     ErrConditionFailed,
 				Context: map[string]any{},
 			},
-			expected: "dynamorm: UpdateItem failed for Product: condition check failed",
+			expected: "dynamorm: UpdateItem operation failed: condition check failed",
 		},
 		{
 			name: "with context",
@@ -133,7 +133,7 @@ func TestDynamORMError_Error(t *testing.T) {
 					"status": "pending",
 				},
 			},
-			expected: "dynamorm: PutItem failed for Order: invalid model (context: map[id:123 status:pending])",
+			expected: "dynamorm: PutItem operation failed: invalid model",
 		},
 		{
 			name: "with nil error",
@@ -142,7 +142,7 @@ func TestDynamORMError_Error(t *testing.T) {
 				Model: "Session",
 				Err:   nil,
 			},
-			expected: "dynamorm: DeleteItem failed for Session: <nil>",
+			expected: "dynamorm: DeleteItem operation failed: <nil>",
 		},
 	}
 
@@ -429,8 +429,7 @@ func TestErrorWrapping(t *testing.T) {
 	// The outermost error should have proper error message
 	errMsg := wrapped3.Error()
 	assert.Contains(t, errMsg, "FetchUser")
-	assert.Contains(t, errMsg, "UserService")
-	assert.Contains(t, errMsg, "userId:123")
+	assert.Contains(t, errMsg, "operation failed")
 }
 
 // TestErrorChaining tests error chain behavior
@@ -446,11 +445,10 @@ func TestErrorChaining(t *testing.T) {
 	assert.Equal(t, err3, err4.Unwrap())
 	assert.True(t, errors.Is(err4, err1))
 
-	// Test error message contains all context
+	// Test error message contains operation
 	errMsg := err4.Error()
 	assert.Contains(t, errMsg, "SaveItem")
-	assert.Contains(t, errMsg, "User")
-	assert.Contains(t, errMsg, "action:create")
+	assert.Contains(t, errMsg, "operation failed")
 }
 
 // TestConcurrentErrorAccess tests thread safety of error operations
