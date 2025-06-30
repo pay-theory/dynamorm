@@ -8,6 +8,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// Helper function to assert SecurityError details
+func assertSecurityError(t *testing.T, err error, expectedType string, expectedDetailContains string) {
+	t.Helper()
+	var secErr *SecurityError
+	if assert.ErrorAs(t, err, &secErr) {
+		assert.Equal(t, expectedType, secErr.Type)
+		if expectedDetailContains != "" {
+			assert.Contains(t, secErr.Detail, expectedDetailContains)
+		}
+	}
+}
+
 // TestFieldNameValidation tests field name security validation
 func TestFieldNameValidation(t *testing.T) {
 	t.Run("ValidFieldNames", func(t *testing.T) {
@@ -31,14 +43,14 @@ func TestFieldNameValidation(t *testing.T) {
 	t.Run("RejectEmptyFieldName", func(t *testing.T) {
 		err := ValidateFieldName("")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "field name cannot be empty")
+		assertSecurityError(t, err, "InvalidField", "field name cannot be empty")
 	})
 
 	t.Run("RejectOversizedFieldName", func(t *testing.T) {
 		longName := strings.Repeat("a", MaxFieldNameLength+1)
 		err := ValidateFieldName(longName)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds maximum length")
+		assertSecurityError(t, err, "InvalidField", "field name exceeds maximum length")
 	})
 
 	t.Run("RejectSQLInjectionPatterns", func(t *testing.T) {
@@ -50,7 +62,7 @@ func TestFieldNameValidation(t *testing.T) {
 			{"field with quotes and SQL", "field'; DROP TABLE users; --", "dangerous pattern"},
 			{"field with quotes and DELETE", "field\"; DELETE FROM table; --", "dangerous pattern"},
 			{"field with comment", "field/*comment*/", "dangerous pattern"},
-			{"field with UNION keyword", "field UNION SELECT", "suspicious SQL keyword"},
+			{"field with UNION keyword", "field UNION SELECT", "suspicious content"},
 			{"field with script tag", "field<script>alert('xss')</script>", "dangerous pattern"},
 			{"field with SQL injection", "field'OR'1'='1", "dangerous pattern"},
 		}
@@ -59,7 +71,7 @@ func TestFieldNameValidation(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				err := ValidateFieldName(tc.fieldName)
 				assert.Error(t, err, "Should reject dangerous field name: %s", tc.fieldName)
-				assert.Contains(t, err.Error(), tc.expectedMessage)
+				assertSecurityError(t, err, "InjectionAttempt", tc.expectedMessage)
 			})
 		}
 	})
@@ -76,7 +88,7 @@ func TestFieldNameValidation(t *testing.T) {
 			t.Run("Control_"+name, func(t *testing.T) {
 				err := ValidateFieldName(name)
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "control characters")
+				assertSecurityError(t, err, "InvalidField", "control characters")
 			})
 		}
 	})
@@ -90,7 +102,7 @@ func TestFieldNameValidation(t *testing.T) {
 
 		err := ValidateFieldName(deepName)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "nested field depth exceeds maximum")
+		assertSecurityError(t, err, "InvalidField", "nested field depth exceeds maximum")
 	})
 
 	t.Run("ValidateNestedFieldParts", func(t *testing.T) {
@@ -125,14 +137,14 @@ func TestOperatorValidation(t *testing.T) {
 	t.Run("RejectEmptyOperator", func(t *testing.T) {
 		err := ValidateOperator("")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "operator cannot be empty")
+		assertSecurityError(t, err, "InvalidOperator", "operator cannot be empty")
 	})
 
 	t.Run("RejectOversizedOperator", func(t *testing.T) {
 		longOp := strings.Repeat("a", MaxOperatorLength+1)
 		err := ValidateOperator(longOp)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds maximum length")
+		assertSecurityError(t, err, "InvalidOperator", "operator exceeds maximum length")
 	})
 
 	t.Run("RejectInvalidOperators", func(t *testing.T) {
@@ -146,7 +158,7 @@ func TestOperatorValidation(t *testing.T) {
 			t.Run(op, func(t *testing.T) {
 				err := ValidateOperator(op)
 				assert.Error(t, err, "Should reject invalid operator: %s", op)
-				assert.Contains(t, err.Error(), "is not allowed")
+				assertSecurityError(t, err, "InvalidOperator", "not allowed")
 			})
 		}
 	})
@@ -157,17 +169,17 @@ func TestOperatorValidation(t *testing.T) {
 			operator        string
 			expectedMessage string
 		}{
-			{"SQL injection with quotes", "'; DROP TABLE; --", "is not allowed"},
-			{"UNION SELECT operator", "UNION SELECT", "is not allowed"},
-			{"comment operator", "/*comment*/", "is not allowed"},
-			{"script tag operator", "<script>", "is not allowed"},
+			{"SQL injection with quotes", "'; DROP TABLE; --", "not allowed"},
+			{"UNION SELECT operator", "UNION SELECT", "not allowed"},
+			{"comment operator", "/*comment*/", "not allowed"},
+			{"script tag operator", "<script>", "not allowed"},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				err := ValidateOperator(tc.operator)
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tc.expectedMessage)
+				assertSecurityError(t, err, "InvalidOperator", tc.expectedMessage)
 			})
 		}
 	})
@@ -237,7 +249,7 @@ func TestValueValidation(t *testing.T) {
 		largeString := strings.Repeat("a", MaxValueStringLength+1)
 		err := ValidateValue(largeString)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds maximum length")
+		assertSecurityError(t, err, "InvalidValue", "exceeds maximum length")
 	})
 
 	t.Run("RejectDangerousStringPatterns", func(t *testing.T) {
@@ -252,7 +264,7 @@ func TestValueValidation(t *testing.T) {
 			t.Run(str, func(t *testing.T) {
 				err := ValidateValue(str)
 				assert.Error(t, err, "Should reject dangerous string: %s", str)
-				assert.Contains(t, err.Error(), "dangerous pattern")
+				assertSecurityError(t, err, "InjectionAttempt", "dangerous pattern")
 			})
 		}
 	})
@@ -265,7 +277,7 @@ func TestValueValidation(t *testing.T) {
 
 		err := ValidateValue(largeSlice)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds maximum length")
+		assertSecurityError(t, err, "InvalidValue", "exceeds maximum length")
 	})
 
 	t.Run("RejectOversizedMap", func(t *testing.T) {
@@ -276,7 +288,7 @@ func TestValueValidation(t *testing.T) {
 
 		err := ValidateValue(largeMap)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds maximum")
+		assertSecurityError(t, err, "InvalidValue", "exceeds maximum")
 	})
 
 	t.Run("RejectInvalidMapKeys", func(t *testing.T) {
@@ -286,7 +298,7 @@ func TestValueValidation(t *testing.T) {
 
 		err := ValidateValue(invalidMap)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid map key")
+		assertSecurityError(t, err, "InvalidValue", "invalid map key")
 	})
 
 	t.Run("RejectUnsupportedTypes", func(t *testing.T) {
@@ -300,7 +312,7 @@ func TestValueValidation(t *testing.T) {
 			t.Run(fmt.Sprintf("Unsupported_%d", i), func(t *testing.T) {
 				err := ValidateValue(value)
 				assert.Error(t, err, "Should reject unsupported type: %T", value)
-				assert.Contains(t, err.Error(), "unsupported value type")
+				assertSecurityError(t, err, "InvalidValue", "unsupported value type")
 			})
 		}
 	})
@@ -328,7 +340,7 @@ func TestExpressionValidation(t *testing.T) {
 		largeExpr := strings.Repeat("a", MaxExpressionLength+1)
 		err := ValidateExpression(largeExpr)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "exceeds maximum length")
+		assertSecurityError(t, err, "InvalidExpression", "exceeds maximum length")
 	})
 
 	t.Run("RejectDangerousExpressions", func(t *testing.T) {
@@ -343,7 +355,7 @@ func TestExpressionValidation(t *testing.T) {
 			t.Run(expr, func(t *testing.T) {
 				err := ValidateExpression(expr)
 				assert.Error(t, err, "Should reject dangerous expression: %s", expr)
-				assert.Contains(t, err.Error(), "dangerous pattern")
+				assertSecurityError(t, err, "InjectionAttempt", "dangerous pattern")
 			})
 		}
 	})
@@ -372,13 +384,13 @@ func TestTableNameValidation(t *testing.T) {
 		// Too short
 		err := ValidateTableName("ab")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must be 3-255 characters")
+		assertSecurityError(t, err, "InvalidTableName", "table name length invalid")
 
 		// Too long
 		longName := strings.Repeat("a", 256)
 		err = ValidateTableName(longName)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must be 3-255 characters")
+		assertSecurityError(t, err, "InvalidTableName", "table name length invalid")
 	})
 
 	t.Run("RejectInvalidCharacters", func(t *testing.T) {
@@ -394,7 +406,7 @@ func TestTableNameValidation(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				err := ValidateTableName(name)
 				assert.Error(t, err, "Should reject invalid table name: %s", name)
-				assert.Contains(t, err.Error(), "can only contain")
+				assertSecurityError(t, err, "InvalidTableName", "table name contains invalid characters")
 			})
 		}
 	})
@@ -405,16 +417,20 @@ func TestTableNameValidation(t *testing.T) {
 			tableName       string
 			expectedMessage string
 		}{
-			{"table with SQL injection", "users'; DROP TABLE", "can only contain"},
+			{"table with SQL injection", "users'; DROP TABLE", "table name contains invalid characters"},
 			{"table with comment", "table--comment", "dangerous pattern"},
-			{"table with block comment", "table/*comment*/", "can only contain"},
+			{"table with block comment", "table/*comment*/", "table name contains invalid characters"},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				err := ValidateTableName(tc.tableName)
 				assert.Error(t, err, "Should reject dangerous table name: %s", tc.tableName)
-				assert.Contains(t, err.Error(), tc.expectedMessage)
+				if tc.expectedMessage == "table name contains invalid characters" {
+					assertSecurityError(t, err, "InvalidTableName", tc.expectedMessage)
+				} else {
+					assertSecurityError(t, err, "InjectionAttempt", tc.expectedMessage)
+				}
 			})
 		}
 	})
@@ -443,13 +459,13 @@ func TestIndexNameValidation(t *testing.T) {
 		// Too short (but not empty)
 		err := ValidateIndexName("ab")
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must be 3-255 characters")
+		assertSecurityError(t, err, "InvalidIndexName", "index name length invalid")
 
 		// Too long
 		longName := strings.Repeat("a", 256)
 		err = ValidateIndexName(longName)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must be 3-255 characters")
+		assertSecurityError(t, err, "InvalidIndexName", "index name length invalid")
 	})
 
 	t.Run("RejectInvalidCharacters", func(t *testing.T) {
@@ -464,7 +480,7 @@ func TestIndexNameValidation(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				err := ValidateIndexName(name)
 				assert.Error(t, err, "Should reject invalid index name: %s", name)
-				assert.Contains(t, err.Error(), "can only contain")
+				assertSecurityError(t, err, "InvalidIndexName", "index name contains invalid characters")
 			})
 		}
 	})
@@ -479,20 +495,20 @@ func TestSecurityErrorTypes(t *testing.T) {
 			Detail: "test detail",
 		}
 
-		expected := "security validation failed [TestType]: testField - test detail"
+		expected := "security validation failed: TestType"
 		assert.Equal(t, expected, err.Error())
 	})
 
 	t.Run("SecurityErrorTypes", func(t *testing.T) {
 		// Test different error types are properly categorized
 		fieldErr := ValidateFieldName("'; DROP TABLE")
-		assert.Contains(t, fieldErr.Error(), "[InjectionAttempt]")
+		assertSecurityError(t, fieldErr, "InjectionAttempt", "dangerous pattern")
 
 		opErr := ValidateOperator("INVALID_OP")
-		assert.Contains(t, opErr.Error(), "[InvalidOperator]")
+		assertSecurityError(t, opErr, "InvalidOperator", "not allowed")
 
 		valueErr := ValidateValue(strings.Repeat("a", MaxValueStringLength+1))
-		assert.Contains(t, valueErr.Error(), "[InvalidValue]")
+		assertSecurityError(t, valueErr, "InvalidValue", "exceeds maximum length")
 	})
 }
 
