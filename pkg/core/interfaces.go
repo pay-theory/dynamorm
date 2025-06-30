@@ -81,6 +81,14 @@ type Query interface {
 	// Select specifies which fields to retrieve
 	Select(fields ...string) Query
 
+	// ConsistentRead enables strongly consistent reads for Query operations
+	// Note: This only works on main table queries, not GSI queries
+	ConsistentRead() Query
+
+	// WithRetry configures retry behavior for eventually consistent reads
+	// Useful for GSI queries where you need read-after-write consistency
+	WithRetry(maxRetries int, initialDelay time.Duration) Query
+
 	// First retrieves the first matching item
 	First(dest any) error
 
@@ -283,6 +291,7 @@ type CompiledQuery struct {
 	Select            string // "ALL_ATTRIBUTES", "COUNT", etc.
 	Offset            *int   // For pagination handling
 	ReturnValues      string // "NONE", "ALL_OLD", "UPDATED_OLD", "ALL_NEW", "UPDATED_NEW"
+	ConsistentRead    *bool  // For strongly consistent reads
 
 	// Parallel scan parameters
 	Segment       *int32 // The segment number for parallel scan

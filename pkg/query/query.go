@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/internal/expr"
@@ -35,6 +36,12 @@ type Query struct {
 	// Parallel scan configuration
 	segment       *int32
 	totalSegments *int32
+
+	// Consistency options
+	consistentRead bool
+
+	// Retry configuration
+	retryConfig *RetryConfig
 }
 
 // Condition represents a query condition
@@ -60,6 +67,12 @@ type RawFilter struct {
 type OrderBy struct {
 	Field string
 	Order string // "asc" or "desc"
+}
+
+// RetryConfig configures retry behavior
+type RetryConfig struct {
+	MaxRetries   int
+	InitialDelay time.Duration
 }
 
 // QueryExecutor is the base query executor interface
@@ -166,6 +179,21 @@ func (q *Query) OrderBy(field string, order string) core.Query {
 // Select specifies which fields to return
 func (q *Query) Select(fields ...string) core.Query {
 	q.projection = fields
+	return q
+}
+
+// ConsistentRead enables strongly consistent reads for Query operations
+func (q *Query) ConsistentRead() core.Query {
+	q.consistentRead = true
+	return q
+}
+
+// WithRetry configures retry behavior for eventually consistent reads
+func (q *Query) WithRetry(maxRetries int, initialDelay time.Duration) core.Query {
+	q.retryConfig = &RetryConfig{
+		MaxRetries:   maxRetries,
+		InitialDelay: initialDelay,
+	}
 	return q
 }
 
@@ -1230,6 +1258,11 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		compiled.ExclusiveStartKey = q.exclusive
 	}
 
+	// Set consistent read (only for main table, not GSI)
+	if q.consistentRead && compiled.IndexName == "" {
+		compiled.ConsistentRead = &q.consistentRead
+	}
+
 	return compiled, nil
 }
 
@@ -1290,6 +1323,11 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 	if q.segment != nil && q.totalSegments != nil {
 		compiled.Segment = q.segment
 		compiled.TotalSegments = q.totalSegments
+	}
+
+	// Set consistent read (only for main table scan, not GSI)
+	if q.consistentRead && q.index == "" {
+		compiled.ConsistentRead = &q.consistentRead
 	}
 
 	return compiled, nil

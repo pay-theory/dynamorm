@@ -347,6 +347,12 @@ type query struct {
 
 	// Pagination fields
 	exclusiveStartKey string
+
+	// Consistency options
+	consistentRead bool
+
+	// Retry configuration
+	retryConfig *retryConfig
 }
 
 type condition struct {
@@ -358,6 +364,11 @@ type condition struct {
 type orderBy struct {
 	field string
 	order string
+}
+
+type retryConfig struct {
+	maxRetries   int
+	initialDelay time.Duration
 }
 
 // checkLambdaTimeout checks if Lambda execution is about to timeout
@@ -472,8 +483,31 @@ func (q *query) Select(fields ...string) core.Query {
 	return q
 }
 
+// ConsistentRead enables strongly consistent reads for Query operations
+func (q *query) ConsistentRead() core.Query {
+	q.consistentRead = true
+	return q
+}
+
+// WithRetry configures retry behavior for eventually consistent reads
+func (q *query) WithRetry(maxRetries int, initialDelay time.Duration) core.Query {
+	q.retryConfig = &retryConfig{
+		maxRetries:   maxRetries,
+		initialDelay: initialDelay,
+	}
+	return q
+}
+
 // First retrieves the first matching item
 func (q *query) First(dest any) error {
+	if q.retryConfig != nil {
+		return q.firstWithRetry(dest)
+	}
+	return q.firstInternal(dest)
+}
+
+// firstInternal is the actual implementation of First
+func (q *query) firstInternal(dest any) error {
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -517,8 +551,45 @@ func (q *query) First(dest any) error {
 	return nil
 }
 
+// firstWithRetry executes First with retry logic
+func (q *query) firstWithRetry(dest any) error {
+	delay := q.retryConfig.initialDelay
+	maxDelay := 5 * time.Second
+	backoffFactor := 2.0
+
+	for attempt := 0; attempt <= q.retryConfig.maxRetries; attempt++ {
+		err := q.firstInternal(dest)
+
+		// If successful or it's not a "not found" error, return
+		if err == nil || (err != customerrors.ErrItemNotFound && attempt == q.retryConfig.maxRetries) {
+			return err
+		}
+
+		// Don't sleep on the last attempt
+		if attempt < q.retryConfig.maxRetries {
+			time.Sleep(delay)
+
+			// Calculate next delay with exponential backoff
+			delay = time.Duration(float64(delay) * backoffFactor)
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+
+	return customerrors.ErrItemNotFound
+}
+
 // All retrieves all matching items
 func (q *query) All(dest any) error {
+	if q.retryConfig != nil {
+		return q.allWithRetry(dest)
+	}
+	return q.allInternal(dest)
+}
+
+// allInternal is the actual implementation of All
+func (q *query) allInternal(dest any) error {
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -580,6 +651,50 @@ func (q *query) All(dest any) error {
 
 	// Unmarshal items to destination slice
 	return q.unmarshalItems(items, dest, metadata)
+}
+
+// allWithRetry executes All with retry logic
+func (q *query) allWithRetry(dest any) error {
+	delay := q.retryConfig.initialDelay
+	maxDelay := 5 * time.Second
+	backoffFactor := 2.0
+
+	// Get the slice value to check if results are empty
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("destination must be a pointer to slice")
+	}
+
+	for attempt := 0; attempt <= q.retryConfig.maxRetries; attempt++ {
+		// Clear the slice before each attempt
+		destValue.Elem().Set(reflect.MakeSlice(destValue.Elem().Type(), 0, 0))
+
+		err := q.allInternal(dest)
+
+		// If successful and we have results, return
+		if err == nil && destValue.Elem().Len() > 0 {
+			return nil
+		}
+
+		// If it's an error other than empty results, return on last attempt
+		if err != nil && attempt == q.retryConfig.maxRetries {
+			return err
+		}
+
+		// Don't sleep on the last attempt
+		if attempt < q.retryConfig.maxRetries {
+			time.Sleep(delay)
+
+			// Calculate next delay with exponential backoff
+			delay = time.Duration(float64(delay) * backoffFactor)
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+
+	// Return success even if empty after retries (All doesn't error on empty results)
+	return nil
 }
 
 // Count returns the number of matching items
@@ -1222,6 +1337,11 @@ func (q *query) getItem(metadata *model.Metadata, pk map[string]any, dest any) e
 		}
 	}
 
+	// Set consistent read
+	if q.consistentRead {
+		input.ConsistentRead = aws.Bool(true)
+	}
+
 	// Execute GetItem
 	client, err := q.db.session.Client()
 	if err != nil {
@@ -1270,10 +1390,17 @@ func (q *query) getItemDirect(metadata *model.Metadata, pk map[string]any, dest 
 		return fmt.Errorf("failed to get client for direct get item: %w", err)
 	}
 
-	output, err := client.GetItem(q.ctx, &dynamodb.GetItemInput{
+	input := &dynamodb.GetItemInput{
 		TableName: aws.String(metadata.TableName),
 		Key:       keyMap,
-	})
+	}
+
+	// Set consistent read
+	if q.consistentRead {
+		input.ConsistentRead = aws.Bool(true)
+	}
+
+	output, err := client.GetItem(q.ctx, input)
 
 	if err != nil {
 		return fmt.Errorf("failed to get item: %w", err)
@@ -1550,6 +1677,11 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 		input.Limit = aws.Int32(int32(*q.limit))
 	}
 
+	// Set consistent read (only works for main table queries, not GSI)
+	if q.consistentRead && q.indexName == "" {
+		input.ConsistentRead = aws.Bool(true)
+	}
+
 	// Execute query and collect results
 	var items []map[string]types.AttributeValue
 
@@ -1630,6 +1762,11 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 	// Set limit
 	if q.limit != nil {
 		input.Limit = aws.Int32(int32(*q.limit))
+	}
+
+	// Set consistent read (only works for main table scans, not GSI)
+	if q.consistentRead && q.indexName == "" {
+		input.ConsistentRead = aws.Bool(true)
 	}
 
 	// Execute scan and collect results
@@ -2066,22 +2203,24 @@ func (e *errorQuery) FilterGroup(fn func(q core.Query)) core.Query { return e }
 func (e *errorQuery) OrFilterGroup(fn func(core.Query)) core.Query {
 	return e
 }
-func (e *errorQuery) OrderBy(field string, order string) core.Query     { return e }
-func (e *errorQuery) Limit(limit int) core.Query                        { return e }
-func (e *errorQuery) Offset(offset int) core.Query                      { return e }
-func (e *errorQuery) Select(fields ...string) core.Query                { return e }
-func (e *errorQuery) First(dest any) error                              { return e.err }
-func (e *errorQuery) All(dest any) error                                { return e.err }
-func (e *errorQuery) Count() (int64, error)                             { return 0, e.err }
-func (e *errorQuery) Create() error                                     { return e.err }
-func (e *errorQuery) CreateOrUpdate() error                             { return e.err }
-func (e *errorQuery) Update(fields ...string) error                     { return e.err }
-func (e *errorQuery) Delete() error                                     { return e.err }
-func (e *errorQuery) Scan(dest any) error                               { return e.err }
-func (e *errorQuery) BatchGet(keys []any, dest any) error               { return e.err }
-func (e *errorQuery) BatchCreate(items any) error                       { return e.err }
-func (e *errorQuery) BatchDelete(keys []any) error                      { return e.err }
-func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error { return e.err }
+func (e *errorQuery) OrderBy(field string, order string) core.Query                   { return e }
+func (e *errorQuery) Limit(limit int) core.Query                                      { return e }
+func (e *errorQuery) Offset(offset int) core.Query                                    { return e }
+func (e *errorQuery) Select(fields ...string) core.Query                              { return e }
+func (e *errorQuery) ConsistentRead() core.Query                                      { return e }
+func (e *errorQuery) WithRetry(maxRetries int, initialDelay time.Duration) core.Query { return e }
+func (e *errorQuery) First(dest any) error                                            { return e.err }
+func (e *errorQuery) All(dest any) error                                              { return e.err }
+func (e *errorQuery) Count() (int64, error)                                           { return 0, e.err }
+func (e *errorQuery) Create() error                                                   { return e.err }
+func (e *errorQuery) CreateOrUpdate() error                                           { return e.err }
+func (e *errorQuery) Update(fields ...string) error                                   { return e.err }
+func (e *errorQuery) Delete() error                                                   { return e.err }
+func (e *errorQuery) Scan(dest any) error                                             { return e.err }
+func (e *errorQuery) BatchGet(keys []any, dest any) error                             { return e.err }
+func (e *errorQuery) BatchCreate(items any) error                                     { return e.err }
+func (e *errorQuery) BatchDelete(keys []any) error                                    { return e.err }
+func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error               { return e.err }
 func (e *errorQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
 	return e.err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/assert"
@@ -97,6 +98,16 @@ func (m *MockQuery) Offset(offset int) Query {
 
 func (m *MockQuery) Select(fields ...string) Query {
 	args := m.Called(fields)
+	return args.Get(0).(Query)
+}
+
+func (m *MockQuery) ConsistentRead() Query {
+	args := m.Called()
+	return args.Get(0).(Query)
+}
+
+func (m *MockQuery) WithRetry(maxRetries int, initialDelay time.Duration) Query {
+	args := m.Called(maxRetries, initialDelay)
 	return args.Get(0).(Query)
 }
 

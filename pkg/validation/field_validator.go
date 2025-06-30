@@ -352,15 +352,15 @@ func validateStringValue(s string) error {
 	// For string VALUES (not field names), we should be more permissive
 	// DynamoDB stores data, including JSON, HTML, etc. which naturally contain quotes
 	// We only need to check for actual injection attempts, not legitimate data
-	
+
 	stringLower := strings.ToLower(s)
-	
+
 	// Check for script injection patterns (but allow quotes and semicolons in data)
 	scriptPatterns := []string{
 		"<script", "</script", "eval(", "expression(", "import(", "require(",
 		"javascript:", "vbscript:", "onload=", "onerror=", "onclick=",
 	}
-	
+
 	for _, pattern := range scriptPatterns {
 		if strings.Contains(stringLower, pattern) {
 			return &SecurityError{
@@ -370,7 +370,7 @@ func validateStringValue(s string) error {
 			}
 		}
 	}
-	
+
 	// Check for comment patterns that are clearly malicious
 	if strings.Contains(s, "/*") && strings.Contains(s, "*/") {
 		return &SecurityError{
@@ -400,19 +400,19 @@ func validateStringValue(s string) error {
 			}
 		}
 	}
-	
+
 	// Check for specific dangerous command patterns
 	// Allow "union select" in general text but block with dangerous context
 	if strings.Contains(stringLower, "union") && strings.Contains(stringLower, "select") {
 		// Check if it looks like a SQL injection attempt
-		if strings.Contains(stringLower, "union select") || 
-		   strings.Contains(stringLower, "union all select") ||
-		   strings.Contains(stringLower, "union/**/select") {
+		if strings.Contains(stringLower, "union select") ||
+			strings.Contains(stringLower, "union all select") ||
+			strings.Contains(stringLower, "union/**/select") {
 			// Check for additional SQL patterns that indicate injection
 			if strings.Contains(stringLower, "from") ||
-			   strings.Contains(stringLower, "*") ||
-			   strings.HasSuffix(s, "--") ||
-			   strings.HasSuffix(s, ";") {
+				strings.Contains(stringLower, "*") ||
+				strings.HasSuffix(s, "--") ||
+				strings.HasSuffix(s, ";") {
 				return &SecurityError{
 					Type:   "InjectionAttempt",
 					Field:  "",

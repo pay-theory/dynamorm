@@ -92,6 +92,11 @@ func (e *MainExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 		queryInput.ScanIndexForward = input.ScanIndexForward
 	}
 
+	// Set consistent read
+	if input.ConsistentRead != nil {
+		queryInput.ConsistentRead = input.ConsistentRead
+	}
+
 	// Execute the query
 	var allItems []map[string]types.AttributeValue
 	var lastEvaluatedKey map[string]types.AttributeValue
@@ -172,6 +177,11 @@ func (e *MainExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 	}
 	if input.TotalSegments != nil {
 		scanInput.TotalSegments = input.TotalSegments
+	}
+
+	// Set consistent read
+	if input.ConsistentRead != nil {
+		scanInput.ConsistentRead = input.ConsistentRead
 	}
 
 	// Execute the scan
@@ -352,6 +362,11 @@ func (e *MainExecutor) ExecuteQueryWithPagination(input *core.CompiledQuery, des
 		queryInput.ScanIndexForward = input.ScanIndexForward
 	}
 
+	// Set consistent read
+	if input.ConsistentRead != nil {
+		queryInput.ConsistentRead = input.ConsistentRead
+	}
+
 	// Execute the query (single page only for pagination)
 	output, err := e.client.Query(e.ctx, queryInput)
 	if err != nil {
@@ -424,6 +439,11 @@ func (e *MainExecutor) ExecuteScanWithPagination(input *core.CompiledQuery, dest
 	}
 	if input.TotalSegments != nil {
 		scanInput.TotalSegments = input.TotalSegments
+	}
+
+	// Set consistent read
+	if input.ConsistentRead != nil {
+		scanInput.ConsistentRead = input.ConsistentRead
 	}
 
 	// Execute the scan (single page only for pagination)
