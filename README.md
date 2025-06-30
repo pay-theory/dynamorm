@@ -31,6 +31,7 @@ DynamoDB is an incredible database - it's fast, cheap, and scales fantastically.
 - 🔄 **Transactions**: Full support for DynamoDB transactions
 - 📦 **Batch Operations**: Efficient batch read/write operations
 - 🎨 **Clean API**: Intuitive, chainable query interface
+- 🔁 **Consistency Support**: Built-in patterns for handling eventual consistency
 
 ## 🚀 Quick Start
 
@@ -198,6 +199,34 @@ db := dynamorm.New(
 // Use specific account
 err := db.WithAccount("prod").Model(&User{}).All(&users)
 ```
+
+### Consistency Patterns
+
+DynamORM provides built-in support for handling DynamoDB's eventual consistency:
+
+```go
+// Strongly consistent reads on main table
+err := db.Model(&User{}).
+    Where("ID", "=", "user123").
+    ConsistentRead().
+    First(&user)
+
+// Retry for GSI eventual consistency
+err := db.Model(&User{}).
+    Index("email-index").
+    Where("Email", "=", "user@example.com").
+    WithRetry(5, 100*time.Millisecond).
+    First(&user)
+
+// Advanced read-after-write patterns
+helper := consistency.NewReadAfterWriteHelper(db)
+err := helper.CreateWithConsistency(user, &consistency.WriteOptions{
+    VerifyWrite:           true,
+    WaitForGSIPropagation: 500*time.Millisecond,
+})
+```
+
+See the [Consistency Patterns Guide](docs/guides/consistency-patterns.md) for detailed examples.
 
 ### Table Operations
 

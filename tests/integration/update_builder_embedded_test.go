@@ -53,7 +53,6 @@ func TestUpdateBuilderWithEmbeddedStruct(t *testing.T) {
 		// Create the item
 		err := db.Model(charge).Create()
 		require.NoError(t, err)
-		
 
 		// Prepare JSON response
 		responseData := map[string]interface{}{

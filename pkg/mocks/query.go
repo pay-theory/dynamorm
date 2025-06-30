@@ -5,6 +5,7 @@ package mocks
 
 import (
 	"context"
+	"time"
 
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
@@ -190,6 +191,18 @@ func (m *MockQuery) SetCursor(cursor string) error {
 // WithContext sets the context for the query
 func (m *MockQuery) WithContext(ctx context.Context) core.Query {
 	args := m.Called(ctx)
+	return args.Get(0).(core.Query)
+}
+
+// ConsistentRead enables strongly consistent reads for Query operations
+func (m *MockQuery) ConsistentRead() core.Query {
+	args := m.Called()
+	return args.Get(0).(core.Query)
+}
+
+// WithRetry configures retry behavior for eventually consistent reads
+func (m *MockQuery) WithRetry(maxRetries int, initialDelay time.Duration) core.Query {
+	args := m.Called(maxRetries, initialDelay)
 	return args.Get(0).(core.Query)
 }
 
