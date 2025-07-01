@@ -665,23 +665,34 @@ func (q *query) allWithRetry(dest any) error {
 		return fmt.Errorf("destination must be a pointer to slice")
 	}
 
+	var lastErr error
 	for attempt := 0; attempt <= q.retryConfig.maxRetries; attempt++ {
 		// Clear the slice before each attempt
 		destValue.Elem().Set(reflect.MakeSlice(destValue.Elem().Type(), 0, 0))
 
 		err := q.allInternal(dest)
+		lastErr = err
 
-		// If successful and we have results, return
-		if err == nil && destValue.Elem().Len() > 0 {
-			return nil
-		}
-
-		// If it's an error other than empty results, return on last attempt
-		if err != nil && attempt == q.retryConfig.maxRetries {
+		// If we have an error (other than no results), return it
+		if err != nil {
+			// For actual errors, keep retrying unless it's the last attempt
+			if attempt < q.retryConfig.maxRetries {
+				time.Sleep(delay)
+				delay = time.Duration(float64(delay) * backoffFactor)
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+				continue
+			}
 			return err
 		}
 
-		// Don't sleep on the last attempt
+		// If successful and we have results, return
+		if destValue.Elem().Len() > 0 {
+			return nil
+		}
+
+		// No error but empty results - retry if not last attempt
 		if attempt < q.retryConfig.maxRetries {
 			time.Sleep(delay)
 
@@ -694,7 +705,8 @@ func (q *query) allWithRetry(dest any) error {
 	}
 
 	// Return success even if empty after retries (All doesn't error on empty results)
-	return nil
+	// This maintains backward compatibility - callers should check if slice is empty
+	return lastErr
 }
 
 // Count returns the number of matching items
