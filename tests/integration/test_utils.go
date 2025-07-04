@@ -169,9 +169,10 @@ func (tc *TestContext) ClearTableData(t *testing.T, tableName string) {
 	// Extract key attributes
 	var partitionKey, sortKey string
 	for _, keyElement := range table.KeySchema {
-		if keyElement.KeyType == types.KeyTypeHash {
+		switch keyElement.KeyType {
+		case types.KeyTypeHash:
 			partitionKey = *keyElement.AttributeName
-		} else if keyElement.KeyType == types.KeyTypeRange {
+		case types.KeyTypeRange:
 			sortKey = *keyElement.AttributeName
 		}
 	}

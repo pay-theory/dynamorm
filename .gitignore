@@ -71,6 +71,12 @@ mock_*.go
 .DS_Store
 Thumbs.db
 
+# Backup files
+*.bak
+*.orig
+*~
+*.backup
+
 # Cursor AI specific
 .cursor/
 
@@ -78,6 +84,12 @@ Thumbs.db
 /dynamorm
 /main
 main
+cleanup.sh
+
+# Example binaries
+examples/optimization/optimization
+examples/*/main
+examples/*/*/main
 
 # Additional common files
 *.pid

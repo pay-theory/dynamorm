@@ -399,43 +399,6 @@ func (e *testBatchExecutor) ExecuteBatchWriteItem(tableName string, writeRequest
 }
 
 // Helper functions
-func setupBatchTestDB(t *testing.T) (core.ExtendedDB, func()) {
-	tests.RequireDynamoDBLocal(t)
-
-	// Fixed initialization with session.Config
-	sessionConfig := session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-		AWSConfigOptions: []func(*config.LoadOptions) error{
-			config.WithCredentialsProvider(
-				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
-			),
-			config.WithRegion("us-east-1"),
-		},
-	}
-
-	db, err := dynamorm.New(sessionConfig)
-	require.NoError(t, err)
-
-	// Create test tables
-	err = db.AutoMigrate(&BatchTestItem{})
-	require.NoError(t, err)
-
-	// Cleanup function
-	cleanup := func() {
-		// Clean up test data
-		var items []BatchTestItem
-		db.Model(&BatchTestItem{}).Scan(&items)
-		for _, item := range items {
-			db.Model(&BatchTestItem{}).
-				Where("ID", "=", item.ID).
-				Where("SKValue", "=", item.SKValue).
-				Delete()
-		}
-	}
-
-	return db, cleanup
-}
 
 // TestBatchOperationsErrorHandling tests error scenarios
 // COMMENTED OUT: This test uses query.New directly which is not supported in integration tests

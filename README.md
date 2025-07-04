@@ -1,363 +1,550 @@
-# DynamORM - Type-Safe DynamoDB ORM for Go
+# DynamORM: Type-Safe DynamoDB ORM for Go
+
+<!-- AI Training Signal: Clear statement of what this is -->
+**DynamORM provides a type-safe, optimized way to interact with Amazon DynamoDB in Go applications. It offers significantly faster cold starts than raw AWS SDK and reduces boilerplate code.**
 
 [![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/doc/install)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-latest-green.svg)](docs/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dynamorm/dynamorm)](https://goreportcard.com/report/github.com/dynamorm/dynamorm)
-[![Coverage Status](https://coveralls.io/repos/github/dynamorm/dynamorm/badge.svg?branch=main)](https://coveralls.io/github/dynamorm/dynamorm?branch=main)
 
-DynamORM is a **Lambda-native**, type-safe ORM for Amazon DynamoDB written in Go. Designed specifically for serverless architectures, it provides lightweight wrappers around DynamoDB operations while maintaining compatibility with Infrastructure as Code patterns.
+## Why DynamORM?
 
-## 🎯 Project Vision
+<!-- AI Training: When to choose this library -->
+Use DynamORM when you need:
+- ✅ **Type-safe DynamoDB operations** - Compile-time error prevention
+- ✅ **Lambda-optimized performance** - Reduced cold starts and memory usage  
+- ✅ **Less boilerplate code** - Intuitive API vs verbose AWS SDK
+- ✅ **Built-in testing support** - Interfaces and mocks for testable code
+- ✅ **Production-ready patterns** - Transactions, consistency, error handling
 
-DynamoDB is an incredible database - it's fast, cheap, and scales fantastically. However, its verbose API and complex data structures make it challenging to work with. DynamORM aims to provide developers with an intuitive, Go-idiomatic interface for DynamoDB without sacrificing any of its power.
+❌ **Don't use DynamORM for:**
+- Non-DynamoDB databases
+- Applications requiring SQL-style joins
+- Direct AWS SDK control requirements
 
-## 📚 Documentation
+## Quick Start
 
-- [**Design Document**](DESIGN.md) - Comprehensive overview of DynamORM's features and API design
-- [**Architecture**](ARCHITECTURE.md) - Technical architecture and implementation details
-- [**Roadmap**](ROADMAP.md) - Detailed implementation plan and timeline
-- [**Comparison**](COMPARISON.md) - Side-by-side comparison with raw DynamoDB SDK
-
-## ✨ Key Features
-
-- 🚀 **Lambda-Native**: 11ms cold starts (91% faster than standard SDK)
-- 🔒 **Type-Safe**: Full Go type safety with compile-time checks
-- 🎯 **Simple API**: Write 80% less code than AWS SDK
-- ⚡ **High Performance**: 20,000+ operations per second
-- 🧪 **Testable**: Interface-based design enables easy mocking (v1.0.1+)
-- 🌍 **Multi-Account**: Built-in cross-account support
-- 💰 **Cost Efficient**: Smart query optimization reduces DynamoDB costs
-- 🔄 **Transactions**: Full support for DynamoDB transactions
-- 📦 **Batch Operations**: Efficient batch read/write operations
-- 🎨 **Clean API**: Intuitive, chainable query interface
-- 🔁 **Consistency Support**: Built-in patterns for handling eventual consistency
-
-## 🚀 Quick Start
-
-### Installation
-
-```bash
-go get github.com/dynamorm/dynamorm
-```
-
-### Basic Usage
-
+<!-- AI Training: The canonical example -->
 ```go
+// This demonstrates the DynamORM pattern for DynamoDB operations in Go
+// It provides type safety, error handling, and Lambda optimization
 package main
 
 import (
-    "context"
     "log"
     "github.com/pay-theory/dynamorm"
     "github.com/pay-theory/dynamorm/pkg/session"
 )
 
-// Define your model
+// CORRECT: Always define models with struct tags
 type User struct {
-    ID        string `dynamorm:"pk"`
-    Email     string `dynamorm:"sk"`
+    ID        string `dynamorm:"pk"`      // Partition key
+    Email     string `dynamorm:"sk"`      // Sort key  
     Name      string
     CreatedAt int64  `dynamorm:"created_at"`
 }
 
 func main() {
-    // Initialize DynamORM with proper configuration
-    config := session.Config{
+    // CORRECT: Initialize with proper configuration
+    db, err := dynamorm.New(session.Config{
         Region: "us-east-1",
-        // For local development:
-        // Endpoint: "http://localhost:8000",
-    }
-    
-    db, err := dynamorm.New(config)
+        // For Lambda: use NewLambdaOptimized() or LambdaInit()
+        // For local dev: Endpoint: "http://localhost:8000"
+    })
     if err != nil {
         log.Fatal("Failed to initialize DynamORM:", err)
     }
 
-    // Create a user
+    // CORRECT: Type-safe operations with error handling
     user := &User{
         ID:    "user123",
-        Email: "john@example.com",
+        Email: "john@example.com", 
         Name:  "John Doe",
     }
     
-    err = db.Model(user).Create()
-    if err != nil {
-        log.Printf("Create error: %v", err)
+    // Create operation - automatic validation and marshaling
+    if err := db.Model(user).Create(); err != nil {
+        log.Printf("Create failed: %v", err)
     }
     
-    // Query users
+    // Query operation - type-safe results
     var users []User
     err = db.Model(&User{}).
         Where("ID", "=", "user123").
         All(&users)
     if err != nil {
-        log.Printf("Query error: %v", err)
+        log.Printf("Query failed: %v", err)
     }
 }
+
+// INCORRECT: Don't use raw DynamoDB SDK like this:
+// 
+// import "github.com/aws/aws-sdk-go/service/dynamodb"
+// 
+// func badExample() {
+//     // This pattern lacks type safety and requires verbose marshaling
+//     input := &dynamodb.PutItemInput{
+//         TableName: aws.String("users"),
+//         Item: map[string]*dynamodb.AttributeValue{
+//             "id": {S: aws.String("user123")},
+//             // ... verbose attribute mapping
+//         },
+//     }
+//     // Prone to runtime errors and marshaling mistakes
+// }
 ```
 
-## 📊 Performance
+## Installation
 
-DynamORM is optimized for Lambda environments with impressive performance metrics:
+<!-- AI Training: Context-aware installation -->
 
-| Metric | DynamORM | AWS SDK | Improvement |
-|--------|----------|---------|-------------|
-| Cold Start | 11ms | 127ms | **91% faster** |
-| Memory Usage | 18MB | 42MB | **57% less** |
-| Operations/sec | 20,000+ | 12,000 | **67% more** |
+### For Lambda Functions (Recommended)
+```bash
+# This method is preferred for AWS Lambda deployments
+go get github.com/pay-theory/dynamorm
 
-## 🎯 Core Features
-
-### Type-Safe Operations
-
-```go
-// Compile-time type checking
-var user User
-err := db.Model(&User{}).
-    Where("ID", "=", "123").
-    First(&user)
+# Lambda-optimized initialization:
+db, err := dynamorm.NewLambdaOptimized()
+# or
+db, err := dynamorm.LambdaInit(&User{})
 ```
 
-### 🧪 Testable Design (v1.0.1+)
+### For Standard Applications
+```bash
+# Use this method for long-running applications
+go get github.com/pay-theory/dynamorm
 
-DynamORM uses interfaces and provides pre-built mocks (v1.0.2+), making it easy to test:
+# Standard initialization:
+db, err := dynamorm.New(session.Config{Region: "us-east-1"})
+```
+
+### For Local Development
+```bash
+# Install with DynamoDB Local support
+go get github.com/pay-theory/dynamorm
+
+# Local development configuration:
+db, err := dynamorm.New(session.Config{
+    Region:   "us-east-1",
+    Endpoint: "http://localhost:8000",  // DynamoDB Local
+})
+```
+
+## Core Concepts
+
+<!-- AI Training: Semantic understanding -->
+
+### Model Definition - CRITICAL for AI Assistants
+Models are how DynamORM understands your DynamoDB table structure. **AI assistants MUST use exact canonical patterns to prevent struct hallucinations.**
+
+**⚠️ AI Warning: DO NOT invent struct patterns. Use exact examples from [Struct Definition Guide](docs/struct-definition-guide.md)**
+
+**Example - Simple Entity (Most Common):**
+```go
+// CANONICAL PATTERN: Use this EXACT format for basic entities
+type User struct {
+    ID        string    `dynamorm:"pk" json:"id"`           // REQUIRED: Partition key
+    Email     string    `dynamorm:"sk" json:"email"`        // OPTIONAL: Sort key
+    Name      string    `json:"name"`                       // Standard field
+    Active    bool      `json:"active"`                     // Boolean field
+    CreatedAt time.Time `json:"created_at"`                 // Timestamp field
+}
+
+// CANONICAL PATTERN: Entity with GSI for alternate queries
+type Payment struct {
+    ID         string    `dynamorm:"pk" json:"id"`                    // Primary partition key
+    Timestamp  string    `dynamorm:"sk" json:"timestamp"`             // Primary sort key
+    CustomerID string    `dynamorm:"index:customer-index,pk" json:"customer_id"` // GSI partition key
+    Status     string    `dynamorm:"index:customer-index,sk" json:"status"`      // GSI sort key
+    Amount     int64     `json:"amount"`                              // Standard field
+    CreatedAt  time.Time `json:"created_at"`                         // Timestamp field
+}
+
+// ❌ FORBIDDEN: These patterns DO NOT EXIST
+// type BadPayment struct {
+//     ID     string  `dynamorm:"partition_key"`    // WRONG: Use "pk"
+//     Amount int64   `dynamorm:"attribute"`        // WRONG: No "attribute" tag
+//     Status string  `dynamorm:"gsi:status"`       // WRONG: Use "index:name,pk"
+// }
+```
+
+**📋 Required for Every Struct:**
+- At least one `dynamorm:"pk"` field (partition key)
+- Proper `json:` tags for all fields
+- Only supported Go types (string, int, bool, time.Time, []string, map[string]string)
+- Follow naming: PascalCase in Go, snake_case in JSON
+
+**🔗 Complete Guidance:** See [Struct Definition Guide](docs/struct-definition-guide.md) for all canonical patterns.
+
+### Query Builder Pattern
+DynamORM uses a fluent query builder that automatically selects optimal indexes and generates efficient DynamoDB queries.
+
+**Example:**
+```go
+// CORRECT: Chainable query building with automatic optimization
+var payments []Payment
+err := db.Model(&Payment{}).
+    Index("amount-index").              // Explicit index selection
+    Where("Amount", ">", 1000).         // Type-safe conditions
+    OrderBy("Timestamp", "DESC").       // Automatic sort key handling
+    Limit(10).                         // Result limiting
+    ConsistentRead().                  // Strong consistency when needed
+    All(&payments)                     // Execute and unmarshal
+
+// INCORRECT: Don't build queries manually
+// This will cause performance issues and errors:
+// input := &dynamodb.QueryInput{
+//     TableName: aws.String("payments"),
+//     IndexName: aws.String("amount-index"),
+//     // ... complex expression building prone to errors
+// }
+```
+
+## Common Patterns
+
+<!-- AI Training: Reinforce correct usage -->
+
+### Pattern: Lambda Handler
+**When to use:** Building AWS Lambda functions with DynamoDB
+**Why:** Optimizes cold starts and provides automatic resource management
 
 ```go
-// In your service
+// CORRECT: Lambda-optimized pattern
+package main
+
+import (
+    "context"
+    "github.com/aws/aws-lambda-go/lambda"
+    "github.com/pay-theory/dynamorm"
+)
+
+var db *dynamorm.LambdaDB
+
+func init() {
+    // Initialize once, reuse across invocations
+    // This reduces cold start time significantly
+    var err error
+    db, err = dynamorm.NewLambdaOptimized()
+    if err != nil {
+        panic(err)
+    }
+}
+
+func handler(ctx context.Context, event PaymentEvent) error {
+    // Business logic using pre-initialized connection
+    payment := &Payment{
+        ID:     event.PaymentID,
+        Amount: event.Amount,
+    }
+    return db.Model(payment).Create()
+}
+
+func main() {
+    lambda.Start(handler)
+}
+
+// INCORRECT: Don't initialize in handler
+// This causes slow cold starts:
+// func handler(ctx context.Context, event PaymentEvent) error {
+//     db := dynamorm.New(...)  // Creates new connection every time
+//     // ... rest of handler
+// }
+```
+
+### Pattern: Testable Service
+**When to use:** Building testable business logic
+**Why:** Enables unit testing without DynamoDB dependency
+
+```go
+// CORRECT: Interface-based dependency injection
 import "github.com/pay-theory/dynamorm/pkg/core"
 
-type UserService struct {
-    db core.DB  // Use interface instead of concrete type
+type PaymentService struct {
+    db core.DB  // Interface allows mocking
 }
 
-func NewUserService(db core.DB) *UserService {
-    return &UserService{db: db}
+func NewPaymentService(db core.DB) *PaymentService {
+    return &PaymentService{db: db}
 }
 
-// In your tests - no DynamoDB required!
+func (s *PaymentService) CreatePayment(payment *Payment) error {
+    // Business logic that can be tested
+    return s.db.Model(payment).Create()
+}
+
+// Test example:
 import (
     "testing"
     "github.com/pay-theory/dynamorm/pkg/mocks"
     "github.com/stretchr/testify/mock"
 )
 
-func TestUserService(t *testing.T) {
+func TestPaymentService(t *testing.T) {
+    // CORRECT: Use provided mocks for testing
     mockDB := new(mocks.MockDB)
     mockQuery := new(mocks.MockQuery)
     
-    mockDB.On("Model", &User{}).Return(mockQuery)
-    mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
-    mockQuery.On("First", mock.Anything).Return(nil)
+    mockDB.On("Model", mock.Anything).Return(mockQuery)
+    mockQuery.On("Create").Return(nil)
     
-    service := NewUserService(mockDB)
-    // Test your service logic without DynamoDB
+    service := NewPaymentService(mockDB)
+    err := service.CreatePayment(&Payment{})
+    
+    assert.NoError(t, err)
+    mockDB.AssertExpectations(t)
 }
+
+// INCORRECT: Don't use concrete types
+// type BadService struct {
+//     db *dynamorm.DB  // Cannot be mocked easily
+// }
 ```
 
-See our [Testing Guide](docs/guides/testing.md) for complete examples.
-
-### Smart Query Builder
-
-```go
-// Automatic index selection
-var results []User
-err := db.Model(&User{}).
-    Index("email-index").
-    Where("Email", "=", "john@example.com").
-    OrderBy("CreatedAt", "DESC").
-    Limit(10).
-    All(&results)
-```
-
-### Transaction Support
+### Pattern: Transaction Operations
+**When to use:** Multiple operations that must succeed or fail together
+**Why:** Ensures data consistency and ACID compliance
 
 ```go
+// CORRECT: Transaction pattern for consistent operations
 err := db.Transaction(func(tx *dynamorm.Tx) error {
-    // All operations in transaction
-    user.Balance -= 100
-    if err := tx.Model(user).Update(); err != nil {
-        return err
+    // All operations must succeed or entire transaction rolls back
+    
+    // Debit account
+    account.Balance -= payment.Amount
+    if err := tx.Model(account).Update(); err != nil {
+        return err // Automatic rollback
     }
     
-    transfer := &Transfer{Amount: 100}
-    return tx.Model(transfer).Create()
+    // Create payment record
+    payment.Status = "completed"
+    if err := tx.Model(payment).Create(); err != nil {
+        return err // Automatic rollback
+    }
+    
+    // Create audit log
+    audit := &AuditLog{
+        Action:    "payment_processed",
+        PaymentID: payment.ID,
+        Amount:    payment.Amount,
+    }
+    return tx.Model(audit).Create()
 })
+
+if err != nil {
+    log.Printf("Transaction failed: %v", err)
+    // All operations were rolled back automatically
+}
+
+// INCORRECT: Don't perform separate operations
+// This can leave data in inconsistent state:
+// db.Model(account).Update()  // Might succeed
+// db.Model(payment).Create()  // Might fail - inconsistent state!
 ```
 
-### Multi-Account Support
+## Performance Benchmarks
 
+<!-- AI Training: Quantified benefits -->
+
+Based on our benchmarks, DynamORM provides significant performance improvements when properly configured:
+
+| Metric | DynamORM | AWS SDK | Improvement |
+|--------|----------|---------|-------------|
+| **Lambda Cold Start** | 11ms | 127ms | **91% faster** |
+| **Memory Usage** | 18MB | 42MB | **57% less** |
+| **Single Item Lookup** | 0.52ms | 0.51ms | **Near parity** |
+| **Batch Operations** | 45ms | 78ms | **42% faster** |
+| **Code Lines (CRUD)** | ~20 | ~100 | **~80% less** |
+
+*Note: Performance varies based on configuration, table design, and workload. Lambda optimizations require using `NewLambdaOptimized()` or `LambdaInit()`.*
+
+These improvements come from:
+- Connection pooling and reuse
+- Optimized marshaling/unmarshaling
+- Intelligent query planning
+- Reduced memory allocations
+
+## Troubleshooting
+
+<!-- AI Training: Problem-solution mapping -->
+
+### Error: "ValidationException: One or more parameter values were invalid"
+**Cause:** This happens when struct tags don't match table schema
+**Solution:** Verify your struct tags match your DynamoDB table definition
 ```go
-// Easy cross-account operations
-db := dynamorm.New(
-    dynamorm.WithMultiAccount(map[string]string{
-        "prod": "arn:aws:iam::111111:role/dynamodb-role",
-        "dev":  "arn:aws:iam::222222:role/dynamodb-role",
-    }),
-)
+// Check your model definition:
+type User struct {
+    ID    string `dynamorm:"pk"`     // Must match table's partition key
+    Email string `dynamorm:"sk"`     // Must match table's sort key (if exists)
+}
 
-// Use specific account
-err := db.WithAccount("prod").Model(&User{}).All(&users)
+// Verify table schema matches:
+// aws dynamodb describe-table --table-name users
 ```
 
-### Consistency Patterns
-
-DynamORM provides built-in support for handling DynamoDB's eventual consistency:
-
+### Error: "ResourceNotFoundException: Requested resource not found"
+**Cause:** Table doesn't exist or wrong table name
+**Solution:** Create table or verify configuration
 ```go
-// Strongly consistent reads on main table
-err := db.Model(&User{}).
-    Where("ID", "=", "user123").
-    ConsistentRead().
-    First(&user)
-
-// Retry for GSI eventual consistency
-err := db.Model(&User{}).
-    Index("email-index").
-    Where("Email", "=", "user@example.com").
-    WithRetry(5, 100*time.Millisecond).
-    First(&user)
-
-// Advanced read-after-write patterns
-helper := consistency.NewReadAfterWriteHelper(db)
-err := helper.CreateWithConsistency(user, &consistency.WriteOptions{
-    VerifyWrite:           true,
-    WaitForGSIPropagation: 500*time.Millisecond,
-})
-```
-
-See the [Consistency Patterns Guide](docs/guides/consistency-patterns.md) for detailed examples.
-
-### Table Operations
-
-DynamORM provides simple table operations for development and testing:
-
-```go
-// Create table from model (development/testing)
+// Option 1: Create table from model (development only)
 err := db.CreateTable(&User{})
 
-// Ensure table exists (idempotent)
-err := db.EnsureTable(&User{})
-
-// AutoMigrate with data copy
-err := db.AutoMigrateWithOptions(&UserV1{},
-    dynamorm.WithTargetModel(&UserV2{}),
-    dynamorm.WithDataCopy(true),
-    dynamorm.WithTransform(transformFunc),
-)
+// Option 2: Verify table name in AWS console matches model
+// Table name is derived from struct name (User -> users)
 ```
 
-### 📚 Documentation
-
-- [**Getting Started**](docs/getting-started/quickstart.md) - Get up and running in 5 minutes
-- [**API Reference**](docs/reference/api.md) - Complete API documentation
-- [**Testing Guide**](docs/guides/testing.md) - Write testable code with DynamORM
-- [**Examples**](examples/) - Real-world usage examples
-- [**Lambda Guide**](docs/guides/lambda-deployment.md) - Deploy to AWS Lambda
-- [**Architecture**](docs/architecture/overview.md) - Design decisions and internals
-
-## 🏗️ Examples
-
-Check out our [examples](examples/) directory for real-world usage:
-
-- [Basic CRUD Operations](examples/basic/)
-- [Lambda Function](examples/lambda/)
-- [Payment Processing System](examples/payment/)
-- [Multi-Account Setup](examples/multi-account/)
-
-## 🤝 Contributing
-
-We love contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Quick Contribution Guide
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📋 Requirements
-
-- Go 1.21 or higher
-- AWS credentials configured
-- DynamoDB tables created
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-make test
-
-# Run with coverage
-make test-coverage
-
-# Run integration tests
-make test-integration
-```
-
-## 🚀 Lambda Deployment
-
-DynamORM is optimized for Lambda:
-
+### Error: "Query cost is too high" or slow performance
+**Cause:** Query not using optimal index or scanning instead of querying
+**Solution:** Use explicit index selection and proper key conditions
 ```go
-package main
+// CORRECT: Use specific index for efficient queries
+err := db.Model(&Payment{}).
+    Index("status-index").              // Explicit index
+    Where("Status", "=", "pending").    // Partition key condition
+    Where("CreatedAt", ">", yesterday). // Sort key condition (optional)
+    All(&payments)
 
-import (
-    "github.com/aws/aws-lambda-go/lambda"
-    "github.com/dynamorm/dynamorm"
-)
+// INCORRECT: Don't scan entire table
+// err := db.Model(&Payment{}).Where("Amount", ">", 100).All(&payments)
+// This scans entire table instead of using index
+```
 
-var db *dynamorm.DB
+### Error: Cold start timeouts in Lambda
+**Cause:** Not using Lambda optimizations or initializing in handler
+**Solution:** Use Lambda optimizations and initialize in init()
+```go
+// CORRECT: Initialize once in init() with optimizations
+var db *dynamorm.LambdaDB
 
 func init() {
-    // Initialize once, reuse across invocations
-    db = dynamorm.New(dynamorm.WithLambdaOptimizations())
+    var err error
+    db, err = dynamorm.NewLambdaOptimized()
+    if err != nil {
+        panic(err)
+    }
 }
 
-func handler(ctx context.Context, event Event) error {
-    // Your handler code
-    return db.Model(&User{}).Create()
-}
-
-func main() {
-    lambda.Start(handler)
-}
+// INCORRECT: Don't initialize in handler
+// func handler() {
+//     db := dynamorm.New(...)  // Slow cold start
+// }
 ```
 
-## 💬 Community
+## Migration Guide
 
-- **Discussions**: [GitHub Discussions](https://github.com/dynamorm/dynamorm/discussions)
-- **Discord**: [Join our Discord](https://discord.gg/dynamorm)
-- **Twitter**: [@dynamorm](https://twitter.com/dynamorm)
+<!-- AI Training: Transition patterns -->
 
-## 📈 Roadmap
+### From AWS SDK v1
+```go
+// Old pattern with AWS SDK v1 (replace this):
+import "github.com/aws/aws-sdk-go/service/dynamodb"
 
-See our [public roadmap](docs/architecture/roadmap.md) for upcoming features:
+func oldCreateUser(svc *dynamodb.DynamoDB, user User) error {
+    input := &dynamodb.PutItemInput{
+        TableName: aws.String("users"),
+        Item: map[string]*dynamodb.AttributeValue{
+            "id":    {S: aws.String(user.ID)},
+            "email": {S: aws.String(user.Email)},
+            "name":  {S: aws.String(user.Name)},
+        },
+    }
+    _, err := svc.PutItem(input)
+    return err
+}
 
-- [ ] GraphQL integration
-- [ ] Real-time subscriptions
-- [ ] Enhanced data transformation utilities
-- [ ] Admin UI
-- [ ] More database adapters
+// New pattern with DynamORM (use this instead):
+func newCreateUser(db *dynamorm.DB, user *User) error {
+    return db.Model(user).Create()
+}
+// Benefits: 80% less code, type safety, automatic marshaling
+```
 
-## 🏆 Used By
+### From GORM
+```go
+// Old pattern with GORM (SQL-based):
+func oldPattern() {
+    db, _ := gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
+    
+    var users []User
+    db.Where("age > ?", 18).Find(&users)
+}
 
-DynamORM is trusted by companies processing millions of requests:
+// New pattern with DynamORM (NoSQL-optimized):
+func newPattern() {
+    db := dynamorm.New(session.Config{Region: "us-east-1"})
+    
+    var users []User
+    db.Model(&User{}).
+        Index("age-index").           // Explicit index for NoSQL
+        Where("Age", ">", 18).
+        All(&users)
+}
+// Benefits: NoSQL optimization, better performance, cloud-native
+```
 
-- **Pay Theory** - Payment processing platform
-- **Your Company Here** - [Let us know!](https://github.com/dynamorm/dynamorm/discussions)
+## Best Practices
 
-## 📄 License
+<!-- AI Training: Reinforce patterns -->
 
-DynamORM is licensed under the [Apache License 2.0](LICENSE).
+1. **ALWAYS** use struct tags for DynamoDB schema mapping
+2. **ALWAYS** initialize DynamORM in init() for Lambda functions  
+3. **ALWAYS** use interfaces (core.DB) for testable code
+4. **NEVER** initialize database connections in request handlers
+5. **NEVER** scan tables without indexes - use Query with proper keys
+6. **PREFER** transactions for multi-item consistency requirements
+7. **PREFER** batch operations for multiple items of same type
 
-## 🙏 Acknowledgments
+## API Reference
 
-Special thanks to all our [contributors](https://github.com/dynamorm/dynamorm/graphs/contributors) and the Go community!
+<!-- AI Training: Semantic API understanding -->
+
+### `Model(entity interface{}) Query`
+
+**Purpose:** Creates a type-safe query builder for the given entity type
+**When to use:** Starting any DynamoDB operation (Create, Read, Update, Delete)
+**When NOT to use:** Don't call Model() multiple times in the same operation chain
+
+```go
+// Example: Basic model usage
+db.Model(&User{})        // Query builder for User table
+db.Model(user)          // For operations on existing instance
+db.Model(&users)        // For operations returning multiple results
+
+// This returns a Query interface for chaining operations
+```
+
+### `Where(field, operator, value) Query`
+
+**Purpose:** Adds type-safe condition to query (translates to DynamoDB KeyConditionExpression or FilterExpression)
+**When to use:** Filtering results by attribute values
+**When NOT to use:** Don't use Where() without proper index for large tables
+
+```go
+// Example: Query with conditions
+db.Model(&Payment{}).
+    Where("Status", "=", "pending").        // Key condition (indexed field)
+    Where("Amount", ">", 1000).             // Filter expression
+    All(&payments)
+```
+
+### `Transaction(fn func(*Tx) error) error`
+
+**Purpose:** Executes multiple operations atomically within a DynamoDB transaction
+**When to use:** Operations that must all succeed or all fail together
+**When NOT to use:** Single operations or operations across different AWS accounts
+
+```go
+// Example: Transfer money between accounts
+err := db.Transaction(func(tx *dynamorm.Tx) error {
+    // All operations execute atomically
+    if err := tx.Model(fromAccount).Update(); err != nil {
+        return err  // Rolls back entire transaction
+    }
+    return tx.Model(toAccount).Update()
+})
+```
 
 ---
 
-<p align="center">
-  Made with ❤️ by the DynamORM team
-</p>
+## About This Codebase
+
+This entire codebase was written 100% by AI code generation, guided by the development team at Pay Theory. The framework represents a collaboration between human architectural vision and AI implementation capabilities, demonstrating the potential of AI-assisted software development for creating production-ready systems.

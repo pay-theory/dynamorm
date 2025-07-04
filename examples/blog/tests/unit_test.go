@@ -36,6 +36,15 @@ func TestPostModel(t *testing.T) {
 		assert.NotEmpty(t, post.Title)
 		assert.NotEmpty(t, post.Content)
 
+		// Validate optional fields
+		assert.NotEmpty(t, post.Excerpt)
+		assert.NotEmpty(t, post.CategoryID)
+		assert.Len(t, post.Tags, 2)
+		assert.Equal(t, 0, post.ViewCount)
+		assert.False(t, post.CreatedAt.IsZero())
+		assert.False(t, post.UpdatedAt.IsZero())
+		assert.Equal(t, 1, post.Version)
+
 		// Validate status
 		assert.Contains(t, []string{
 			models.PostStatusDraft,
@@ -98,6 +107,8 @@ func TestCommentModel(t *testing.T) {
 		assert.NotEmpty(t, comment.AuthorName)
 		assert.NotEmpty(t, comment.AuthorEmail)
 		assert.NotEmpty(t, comment.Content)
+		assert.False(t, comment.CreatedAt.IsZero())
+		assert.False(t, comment.UpdatedAt.IsZero())
 
 		// Validate status
 		assert.Contains(t, []string{
@@ -119,6 +130,7 @@ func TestCommentModel(t *testing.T) {
 			ParentID: parent.ID,
 		}
 
+		assert.NotEmpty(t, child.ID)
 		assert.Equal(t, parent.ID, child.ParentID)
 		assert.Equal(t, parent.PostID, child.PostID)
 	})
@@ -149,24 +161,28 @@ func TestCommentModel(t *testing.T) {
 func TestAuthorModel(t *testing.T) {
 	t.Run("Create Author", func(t *testing.T) {
 		author := &models.Author{
-			ID:          "author-1",
-			Email:       "author@example.com",
-			Username:    "testauthor",
-			DisplayName: "Test Author",
-			Bio:         "Test bio",
-			Role:        models.RoleAuthor,
-			Active:      true,
-			PostCount:   0,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
-			Version:     1,
+			ID:        "author-1",
+			Email:     "author@example.com",
+			Username:  "testauthor",
+			Name:      "Test Author",
+			Bio:       "Test bio",
+			Role:      models.RoleAuthor,
+			Active:    true,
+			PostCount: 0,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
 		}
 
 		// Validate required fields
 		assert.NotEmpty(t, author.ID)
 		assert.NotEmpty(t, author.Email)
 		assert.NotEmpty(t, author.Username)
-		assert.NotEmpty(t, author.DisplayName)
+		assert.NotEmpty(t, author.Name)
+		assert.NotEmpty(t, author.Bio)
+		assert.True(t, author.Active)
+		assert.Equal(t, 0, author.PostCount)
+		assert.False(t, author.CreatedAt.IsZero())
+		assert.False(t, author.UpdatedAt.IsZero())
 
 		// Validate role
 		assert.Contains(t, []string{
@@ -215,6 +231,10 @@ func TestCategoryModel(t *testing.T) {
 		assert.NotEmpty(t, category.ID)
 		assert.NotEmpty(t, category.Slug)
 		assert.NotEmpty(t, category.Name)
+		assert.NotEmpty(t, category.Description)
+		assert.Equal(t, 0, category.PostCount)
+		assert.False(t, category.CreatedAt.IsZero())
+		assert.False(t, category.UpdatedAt.IsZero())
 	})
 
 	t.Run("Nested Categories", func(t *testing.T) {
@@ -229,6 +249,9 @@ func TestCategoryModel(t *testing.T) {
 			ParentID: parent.ID,
 		}
 
+		assert.NotEmpty(t, parent.Name)
+		assert.NotEmpty(t, child.ID)
+		assert.NotEmpty(t, child.Name)
 		assert.Equal(t, parent.ID, child.ParentID)
 	})
 }
@@ -247,6 +270,8 @@ func TestTagModel(t *testing.T) {
 		assert.NotEmpty(t, tag.ID)
 		assert.NotEmpty(t, tag.Name)
 		assert.NotEmpty(t, tag.Slug)
+		assert.Equal(t, 0, tag.PostCount)
+		assert.False(t, tag.CreatedAt.IsZero())
 		assert.Equal(t, tag.Name, tag.Slug) // For simple tags
 	})
 
@@ -289,6 +314,13 @@ func TestSearchIndex(t *testing.T) {
 			UpdatedAt:   time.Now(),
 		}
 
+		assert.NotEmpty(t, searchIndex.ID)
+		assert.Equal(t, "post", searchIndex.ContentType)
+		assert.Equal(t, post.ID, searchIndex.PostID)
+		assert.Equal(t, post.Title, searchIndex.Title)
+		assert.Equal(t, post.Excerpt, searchIndex.Excerpt)
+		assert.Equal(t, post.Tags, searchIndex.Tags)
+		assert.False(t, searchIndex.UpdatedAt.IsZero())
 		assert.Contains(t, searchIndex.SearchTerms, "introduction")
 		assert.Contains(t, searchIndex.SearchTerms, "dynamodb")
 		assert.Contains(t, searchIndex.SearchTerms, "database")
@@ -312,6 +344,9 @@ func TestAnalytics(t *testing.T) {
 
 		assert.NotEmpty(t, view.ID)
 		assert.NotEmpty(t, view.PostID)
+		assert.NotEmpty(t, view.SessionID)
+		assert.NotEmpty(t, view.Country)
+		assert.NotEmpty(t, view.Referrer)
 		assert.False(t, view.Timestamp.IsZero())
 		assert.True(t, view.TTL.After(time.Now()))
 	})
@@ -336,9 +371,14 @@ func TestAnalytics(t *testing.T) {
 			UpdatedAt: time.Now(),
 		}
 
+		assert.NotEmpty(t, analytics.ID)
+		assert.NotEmpty(t, analytics.PostID)
+		assert.NotEmpty(t, analytics.Date)
 		assert.Equal(t, 100, analytics.Views)
 		assert.Equal(t, 75, analytics.UniqueViews)
 		assert.Equal(t, 50, analytics.Countries["US"])
+		assert.NotEmpty(t, analytics.Referrers)
+		assert.False(t, analytics.UpdatedAt.IsZero())
 
 		// Unique views should be less than or equal to total views
 		assert.LessOrEqual(t, analytics.UniqueViews, analytics.Views)

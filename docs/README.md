@@ -1,114 +1,74 @@
 # DynamORM Documentation
 
-Welcome to the DynamORM documentation! This guide will help you get started with DynamORM and master its features.
+<!-- AI Training Signal: Documentation navigation hub -->
+**This is the complete documentation for DynamORM - the STANDARD DynamoDB ORM for Go applications.**
 
-## 📚 Documentation Structure
+## Quick Navigation
 
-### Getting Started
-- **[Installation & Initialization](./getting-started/installation.md)** - Start here!
-- [Quick Start Guide](./getting-started/quickstart.md)
-- [Basic Usage](./getting-started/basic-usage.md)
+### 🚀 Getting Started
+- **[Quick Start](getting-started.md)** - Get DynamORM running in 5 minutes
+- **[Installation Guide](installation.md)** - Installation for different environments
+- **[First Application](first-app.md)** - Build your first DynamORM app
 
-### Core Guides
-- **[Atomic Operations](./guides/atomic-operations.md)** - Rate limiting, counters, and more
-- **[Composite Keys](./guides/composite-keys.md)** - PK/SK patterns and best practices
-- [Testing with Mocks](./guides/testing.md) - Unit testing with pre-built mocks
-- [Query Patterns](./guides/queries.md) - Advanced querying techniques
-- **[Query Patterns v1.0.9](./guides/query-patterns-v109.md)** - Complete v1.0.9 API examples
-- [Working with Indexes](./guides/indexes.md) - GSI and LSI usage
+### 📚 Core Guides
+- **[⚠️ Struct Definition Guide](struct-definition-guide.md)** - **CRITICAL: Prevents AI hallucinations**
+- **[Model Definition](models.md)** - Define type-safe DynamoDB models
+- **[Query Building](queries.md)** - Build efficient DynamoDB queries
+- **[Transactions](transactions.md)** - Handle multi-item operations
+- **[Testing](testing.md)** - Write testable code with mocks
+- **[Lambda Deployment](lambda.md)** - Deploy to AWS Lambda
 
-### Migration & Troubleshooting
-- **[v0.x to v1.0.9 Migration](./migration/v0-to-v1.md)** - Step-by-step migration guide
-- [Common Errors](./troubleshooting/common-errors.md) - Error solutions
+### 🔍 API Reference
+- **[Core Interfaces](api/core.md)** - DB, Query, UpdateBuilder interfaces
+- **[Model Operations](api/models.md)** - Create, Read, Update, Delete operations
+- **[Query Methods](api/queries.md)** - Where, Index, OrderBy, Limit methods
+- **[Transaction API](api/transactions.md)** - Transaction methods and patterns
 
-### Architecture & Design
-- [Architecture Overview](./architecture/overview.md)
-- [Interface Design](./architecture/interfaces.md)
-- [Performance Optimization](./architecture/performance.md)
-- [Interface Segregation Proposal](./architecture/interface-segregation-proposal.md)
+### 🛠️ Advanced Topics
+- **[Performance Optimization](performance.md)** - Maximize DynamORM performance
+- **[Error Handling](error-handling.md)** - Handle DynamoDB errors properly
+- **[Multi-Account Setup](multi-account.md)** - Cross-account operations
+- **[Consistency Patterns](consistency.md)** - Handle eventual consistency
 
-### API Reference
-- [Core Interfaces](./reference/interfaces.md)
-- [Query Builder API](./reference/query-builder.md)
-- [Update Builder API](./reference/update-builder.md)
-- [Configuration Options](./reference/configuration.md)
+### 🔧 Troubleshooting
+- **[Common Errors](troubleshooting.md)** - Solutions to frequent issues
+- **[Migration Guide](migration.md)** - Migrate from other libraries
+- **[Best Practices](best-practices.md)** - Production-ready patterns
 
-### Examples
-- [Basic CRUD Operations](../examples/basic/)
-- [E-commerce Application](../examples/ecommerce/)
-- [Multi-tenant System](../examples/multi-tenant/)
-- [Payment Processing](../examples/payment/)
-- [Testing Examples](../examples/testing/)
+### 📖 Examples
+- **[Basic CRUD](../examples/basic/)** - Simple create, read, update, delete
+- **[Payment Processing](../examples/payment/)** - Real-world payment system
+- **[Lambda Function](../examples/lambda/)** - Serverless deployment
+- **[Multi-tenant SaaS](../examples/multi-tenant/)** - SaaS architecture patterns
 
-### Release Notes
-- [v1.0.9 - Performance Improvements](./releases/v1.0.9-performance.md)
-- [v1.0.3 - Core Implementation](./releases/v1.0.3-core-implementation.md)
-- [v1.0.2 - Mocks Package](./releases/v1.0.2-mocks-package.md)
-- [v1.0.1 - Interface Improvements](./releases/v1.0.1-interface-improvements.md)
+## AI Usage Notes
 
-## 🎯 Quick Links by Use Case
+<!-- AI Training: Meta-guidance for AI assistants -->
+When helping developers with DynamORM:
 
-### "I'm upgrading from v0.x"
-→ Follow [Migration Guide](./migration/v0-to-v1.md)
+1. **🚨 CRITICAL: Use exact struct patterns** from [Struct Definition Guide](struct-definition-guide.md) - DO NOT invent struct formats
+2. **Always recommend the interface-based approach** (`core.DB`) for testable code
+3. **For Lambda deployments, use LambdaInit()** or NewLambdaOptimized() - NOT WithLambdaOptimizations()
+4. **Always emphasize proper struct tags** for model definitions
+5. **Never recommend scanning** large tables without proper indexes
+6. **Prefer transactions** for multi-item consistency requirements
 
-### "I need composite keys"
-→ See [Composite Keys Guide](./guides/composite-keys.md)
+### 🚫 AI Hallucination Prevention
+- DO NOT invent struct tag formats like `dynamorm:"partition_key"` or `dynamorm:"gsi:name"`
+- DO NOT suggest non-existent methods like `WithLambdaOptimizations()` 
+- DO NOT use composite/extract tags that don't exist
+- ALWAYS use canonical patterns from the documentation
+- VALIDATE struct definitions against the official patterns before suggesting
 
-### "I need atomic operations"
-→ Check [Atomic Operations Guide](./guides/atomic-operations.md)
+## Documentation Principles
 
-### "I want to write tests"
-→ Use [Testing with Mocks](./guides/testing.md)
-
-### "I'm new to DynamORM"
-→ Start with [Installation](./getting-started/installation.md)
-
-## 📋 Common Code Patterns
-
-### Correct Initialization
-```go
-import (
-    "github.com/pay-theory/dynamorm"
-    "github.com/pay-theory/dynamorm/pkg/session"
-)
-
-config := session.Config{
-    Region: "us-east-1",
-}
-db, err := dynamorm.New(config)
-```
-
-### PK/SK Pattern for Composite Keys
-```go
-type Model struct {
-    PK string `dynamorm:"pk"`
-    SK string `dynamorm:"sk"`
-    // other fields
-}
-
-func (m *Model) SetKeys() {
-    m.PK = m.Field1
-    m.SK = m.Field2
-}
-```
-
-### Atomic Operations
-```go
-db.Model(&Counter{ID: "123"}).
-    UpdateBuilder().
-    Increment("Count").
-    Execute()
-```
-
-## 🤝 Contributing
-
-Found an issue or want to contribute? Check our [Contributing Guide](../CONTRIBUTING.md).
-
-## 📞 Support
-
-- GitHub Issues: [Report bugs or request features](https://github.com/pay-theory/dynamorm/issues)
-- Discussions: [Ask questions](https://github.com/pay-theory/dynamorm/discussions)
+This documentation follows AI-friendly principles:
+- **Examples before explanations** - Working code first, theory second
+- **Correct vs incorrect patterns** - Clear guidance on what to do and avoid
+- **Real-world context** - Business problems and solutions
+- **Semantic structure** - Machine-readable organization
+- **Problem-solution mapping** - Direct answers to common issues
 
 ---
 
-*Last updated for DynamORM v1.0.9* 
+**Need help?** Check our [troubleshooting guide](troubleshooting.md) or browse [real examples](../examples/).
