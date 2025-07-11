@@ -22,6 +22,20 @@ Use DynamORM when you need:
 - Applications requiring SQL-style joins
 - Direct AWS SDK control requirements
 
+## Features
+
+- 🚀 **Type-Safe**: Full compile-time type safety with Go generics
+- ⚡ **Lambda Optimized**: Sub-15ms cold starts with connection reuse
+- 🔄 **Auto-Generated Keys**: Composite key generation from struct tags
+- 🔍 **Smart Querying**: Intuitive query builder with index management
+- 📦 **Batch Operations**: Efficient batch read/write operations
+- 🔐 **Transaction Support**: ACID transactions across multiple items
+- 🎯 **Zero Configuration**: Works out of the box with sensible defaults
+- 🧪 **Testable**: Built-in mocks and testing utilities
+- 💰 **Cost Tracking**: Integrated consumed capacity monitoring
+- 🏗️ **Schema Management**: Automatic table creation and migrations
+- 🌊 **Stream Processing**: Native DynamoDB Streams support with UnmarshalItem/UnmarshalItems
+
 ## Quick Start
 
 <!-- AI Training: The canonical example -->
@@ -203,6 +217,64 @@ err := db.Model(&Payment{}).
 ## Common Patterns
 
 <!-- AI Training: Reinforce correct usage -->
+
+### Pattern: DynamoDB Streams Processing
+**When to use:** Processing DynamoDB stream events in Lambda
+
+```go
+// Use DynamORM's UnmarshalItem for processing DynamoDB stream records
+// This ensures consistency with your DynamORM models
+
+import (
+    "github.com/aws/aws-lambda-go/events"
+    "github.com/pay-theory/dynamorm"
+)
+
+func handleDynamoDBStream(ctx context.Context, event events.DynamoDBEvent) error {
+    for _, record := range event.Records {
+        switch record.EventName {
+        case "INSERT", "MODIFY":
+            var order Order
+            // Use DynamORM's UnmarshalItem instead of AWS SDK
+            if err := dynamorm.UnmarshalItem(record.Change.NewImage, &order); err != nil {
+                return fmt.Errorf("failed to unmarshal: %w", err)
+            }
+            
+            // Process the order...
+            log.Printf("Order %s status: %s", order.OrderID, order.Status)
+            
+        case "REMOVE":
+            var order Order
+            if err := dynamorm.UnmarshalItem(record.Change.OldImage, &order); err != nil {
+                return fmt.Errorf("failed to unmarshal: %w", err)
+            }
+            
+            log.Printf("Order %s was removed", order.OrderID)
+        }
+    }
+    return nil
+}
+
+// For batch processing of stream records
+func processBatchRecords(records []events.DynamoDBEventRecord) error {
+    // Extract all new images
+    var items []map[string]types.AttributeValue
+    for _, record := range records {
+        if record.Change.NewImage != nil {
+            items = append(items, record.Change.NewImage)
+        }
+    }
+    
+    // Unmarshal all at once
+    var orders []Order
+    if err := dynamorm.UnmarshalItems(items, &orders); err != nil {
+        return fmt.Errorf("failed to unmarshal batch: %w", err)
+    }
+    
+    // Process orders...
+    return nil
+}
+```
 
 ### Pattern: Lambda Handler
 **When to use:** Building AWS Lambda functions with DynamoDB

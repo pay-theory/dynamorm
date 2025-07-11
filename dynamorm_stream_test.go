@@ -1,0 +1,92 @@
+package dynamorm
+
+import (
+	"testing"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestOrder represents a test model for stream processing
+type TestOrder struct {
+	PK         string   `dynamorm:"PK" dynamodb:"PK"`
+	SK         string   `dynamorm:"SK" dynamodb:"SK"`
+	OrderID    string   `dynamorm:"order_id" dynamodb:"order_id"`
+	CustomerID string   `dynamorm:"customer_id" dynamodb:"customer_id"`
+	Total      float64  `dynamorm:"total" dynamodb:"total"`
+	Status     string   `dynamorm:"status" dynamodb:"status"`
+	Items      []string `dynamorm:"items" dynamodb:"items"`
+}
+
+func TestUnmarshalStreamImage(t *testing.T) {
+	// Create a mock DynamoDB stream image
+	streamImage := map[string]events.DynamoDBAttributeValue{
+		"PK": events.NewStringAttribute("ORDER#123"),
+		"SK": events.NewStringAttribute("METADATA"),
+		"order_id": events.NewStringAttribute("123"),
+		"customer_id": events.NewStringAttribute("CUST456"),
+		"total": events.NewNumberAttribute("99.99"),
+		"status": events.NewStringAttribute("pending"),
+		"items": events.NewListAttribute([]events.DynamoDBAttributeValue{
+			events.NewStringAttribute("ITEM1"),
+			events.NewStringAttribute("ITEM2"),
+		}),
+	}
+
+	var order TestOrder
+	err := UnmarshalStreamImage(streamImage, &order)
+	require.NoError(t, err)
+
+	assert.Equal(t, "ORDER#123", order.PK)
+	assert.Equal(t, "METADATA", order.SK)
+	assert.Equal(t, "123", order.OrderID)
+	assert.Equal(t, "CUST456", order.CustomerID)
+	assert.Equal(t, 99.99, order.Total)
+	assert.Equal(t, "pending", order.Status)
+	assert.Equal(t, []string{"ITEM1", "ITEM2"}, order.Items)
+}
+
+func TestUnmarshalStreamImage_ComplexTypes(t *testing.T) {
+	// Test individual conversions to ensure all types are handled
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewStringAttribute("test")))
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewNumberAttribute("123")))
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewBooleanAttribute(true)))
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewNullAttribute()))
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewBinaryAttribute([]byte("data"))))
+	
+	// Test complex types
+	listAttr := events.NewListAttribute([]events.DynamoDBAttributeValue{
+		events.NewStringAttribute("item1"),
+		events.NewNumberAttribute("42"),
+	})
+	assert.NotNil(t, convertLambdaAttributeValue(listAttr))
+	
+	mapAttr := events.NewMapAttribute(map[string]events.DynamoDBAttributeValue{
+		"key": events.NewStringAttribute("value"),
+	})
+	assert.NotNil(t, convertLambdaAttributeValue(mapAttr))
+	
+	// Test set types
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewStringSetAttribute([]string{"a", "b"})))
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewNumberSetAttribute([]string{"1", "2"})))
+	assert.NotNil(t, convertLambdaAttributeValue(events.NewBinarySetAttribute([][]byte{[]byte("data1"), []byte("data2")})))
+}
+
+func TestUnmarshalStreamImage_EmptyImage(t *testing.T) {
+	streamImage := make(map[string]events.DynamoDBAttributeValue)
+	
+	var order TestOrder
+	err := UnmarshalStreamImage(streamImage, &order)
+	// Should not error on empty image
+	assert.NoError(t, err)
+}
+
+func TestUnmarshalStreamImage_NilDestination(t *testing.T) {
+	streamImage := map[string]events.DynamoDBAttributeValue{
+		"PK": events.NewStringAttribute("TEST"),
+	}
+	
+	err := UnmarshalStreamImage(streamImage, nil)
+	assert.Error(t, err)
+}

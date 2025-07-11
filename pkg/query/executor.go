@@ -122,7 +122,7 @@ func (e *MainExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 	}
 
 	// Unmarshal the results into dest
-	return unmarshalItems(allItems, dest)
+	return UnmarshalItems(allItems, dest)
 }
 
 // ExecuteScan implements QueryExecutor.ExecuteScan
@@ -209,7 +209,7 @@ func (e *MainExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 	}
 
 	// Unmarshal the results into dest
-	return unmarshalItems(allItems, dest)
+	return UnmarshalItems(allItems, dest)
 }
 
 // ExecutePutItem implements PutItemExecutor.ExecutePutItem
@@ -374,7 +374,7 @@ func (e *MainExecutor) ExecuteQueryWithPagination(input *core.CompiledQuery, des
 	}
 
 	// Unmarshal the results into dest
-	if err := unmarshalItems(output.Items, dest); err != nil {
+	if err := UnmarshalItems(output.Items, dest); err != nil {
 		return nil, err
 	}
 
@@ -453,7 +453,7 @@ func (e *MainExecutor) ExecuteScanWithPagination(input *core.CompiledQuery, dest
 	}
 
 	// Unmarshal the results into dest
-	if err := unmarshalItems(output.Items, dest); err != nil {
+	if err := UnmarshalItems(output.Items, dest); err != nil {
 		return nil, err
 	}
 
@@ -527,7 +527,7 @@ func (e *MainExecutor) ExecuteBatchGet(input *CompiledBatchGet, dest any) error 
 	}
 
 	// Unmarshal the results
-	return unmarshalItems(allItems, dest)
+	return UnmarshalItems(allItems, dest)
 }
 
 // ExecuteBatchWrite implements BatchExecutor.ExecuteBatchWrite
@@ -586,8 +586,9 @@ func (e *MainExecutor) ExecuteBatchWrite(input *CompiledBatchWrite) error {
 	return nil
 }
 
-// unmarshalItems unmarshals DynamoDB items into the destination
-func unmarshalItems(items []map[string]types.AttributeValue, dest any) error {
+// UnmarshalItems unmarshals DynamoDB items into the destination.
+// This function is exported for use with DynamoDB streams and other external data sources.
+func UnmarshalItems(items []map[string]types.AttributeValue, dest any) error {
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr {
 		return fmt.Errorf("destination must be a pointer")
@@ -601,7 +602,7 @@ func unmarshalItems(items []map[string]types.AttributeValue, dest any) error {
 			return fmt.Errorf("no items found")
 		}
 		// For single item, unmarshal the first item
-		return unmarshalItem(items[0], dest)
+		return UnmarshalItem(items[0], dest)
 	}
 
 	// Handle slice result
@@ -619,7 +620,7 @@ func unmarshalItems(items []map[string]types.AttributeValue, dest any) error {
 		}
 
 		// Unmarshal the item
-		if err := unmarshalItem(item, newItem.Interface()); err != nil {
+		if err := UnmarshalItem(item, newItem.Interface()); err != nil {
 			return fmt.Errorf("failed to unmarshal item: %w", err)
 		}
 
@@ -636,8 +637,9 @@ func unmarshalItems(items []map[string]types.AttributeValue, dest any) error {
 	return nil
 }
 
-// unmarshalItem unmarshals a single DynamoDB item
-func unmarshalItem(item map[string]types.AttributeValue, dest any) error {
+// UnmarshalItem unmarshals a single DynamoDB item into a Go struct.
+// This function respects both "dynamodb" and "dynamorm" struct tags.
+func UnmarshalItem(item map[string]types.AttributeValue, dest any) error {
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr {
 		return fmt.Errorf("destination must be a pointer")

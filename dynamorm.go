@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -36,6 +37,100 @@ type DB struct {
 	lambdaDeadline      time.Time // Lambda execution deadline for timeout handling
 	lambdaTimeoutBuffer time.Duration
 	metadataCache       sync.Map // type -> *model.Metadata
+}
+
+// UnmarshalItem unmarshals a DynamoDB AttributeValue map into a Go struct.
+// This is the recommended way to unmarshal DynamoDB stream records or any
+// DynamoDB items when using DynamORM.
+//
+// The function respects DynamORM struct tags (dynamorm:"pk", dynamorm:"attr:name", etc.)
+// and handles all DynamoDB attribute types correctly.
+//
+// Example usage with DynamoDB Streams:
+//
+//	func processDynamoDBStream(record events.DynamoDBEventRecord) (*MyModel, error) {
+//	    image := record.Change.NewImage
+//	    if image == nil {
+//	        return nil, nil
+//	    }
+//	
+//	    var model MyModel
+//	    if err := dynamorm.UnmarshalItem(image, &model); err != nil {
+//	        return nil, fmt.Errorf("failed to unmarshal: %w", err)
+//	    }
+//	
+//	    return &model, nil
+//	}
+func UnmarshalItem(item map[string]types.AttributeValue, dest interface{}) error {
+	// Use the internal unmarshalItem function from the query executor
+	return queryPkg.UnmarshalItem(item, dest)
+}
+
+// UnmarshalItems unmarshals a slice of DynamoDB AttributeValue maps into a slice of Go structs.
+// This is useful for batch operations or when processing multiple items from a query result.
+func UnmarshalItems(items []map[string]types.AttributeValue, dest interface{}) error {
+	// Use the internal unmarshalItems function from the query executor
+	return queryPkg.UnmarshalItems(items, dest)
+}
+
+// UnmarshalStreamImage unmarshals a DynamoDB stream image (from Lambda events) into a Go struct.
+// This function handles the conversion from Lambda's events.DynamoDBAttributeValue to the standard types.AttributeValue
+// and then unmarshals into your DynamORM model.
+//
+// Example usage:
+//
+//	func handleStream(record events.DynamoDBEventRecord) error {
+//	    var order Order
+//	    if err := dynamorm.UnmarshalStreamImage(record.Change.NewImage, &order); err != nil {
+//	        return err
+//	    }
+//	    // Process order...
+//	}
+func UnmarshalStreamImage(streamImage map[string]events.DynamoDBAttributeValue, dest interface{}) error {
+	// Convert Lambda event AttributeValues to SDK v2 AttributeValues
+	item := make(map[string]types.AttributeValue, len(streamImage))
+	for k, v := range streamImage {
+		item[k] = convertLambdaAttributeValue(v)
+	}
+	
+	return UnmarshalItem(item, dest)
+}
+
+// convertLambdaAttributeValue converts a Lambda event AttributeValue to SDK v2 AttributeValue
+func convertLambdaAttributeValue(attr events.DynamoDBAttributeValue) types.AttributeValue {
+	switch attr.DataType() {
+	case events.DataTypeString:
+		return &types.AttributeValueMemberS{Value: attr.String()}
+	case events.DataTypeNumber:
+		return &types.AttributeValueMemberN{Value: attr.Number()}
+	case events.DataTypeBinary:
+		return &types.AttributeValueMemberB{Value: attr.Binary()}
+	case events.DataTypeBoolean:
+		return &types.AttributeValueMemberBOOL{Value: attr.Boolean()}
+	case events.DataTypeNull:
+		return &types.AttributeValueMemberNULL{Value: true}
+	case events.DataTypeList:
+		list := make([]types.AttributeValue, 0, len(attr.List()))
+		for _, item := range attr.List() {
+			list = append(list, convertLambdaAttributeValue(item))
+		}
+		return &types.AttributeValueMemberL{Value: list}
+	case events.DataTypeMap:
+		m := make(map[string]types.AttributeValue)
+		for k, v := range attr.Map() {
+			m[k] = convertLambdaAttributeValue(v)
+		}
+		return &types.AttributeValueMemberM{Value: m}
+	case events.DataTypeStringSet:
+		return &types.AttributeValueMemberSS{Value: attr.StringSet()}
+	case events.DataTypeNumberSet:
+		return &types.AttributeValueMemberNS{Value: attr.NumberSet()}
+	case events.DataTypeBinarySet:
+		return &types.AttributeValueMemberBS{Value: attr.BinarySet()}
+	default:
+		// This shouldn't happen, but return NULL if unknown type
+		return &types.AttributeValueMemberNULL{Value: true}
+	}
 }
 
 // New creates a new DynamORM instance with the given configuration

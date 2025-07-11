@@ -199,7 +199,15 @@ func (s *NotificationService) worker(id int) {
 
 	for {
 		select {
-		case notification := <-s.queue:
+		case notification, ok := <-s.queue:
+			if !ok {
+				// Channel closed
+				return
+			}
+			if notification == nil {
+				// Skip nil notifications
+				continue
+			}
 			s.processNotification(notification)
 		case <-s.ctx.Done():
 			return
