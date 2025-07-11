@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -698,9 +699,29 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 		case reflect.String:
 			dest.SetString(v.Value)
 		case reflect.Struct:
-			// Try to unmarshal JSON string into struct
-			if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
-				return fmt.Errorf("failed to unmarshal JSON string into struct: %w", err)
+			// Special handling for time.Time
+			if dest.Type() == reflect.TypeOf(time.Time{}) {
+				// Try parsing as RFC3339 first (most common in DynamoDB)
+				t, err := time.Parse(time.RFC3339, v.Value)
+				if err != nil {
+					// Try parsing as RFC3339Nano
+					t, err = time.Parse(time.RFC3339Nano, v.Value)
+					if err != nil {
+						// Try Unix timestamp
+						var unix int64
+						if _, err := fmt.Sscanf(v.Value, "%d", &unix); err == nil {
+							t = time.Unix(unix, 0)
+						} else {
+							return fmt.Errorf("failed to parse time from string %q: %w", v.Value, err)
+						}
+					}
+				}
+				dest.Set(reflect.ValueOf(t))
+			} else {
+				// Try to unmarshal JSON string into struct
+				if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
+					return fmt.Errorf("failed to unmarshal JSON string into struct: %w", err)
+				}
 			}
 		case reflect.Map:
 			// Try to unmarshal JSON string into map

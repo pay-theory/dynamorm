@@ -1,7 +1,9 @@
 package dynamorm
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/stretchr/testify/assert"
@@ -127,4 +129,36 @@ func TestUnmarshalStreamImage_JSONString(t *testing.T) {
 	assert.Equal(t, "New York", customer.Address.City)
 	assert.Equal(t, "USA", customer.Address.Country)
 	assert.Equal(t, []string{"premium", "verified"}, customer.Tags)
+}
+
+// TestUnmarshalStreamImage_TimeFields tests unmarshaling time fields
+func TestUnmarshalStreamImage_TimeFields(t *testing.T) {
+	type Event struct {
+		PK        string    `dynamorm:"PK"`
+		SK        string    `dynamorm:"SK"`
+		CreatedAt time.Time `dynamorm:"created_at"`
+		UpdatedAt time.Time `dynamorm:"updated_at"`
+		ExpiresAt time.Time `dynamorm:"expires_at"`
+	}
+	
+	now := time.Now().UTC().Truncate(time.Second) // Truncate to match RFC3339 precision
+	
+	// Test various time formats
+	streamImage := map[string]events.DynamoDBAttributeValue{
+		"PK":         events.NewStringAttribute("EVENT#123"),
+		"SK":         events.NewStringAttribute("METADATA"),
+		"created_at": events.NewStringAttribute(now.Format(time.RFC3339)),
+		"updated_at": events.NewStringAttribute(now.Add(time.Hour).Format(time.RFC3339Nano)),
+		"expires_at": events.NewStringAttribute(fmt.Sprintf("%d", now.Add(24*time.Hour).Unix())),
+	}
+	
+	var event Event
+	err := UnmarshalStreamImage(streamImage, &event)
+	require.NoError(t, err)
+	
+	assert.Equal(t, "EVENT#123", event.PK)
+	assert.Equal(t, "METADATA", event.SK)
+	assert.Equal(t, now, event.CreatedAt)
+	assert.Equal(t, now.Add(time.Hour).Truncate(time.Second), event.UpdatedAt.Truncate(time.Second))
+	assert.Equal(t, now.Add(24*time.Hour).Unix(), event.ExpiresAt.Unix())
 }
