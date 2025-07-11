@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -692,7 +693,28 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 
 	switch v := av.(type) {
 	case *types.AttributeValueMemberS:
-		dest.SetString(v.Value)
+		// Handle string attribute based on destination type
+		switch dest.Kind() {
+		case reflect.String:
+			dest.SetString(v.Value)
+		case reflect.Struct:
+			// Try to unmarshal JSON string into struct
+			if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
+				return fmt.Errorf("failed to unmarshal JSON string into struct: %w", err)
+			}
+		case reflect.Map:
+			// Try to unmarshal JSON string into map
+			if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
+				return fmt.Errorf("failed to unmarshal JSON string into map: %w", err)
+			}
+		case reflect.Slice:
+			// Try to unmarshal JSON string into slice
+			if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
+				return fmt.Errorf("failed to unmarshal JSON string into slice: %w", err)
+			}
+		default:
+			return fmt.Errorf("cannot unmarshal string into %v", dest.Kind())
+		}
 	case *types.AttributeValueMemberN:
 		// Handle numeric types
 		switch dest.Kind() {
@@ -719,7 +741,11 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 			dest.SetFloat(f)
 		}
 	case *types.AttributeValueMemberBOOL:
-		dest.SetBool(v.Value)
+		if dest.Kind() == reflect.Bool {
+			dest.SetBool(v.Value)
+		} else {
+			return fmt.Errorf("cannot unmarshal bool into %v", dest.Kind())
+		}
 	case *types.AttributeValueMemberNULL:
 		// Set to zero value
 		dest.Set(reflect.Zero(dest.Type()))

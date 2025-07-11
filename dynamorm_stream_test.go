@@ -90,3 +90,41 @@ func TestUnmarshalStreamImage_NilDestination(t *testing.T) {
 	err := UnmarshalStreamImage(streamImage, nil)
 	assert.Error(t, err)
 }
+
+// TestUnmarshalStreamImage_JSONString tests unmarshaling JSON strings into structs
+func TestUnmarshalStreamImage_JSONString(t *testing.T) {
+	type Address struct {
+		Street  string `json:"street"`
+		City    string `json:"city"`
+		Country string `json:"country"`
+	}
+	
+	type Customer struct {
+		PK      string  `dynamorm:"PK"`
+		SK      string  `dynamorm:"SK"`
+		Name    string  `dynamorm:"name"`
+		Address Address `dynamorm:"address"`
+		Tags    []string `dynamorm:"tags"`
+	}
+	
+	// Create stream image with JSON string for struct field
+	streamImage := map[string]events.DynamoDBAttributeValue{
+		"PK":   events.NewStringAttribute("CUSTOMER#123"),
+		"SK":   events.NewStringAttribute("PROFILE"),
+		"name": events.NewStringAttribute("John Doe"),
+		"address": events.NewStringAttribute(`{"street":"123 Main St","city":"New York","country":"USA"}`),
+		"tags": events.NewStringAttribute(`["premium","verified"]`),
+	}
+	
+	var customer Customer
+	err := UnmarshalStreamImage(streamImage, &customer)
+	require.NoError(t, err)
+	
+	assert.Equal(t, "CUSTOMER#123", customer.PK)
+	assert.Equal(t, "PROFILE", customer.SK)
+	assert.Equal(t, "John Doe", customer.Name)
+	assert.Equal(t, "123 Main St", customer.Address.Street)
+	assert.Equal(t, "New York", customer.Address.City)
+	assert.Equal(t, "USA", customer.Address.Country)
+	assert.Equal(t, []string{"premium", "verified"}, customer.Tags)
+}
