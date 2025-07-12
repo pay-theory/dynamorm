@@ -791,14 +791,14 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 			elemType := mapType.Elem()
 			newMap := reflect.MakeMap(mapType)
 			
-			for k, v := range v.Value {
+			for k, mapVal := range v.Value {
 				keyValue := reflect.New(keyType).Elem()
 				keyValue.SetString(k)
 				
 				// Special handling for map[string]interface{}
 				if elemType.Kind() == reflect.Interface && elemType.NumMethod() == 0 {
 					// Convert AttributeValue to interface{}
-					interfaceValue, err := attributeValueToInterface(v)
+					interfaceValue, err := attributeValueToInterface(mapVal)
 					if err != nil {
 						return err
 					}
@@ -806,7 +806,7 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 				} else {
 					// Regular typed map
 					elemValue := reflect.New(elemType).Elem()
-					if err := unmarshalAttributeValue(v, elemValue); err != nil {
+					if err := unmarshalAttributeValue(mapVal, elemValue); err != nil {
 						return err
 					}
 					newMap.SetMapIndex(keyValue, elemValue)
@@ -815,11 +815,11 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 			dest.Set(newMap)
 		} else if dest.Kind() == reflect.Struct {
 			// Unmarshal into struct
-			for k, v := range v.Value {
+			for k, structVal := range v.Value {
 				// Find field by name
 				field := dest.FieldByName(k)
 				if field.IsValid() && field.CanSet() {
-					if err := unmarshalAttributeValue(v, field); err != nil {
+					if err := unmarshalAttributeValue(structVal, field); err != nil {
 						return err
 					}
 				}
