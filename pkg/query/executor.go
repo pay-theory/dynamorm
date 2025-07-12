@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -669,8 +670,8 @@ func UnmarshalItem(item map[string]types.AttributeValue, dest any) error {
 			continue
 		}
 
-		// Use tag as the attribute name
-		attrName := tag
+		// Parse the tag to extract the attribute name (ignore modifiers like omitempty)
+		attrName := parseAttributeName(tag)
 		if attrName == "" {
 			attrName = field.Name
 		}
@@ -828,6 +829,16 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 	}
 
 	return nil
+}
+
+// parseAttributeName extracts the attribute name from a DynamoDB tag, ignoring modifiers like omitempty
+func parseAttributeName(tag string) string {
+	// Split by comma to separate attribute name from modifiers
+	parts := strings.Split(tag, ",")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
 }
 
 // attributeValueToInterface converts a DynamoDB AttributeValue to a Go interface{} value
