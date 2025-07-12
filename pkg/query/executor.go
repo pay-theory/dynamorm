@@ -790,14 +790,27 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 			keyType := mapType.Key()
 			elemType := mapType.Elem()
 			newMap := reflect.MakeMap(mapType)
+			
 			for k, v := range v.Value {
 				keyValue := reflect.New(keyType).Elem()
 				keyValue.SetString(k)
-				elemValue := reflect.New(elemType).Elem()
-				if err := unmarshalAttributeValue(v, elemValue); err != nil {
-					return err
+				
+				// Special handling for map[string]interface{}
+				if elemType.Kind() == reflect.Interface && elemType.NumMethod() == 0 {
+					// Convert AttributeValue to interface{}
+					interfaceValue, err := attributeValueToInterface(v)
+					if err != nil {
+						return err
+					}
+					newMap.SetMapIndex(keyValue, reflect.ValueOf(interfaceValue))
+				} else {
+					// Regular typed map
+					elemValue := reflect.New(elemType).Elem()
+					if err := unmarshalAttributeValue(v, elemValue); err != nil {
+						return err
+					}
+					newMap.SetMapIndex(keyValue, elemValue)
 				}
-				newMap.SetMapIndex(keyValue, elemValue)
 			}
 			dest.Set(newMap)
 		} else if dest.Kind() == reflect.Struct {
@@ -815,6 +828,74 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 	}
 
 	return nil
+}
+
+// attributeValueToInterface converts a DynamoDB AttributeValue to a Go interface{} value
+func attributeValueToInterface(av types.AttributeValue) (interface{}, error) {
+	switch v := av.(type) {
+	case *types.AttributeValueMemberS:
+		return v.Value, nil
+	case *types.AttributeValueMemberN:
+		// Try to parse as int first, then float
+		if val, err := fmt.Sscanf(v.Value, "%d", new(int64)); err == nil && val == 1 {
+			var n int64
+			fmt.Sscanf(v.Value, "%d", &n)
+			return n, nil
+		}
+		var f float64
+		if _, err := fmt.Sscanf(v.Value, "%f", &f); err != nil {
+			return nil, err
+		}
+		return f, nil
+	case *types.AttributeValueMemberBOOL:
+		return v.Value, nil
+	case *types.AttributeValueMemberNULL:
+		return nil, nil
+	case *types.AttributeValueMemberL:
+		// Convert list to []interface{}
+		result := make([]interface{}, len(v.Value))
+		for i, item := range v.Value {
+			val, err := attributeValueToInterface(item)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = val
+		}
+		return result, nil
+	case *types.AttributeValueMemberM:
+		// Convert map to map[string]interface{}
+		result := make(map[string]interface{})
+		for k, val := range v.Value {
+			converted, err := attributeValueToInterface(val)
+			if err != nil {
+				return nil, err
+			}
+			result[k] = converted
+		}
+		return result, nil
+	case *types.AttributeValueMemberSS:
+		// String set
+		return v.Value, nil
+	case *types.AttributeValueMemberNS:
+		// Number set - convert to []float64
+		result := make([]float64, len(v.Value))
+		for i, numStr := range v.Value {
+			var f float64
+			if _, err := fmt.Sscanf(numStr, "%f", &f); err != nil {
+				return nil, err
+			}
+			result[i] = f
+		}
+		return result, nil
+	case *types.AttributeValueMemberBS:
+		// Binary set
+		return v.Value, nil
+	case *types.AttributeValueMemberB:
+		// Binary
+		return v.Value, nil
+	default:
+		return nil, fmt.Errorf("unsupported attribute value type: %T", av)
+	}
 }
 
 // Verify that MainExecutor implements all required interfaces

@@ -162,3 +162,64 @@ func TestUnmarshalStreamImage_TimeFields(t *testing.T) {
 	assert.Equal(t, now.Add(time.Hour).Truncate(time.Second), event.UpdatedAt.Truncate(time.Second))
 	assert.Equal(t, now.Add(24*time.Hour).Unix(), event.ExpiresAt.Unix())
 }
+
+// TestUnmarshalStreamImage_MapInterface tests unmarshaling into map[string]interface{}
+func TestUnmarshalStreamImage_MapInterface(t *testing.T) {
+	type AsyncRequest struct {
+		PK      string                 `dynamorm:"PK"`
+		SK      string                 `dynamorm:"SK"`
+		Action  string                 `dynamorm:"action"`
+		Payload map[string]interface{} `dynamorm:"payload"`
+		Status  string                 `dynamorm:"status"`
+	}
+	
+	// Create stream image with nested map structure
+	streamImage := map[string]events.DynamoDBAttributeValue{
+		"PK":     events.NewStringAttribute("REQ#123"),
+		"SK":     events.NewStringAttribute("REQ#123"),
+		"action": events.NewStringAttribute("knowledge_query"),
+		"status": events.NewStringAttribute("PENDING"),
+		"payload": events.NewMapAttribute(map[string]events.DynamoDBAttributeValue{
+			"knowledge_base": events.NewStringAttribute("paytheory"),
+			"query":          events.NewStringAttribute("What are the API authentication methods?"),
+			"priority":       events.NewNumberAttribute("1"),
+			"urgent":         events.NewBooleanAttribute(true),
+			"metadata": events.NewMapAttribute(map[string]events.DynamoDBAttributeValue{
+				"source": events.NewStringAttribute("web"),
+				"user_id": events.NewNumberAttribute("12345"),
+			}),
+			"tags": events.NewListAttribute([]events.DynamoDBAttributeValue{
+				events.NewStringAttribute("api"),
+				events.NewStringAttribute("authentication"),
+			}),
+		}),
+	}
+	
+	var asyncReq AsyncRequest
+	err := UnmarshalStreamImage(streamImage, &asyncReq)
+	require.NoError(t, err)
+	
+	assert.Equal(t, "REQ#123", asyncReq.PK)
+	assert.Equal(t, "REQ#123", asyncReq.SK)
+	assert.Equal(t, "knowledge_query", asyncReq.Action)
+	assert.Equal(t, "PENDING", asyncReq.Status)
+	
+	// Verify the payload map is properly unmarshaled
+	assert.NotEmpty(t, asyncReq.Payload)
+	assert.Equal(t, "paytheory", asyncReq.Payload["knowledge_base"])
+	assert.Equal(t, "What are the API authentication methods?", asyncReq.Payload["query"])
+	assert.Equal(t, int64(1), asyncReq.Payload["priority"])
+	assert.Equal(t, true, asyncReq.Payload["urgent"])
+	
+	// Check nested map
+	metadata, ok := asyncReq.Payload["metadata"].(map[string]interface{})
+	require.True(t, ok, "metadata should be a map[string]interface{}")
+	assert.Equal(t, "web", metadata["source"])
+	assert.Equal(t, int64(12345), metadata["user_id"])
+	
+	// Check list
+	tags, ok := asyncReq.Payload["tags"].([]interface{})
+	require.True(t, ok, "tags should be a []interface{}")
+	assert.Equal(t, "api", tags[0])
+	assert.Equal(t, "authentication", tags[1])
+}
