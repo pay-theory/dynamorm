@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 // MarshalerType defines the type of marshaler to use
@@ -88,13 +89,20 @@ func GetGlobalConfig() Config {
 
 // MarshalerFactory creates marshalers with security controls
 type MarshalerFactory struct {
-	config Config
-	once   sync.Once
+	config    Config
+	converter *pkgTypes.Converter
+	once      sync.Once
 }
 
 // NewMarshalerFactory creates a new factory with the given configuration
 func NewMarshalerFactory(config Config) *MarshalerFactory {
 	return &MarshalerFactory{config: config}
+}
+
+// WithConverter sets the converter used for creating unsafe marshalers.
+func (f *MarshalerFactory) WithConverter(converter *pkgTypes.Converter) *MarshalerFactory {
+	f.converter = converter
+	return f
 }
 
 // NewMarshaler creates a marshaler based on configuration
@@ -166,7 +174,11 @@ func (f *MarshalerFactory) createUnsafeMarshaler(ack *SecurityAcknowledgment) (M
 	}
 
 	// Create the unsafe marshaler (from existing code)
-	return New(), nil // This will use the existing unsafe implementation
+	converter := f.converter
+	if converter == nil {
+		converter = pkgTypes.NewConverter()
+	}
+	return New(converter), nil // This will use the existing unsafe implementation
 }
 
 // GetSecurityStats returns security-related statistics
