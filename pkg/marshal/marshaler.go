@@ -11,12 +11,15 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 // Marshaler provides high-performance marshaling to DynamoDB AttributeValues
 type Marshaler struct {
 	// Cache for struct marshalers
 	cache sync.Map // map[reflect.Type]*structMarshaler
+	// Optional custom converter registry shared with DB
+	converter *pkgTypes.Converter
 }
 
 // structMarshaler contains cached information for marshaling a specific struct type
@@ -41,9 +44,26 @@ type fieldMarshaler struct {
 	marshalFunc func(unsafe.Pointer) (types.AttributeValue, error)
 }
 
-// New creates a new optimized marshaler
-func New() *Marshaler {
-	return &Marshaler{}
+// New creates a new optimized marshaler. If a converter is provided it will
+// be consulted for custom type conversions during marshaling.
+func New(converter *pkgTypes.Converter) *Marshaler {
+	return &Marshaler{
+		converter: converter,
+	}
+}
+
+// ClearCache removes all cached struct marshalers. This is useful when new
+// custom converters are registered and previously compiled functions need to
+// be rebuilt.
+func (m *Marshaler) ClearCache() {
+	if m == nil {
+		return
+	}
+
+	m.cache.Range(func(key, _ any) bool {
+		m.cache.Delete(key)
+		return true
+	})
 }
 
 // MarshalItem marshals a model to DynamoDB AttributeValues using cached reflection
@@ -164,6 +184,14 @@ func (m *Marshaler) buildStructMarshaler(typ reflect.Type, metadata *model.Metad
 			isUpdatedAt: fieldMeta.IsUpdatedAt,
 			isVersion:   fieldMeta.IsVersion,
 			isTTL:       fieldMeta.IsTTL,
+		}
+
+		// Prefer registered custom converters when available so callers can
+		// override marshalling behavior for specific types.
+		if m.hasCustomConverter(field.Type) {
+			fm.marshalFunc = m.buildCustomConverterMarshalFunc(field.Type)
+			sm.fields = append(sm.fields, fm)
+			continue
 		}
 
 		// Build type-specific marshal function
@@ -327,6 +355,10 @@ func (m *Marshaler) buildReflectMarshalFunc(typ reflect.Type, fieldMeta *model.F
 
 // marshalComplexValue handles complex types that can't use unsafe optimizations
 func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, error) {
+	if av, ok, err := m.marshalUsingCustomConverter(v); ok {
+		return av, err
+	}
+
 	switch v.Kind() {
 	case reflect.Slice:
 		if v.IsNil() {
@@ -407,12 +439,23 @@ func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, 
 
 // marshalValue marshals a single reflect.Value
 func (m *Marshaler) marshalValue(v reflect.Value) (types.AttributeValue, error) {
+	if !v.IsValid() {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
+	}
+
 	// Handle nil pointers
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return &types.AttributeValueMemberNULL{Value: true}, nil
 		}
+		if av, ok, err := m.marshalUsingCustomConverter(v); ok {
+			return av, err
+		}
 		v = v.Elem()
+	}
+
+	if av, ok, err := m.marshalUsingCustomConverter(v); ok {
+		return av, err
 	}
 
 	switch v.Kind() {
@@ -441,9 +484,43 @@ func (m *Marshaler) marshalValue(v reflect.Value) (types.AttributeValue, error) 
 		if v.IsNil() {
 			return &types.AttributeValueMemberNULL{Value: true}, nil
 		}
+		if av, ok, err := m.marshalUsingCustomConverter(v.Elem()); ok {
+			return av, err
+		}
 		return m.marshalValue(v.Elem())
 	default:
 		// For unsupported types, return an error instead of recursing
 		return nil, fmt.Errorf("unsupported type: %v", v.Kind())
 	}
+}
+
+func (m *Marshaler) buildCustomConverterMarshalFunc(typ reflect.Type) func(unsafe.Pointer) (types.AttributeValue, error) {
+	return func(ptr unsafe.Pointer) (types.AttributeValue, error) {
+		if m.converter == nil {
+			return nil, fmt.Errorf("no converter configured for type %s", typ)
+		}
+		value := reflect.NewAt(typ, ptr).Elem()
+		return m.converter.ToAttributeValue(value.Interface())
+	}
+}
+
+func (m *Marshaler) hasCustomConverter(typ reflect.Type) bool {
+	if m == nil || m.converter == nil {
+		return false
+	}
+	return m.converter.HasCustomConverter(typ)
+}
+
+func (m *Marshaler) marshalUsingCustomConverter(v reflect.Value) (types.AttributeValue, bool, error) {
+	if m == nil || m.converter == nil {
+		return nil, false, nil
+	}
+	if !m.converter.HasCustomConverter(v.Type()) {
+		return nil, false, nil
+	}
+	av, err := m.converter.ToAttributeValue(v.Interface())
+	if err != nil {
+		return nil, false, err
+	}
+	return av, true, nil
 }

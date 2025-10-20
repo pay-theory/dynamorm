@@ -53,12 +53,12 @@ type DB struct {
 //	    if image == nil {
 //	        return nil, nil
 //	    }
-//	
+//
 //	    var model MyModel
 //	    if err := dynamorm.UnmarshalItem(image, &model); err != nil {
 //	        return nil, fmt.Errorf("failed to unmarshal: %w", err)
 //	    }
-//	
+//
 //	    return &model, nil
 //	}
 func UnmarshalItem(item map[string]types.AttributeValue, dest interface{}) error {
@@ -92,7 +92,7 @@ func UnmarshalStreamImage(streamImage map[string]events.DynamoDBAttributeValue, 
 	for k, v := range streamImage {
 		item[k] = convertLambdaAttributeValue(v)
 	}
-	
+
 	return UnmarshalItem(item, dest)
 }
 
@@ -140,11 +140,13 @@ func New(config session.Config) (core.ExtendedDB, error) {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
+	converter := pkgTypes.NewConverter()
+
 	return &DB{
 		session:   sess,
 		registry:  model.NewRegistry(),
-		converter: pkgTypes.NewConverter(),
-		marshaler: marshal.New(),
+		converter: converter,
+		marshaler: marshal.New(converter),
 		ctx:       context.Background(),
 	}, nil
 }
@@ -153,6 +155,28 @@ func New(config session.Config) (core.ExtendedDB, error) {
 // Use this when you only need core functionality and want easier mocking
 func NewBasic(config session.Config) (core.DB, error) {
 	return New(config)
+}
+
+// RegisterTypeConverter registers a custom converter for a specific Go type. This allows
+// callers to control how values are marshaled to and unmarshaled from DynamoDB without
+// forking the internal marshaler. Registering a converter clears any cached marshalers
+// so subsequent operations use the new logic.
+func (db *DB) RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error {
+	if typ == nil {
+		return fmt.Errorf("converter type cannot be nil")
+	}
+	if converter == nil {
+		return fmt.Errorf("converter implementation cannot be nil")
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	db.converter.RegisterConverter(typ, converter)
+	if db.marshaler != nil {
+		db.marshaler.ClearCache()
+	}
+	return nil
 }
 
 // Model returns a new query builder for the given model

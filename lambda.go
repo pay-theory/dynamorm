@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 var (
@@ -170,6 +171,15 @@ func (ldb *LambdaDB) PreRegisterModels(models ...any) error {
 		ldb.modelCache.Store(modelType, true)
 	}
 	return nil
+}
+
+// RegisterTypeConverter registers a custom converter on the underlying DB and
+// clears any cached marshalers so the converter takes effect immediately.
+func (ldb *LambdaDB) RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error {
+	if ldb == nil || ldb.db == nil {
+		return fmt.Errorf("lambda DB is not initialized")
+	}
+	return ldb.db.RegisterTypeConverter(typ, converter)
 }
 
 // IsModelRegistered checks if a model is already registered

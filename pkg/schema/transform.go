@@ -133,8 +133,8 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 	}
 
 	// Import the marshal package for proper field name mapping
-	marshaler := marshal.New()
 	converter := pkgTypes.NewConverter()
+	marshaler := marshal.New(converter)
 
 	// Create a wrapper for model-to-model transforms
 	return func(sourceItem map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {

@@ -257,7 +257,7 @@ func BenchmarkMarshalItem_PrimitivesOnly(b *testing.B) {
 // Benchmark the optimized marshaler
 func BenchmarkMarshalItem_Optimized(b *testing.B) {
 	// Import the marshal package
-	m := marshal.New()
+	m := marshal.New(nil)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -430,9 +430,10 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 	})
 
 	b.Run("Optimized", func(b *testing.B) {
+		converter := pkgTypes.NewConverter()
 		db := &DB{
-			converter: pkgTypes.NewConverter(),
-			marshaler: marshal.New(),
+			converter: converter,
+			marshaler: marshal.New(converter),
 		}
 		q := &query{db: db}
 

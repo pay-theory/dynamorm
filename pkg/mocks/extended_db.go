@@ -2,9 +2,11 @@ package mocks
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/pay-theory/dynamorm/pkg/core"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -28,6 +30,12 @@ var _ core.ExtendedDB = (*MockExtendedDB)(nil)
 // AutoMigrateWithOptions performs enhanced auto-migration with options
 func (m *MockExtendedDB) AutoMigrateWithOptions(model any, opts ...any) error {
 	args := m.Called(model, opts)
+	return args.Error(0)
+}
+
+// RegisterTypeConverter registers a custom converter for a specific type
+func (m *MockExtendedDB) RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error {
+	args := m.Called(typ, converter)
 	return args.Error(0)
 }
 
@@ -94,6 +102,8 @@ func NewMockExtendedDB() *MockExtendedDB {
 		Return(nil).Maybe()
 	mockDB.On("DescribeTable", mock.Anything).
 		Return(nil, nil).Maybe()
+	mockDB.On("RegisterTypeConverter", mock.Anything, mock.Anything).
+		Return(nil).Maybe()
 
 	// Lambda-specific methods typically return self for chaining
 	mockDB.On("WithLambdaTimeout", mock.Anything).
