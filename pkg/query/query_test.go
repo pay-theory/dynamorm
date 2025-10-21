@@ -14,6 +14,8 @@ type mockMetadata struct {
 	mock.Mock
 }
 
+type attrAwareMetadata struct{}
+
 func (m *mockMetadata) TableName() string {
 	return "test-table"
 }
@@ -50,6 +52,31 @@ func (m *mockMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 		Type:         "S",
 		DynamoDBName: field,
 	}
+}
+
+func (m *attrAwareMetadata) TableName() string {
+	return "hashtag-table"
+}
+
+func (m *attrAwareMetadata) PrimaryKey() core.KeySchema {
+	return core.KeySchema{
+		PartitionKey: "HashtagPK",
+		SortKey:      "HashtagSK",
+	}
+}
+
+func (m *attrAwareMetadata) Indexes() []core.IndexSchema {
+	return nil
+}
+
+func (m *attrAwareMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
+	mapping := map[string]*core.AttributeMetadata{
+		"HashtagPK": {Name: "HashtagPK", Type: "S", DynamoDBName: "PK"},
+		"HashtagSK": {Name: "HashtagSK", Type: "S", DynamoDBName: "SK"},
+		"PK":        {Name: "HashtagPK", Type: "S", DynamoDBName: "PK"},
+		"SK":        {Name: "HashtagSK", Type: "S", DynamoDBName: "SK"},
+	}
+	return mapping[field]
 }
 
 type mockExecutor struct {
@@ -203,6 +230,22 @@ func TestQuery_OrderBy(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, compiled.ScanIndexForward)
 	assert.False(t, *compiled.ScanIndexForward)
+}
+
+func TestQuery_SortKeyDetectedWhenUsingAttributeName(t *testing.T) {
+	metadata := &attrAwareMetadata{}
+	executor := &mockExecutor{}
+
+	q := query.New(&TestItem{}, metadata, executor)
+
+	q.Where("PK", "=", "HASHTAG_TIMELINE#test").
+		Where("SK", ">", "cursor#1")
+
+	compiled, err := q.Compile()
+	assert.NoError(t, err)
+	assert.Equal(t, "Query", compiled.Operation)
+	assert.Contains(t, compiled.KeyConditionExpression, "AND")
+	assert.NotContains(t, compiled.FilterExpression, "SK")
 }
 
 func TestQuery_BatchGet(t *testing.T) {

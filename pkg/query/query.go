@@ -51,6 +51,28 @@ type Condition struct {
 	Value    any
 }
 
+// normalizeCondition resolves a condition's field to its canonical DynamoDB attribute name
+// and returns the normalized condition along with the Go field name and DynamoDB attribute name.
+func (q *Query) normalizeCondition(cond Condition) (Condition, string, string) {
+	normalized := cond
+	goField := cond.Field
+	attrName := cond.Field
+
+	if q.metadata != nil {
+		if meta := q.metadata.AttributeMetadata(cond.Field); meta != nil {
+			goField = meta.Name
+			if meta.DynamoDBName != "" {
+				attrName = meta.DynamoDBName
+			} else {
+				attrName = meta.Name
+			}
+			normalized.Field = attrName
+		}
+	}
+
+	return normalized, goField, attrName
+}
+
 // Filter represents a filter expression
 type Filter struct {
 	Expression string
@@ -1191,26 +1213,41 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 			indexSK = primaryKey.SortKey
 		}
 
-		for _, cond := range q.conditions {
-			if cond.Field == indexPK || (indexSK != "" && cond.Field == indexSK) {
-				keyConditions = append(keyConditions, cond)
+		pkAttrName := indexPK
+		if pkMeta := q.metadata.AttributeMetadata(indexPK); pkMeta != nil && pkMeta.DynamoDBName != "" {
+			pkAttrName = pkMeta.DynamoDBName
+		}
+
+		skAttrName := indexSK
+		if indexSK != "" {
+			if skMeta := q.metadata.AttributeMetadata(indexSK); skMeta != nil && skMeta.DynamoDBName != "" {
+				skAttrName = skMeta.DynamoDBName
+			}
+		}
+
+		for _, original := range q.conditions {
+			normalized, goField, attrName := q.normalizeCondition(original)
+
+			isPartitionKey := strings.EqualFold(goField, indexPK) || strings.EqualFold(attrName, pkAttrName)
+			isSortKey := indexSK != "" && (strings.EqualFold(goField, indexSK) || strings.EqualFold(attrName, skAttrName))
+
+			if isPartitionKey || isSortKey {
+				keyConditions = append(keyConditions, normalized)
 			} else {
-				filterConditions = append(filterConditions, cond)
+				filterConditions = append(filterConditions, normalized)
 			}
 		}
 
 		// Add key conditions
 		for _, cond := range keyConditions {
-			err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value)
-			if err != nil {
+			if err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value); err != nil {
 				return nil, err
 			}
 		}
 
 		// Add filter conditions from Where clauses
 		for _, cond := range filterConditions {
-			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-			if err != nil {
+			if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
 				return nil, err
 			}
 		}
@@ -1219,9 +1256,9 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		compiled.Operation = "Scan"
 
 		// All conditions become filters
-		for _, cond := range q.conditions {
-			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-			if err != nil {
+		for _, original := range q.conditions {
+			normalized, _, _ := q.normalizeCondition(original)
+			if err := builder.AddFilterCondition("AND", normalized.Field, normalized.Operator, normalized.Value); err != nil {
 				return nil, err
 			}
 		}
@@ -1283,9 +1320,9 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 	}
 
 	// Add filter conditions from Where clauses
-	for _, cond := range q.conditions {
-		err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-		if err != nil {
+	for _, original := range q.conditions {
+		normalized, _, _ := q.normalizeCondition(original)
+		if err := builder.AddFilterCondition("AND", normalized.Field, normalized.Operator, normalized.Value); err != nil {
 			return nil, err
 		}
 	}
