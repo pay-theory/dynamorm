@@ -95,6 +95,7 @@ func (s *Selector) scoreIndex(idx core.IndexSchema, required RequiredKeys) int {
 // AnalyzeConditions analyzes query conditions to determine key requirements
 func AnalyzeConditions(conditions []Condition) RequiredKeys {
 	var required RequiredKeys
+	var pendingSort []Condition
 
 	for _, cond := range conditions {
 		// Look for partition key conditions (must be equality)
@@ -105,9 +106,25 @@ func AnalyzeConditions(conditions []Condition) RequiredKeys {
 		}
 
 		// Look for sort key conditions
-		if required.SortKey == "" && required.PartitionKey != "" && cond.Field != required.PartitionKey {
+		if required.PartitionKey == "" {
+			pendingSort = append(pendingSort, cond)
+			continue
+		}
+
+		if required.SortKey == "" && cond.Field != required.PartitionKey {
 			required.SortKey = cond.Field
 			required.SortKeyOp = normalizeOperator(cond.Operator)
+		}
+	}
+
+	if required.SortKey == "" && required.PartitionKey != "" {
+		for _, cond := range pendingSort {
+			if cond.Field == required.PartitionKey {
+				continue
+			}
+			required.SortKey = cond.Field
+			required.SortKeyOp = normalizeOperator(cond.Operator)
+			break
 		}
 	}
 

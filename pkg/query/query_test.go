@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // Mock types for testing
@@ -79,6 +81,46 @@ func (m *attrAwareMetadata) AttributeMetadata(field string) *core.AttributeMetad
 
 type mockExecutor struct {
 	mock.Mock
+}
+
+type registryMetadataAdapter struct {
+	meta *model.Metadata
+}
+
+func (r *registryMetadataAdapter) TableName() string {
+	return r.meta.TableName
+}
+
+func (r *registryMetadataAdapter) PrimaryKey() core.KeySchema {
+	return core.KeySchema{
+		PartitionKey: r.meta.PrimaryKey.PartitionKey.Name,
+		SortKey:      r.meta.PrimaryKey.SortKey.Name,
+	}
+}
+
+func (r *registryMetadataAdapter) Indexes() []core.IndexSchema {
+	indexes := make([]core.IndexSchema, len(r.meta.Indexes))
+	for i, idx := range r.meta.Indexes {
+		indexes[i] = core.IndexSchema{
+			Name:            idx.Name,
+			Type:            string(idx.Type),
+			PartitionKey:    idx.PartitionKey.Name,
+			SortKey:         idx.SortKey.Name,
+			ProjectionType:  idx.ProjectionType,
+			ProjectedFields: idx.ProjectedFields,
+		}
+	}
+	return indexes
+}
+
+func (r *registryMetadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
+	if meta, ok := r.meta.Fields[field]; ok {
+		return &core.AttributeMetadata{Name: meta.Name, Type: meta.Type.String(), DynamoDBName: meta.DBName}
+	}
+	if meta, ok := r.meta.FieldsByDBName[field]; ok {
+		return &core.AttributeMetadata{Name: meta.Name, Type: meta.Type.String(), DynamoDBName: meta.DBName}
+	}
+	return nil
 }
 
 func (m *mockExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
@@ -244,6 +286,36 @@ func TestQuery_SortKeyDetectedWhenUsingAttributeName(t *testing.T) {
 	assert.Equal(t, "Query", compiled.Operation)
 	assert.Contains(t, compiled.KeyConditionExpression, "AND")
 	assert.NotContains(t, compiled.FilterExpression, "SK")
+}
+
+func TestQuery_SortKeyDetectedWithRegistryMetadata(t *testing.T) {
+	type HashtagStatusIndex struct {
+		PK string `dynamorm:"pk"`
+		SK string `dynamorm:"sk"`
+	}
+
+	reg := model.NewRegistry()
+	require.NoError(t, reg.Register(&HashtagStatusIndex{}))
+	meta, err := reg.GetMetadata(&HashtagStatusIndex{})
+	require.NoError(t, err)
+
+	adapter := &registryMetadataAdapter{meta: meta}
+	executor := &mockExecutor{}
+
+	q := query.New(&HashtagStatusIndex{}, adapter, executor)
+
+	q.Where("PK", "=", "HASHTAG#foo").
+		Where("SK", ">", "cursor").
+		Limit(2).
+		OrderBy("SK", "asc")
+
+	compiled, err := q.Compile()
+	require.NoError(t, err)
+	require.Equal(t, "Query", compiled.Operation)
+	require.Contains(t, compiled.KeyConditionExpression, "AND")
+	require.Empty(t, compiled.FilterExpression)
+	require.Equal(t, "PK", compiled.ExpressionAttributeNames["#n1"])
+	require.Equal(t, "SK", compiled.ExpressionAttributeNames["#n2"])
 }
 
 func TestQuery_BatchGet(t *testing.T) {
