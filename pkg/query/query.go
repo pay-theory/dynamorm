@@ -935,33 +935,48 @@ func (q *Query) WithContext(ctx context.Context) core.Query {
 // selectBestIndex analyzes conditions and selects the optimal index
 func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 	// Get all indexes including the primary index
-	allIndexes := make([]core.IndexSchema, 0, len(q.metadata.Indexes())+1)
+	rawIndexes := make([]core.IndexSchema, 0, len(q.metadata.Indexes())+1)
 
-	// Add the primary index
+	// Add the primary index (name is empty)
 	primaryKey := q.metadata.PrimaryKey()
-	allIndexes = append(allIndexes, core.IndexSchema{
-		Name:         "", // Empty name indicates primary index
+	rawIndexes = append(rawIndexes, core.IndexSchema{
+		Name:         "",
 		Type:         "PRIMARY",
 		PartitionKey: primaryKey.PartitionKey,
 		SortKey:      primaryKey.SortKey,
 	})
 
 	// Add GSIs and LSIs
-	allIndexes = append(allIndexes, q.metadata.Indexes()...)
+	rawIndexes = append(rawIndexes, q.metadata.Indexes()...)
 
-	selector := index.NewSelector(allIndexes)
+	// Normalize index key names to DynamoDB attribute names where possible
+	normalizedIndexes := make([]core.IndexSchema, len(rawIndexes))
+	for i, idx := range rawIndexes {
+		normalizedIndexes[i] = idx
+
+		if idx.PartitionKey != "" {
+			if attr := q.metadata.AttributeMetadata(idx.PartitionKey); attr != nil && attr.DynamoDBName != "" {
+				normalizedIndexes[i].PartitionKey = attr.DynamoDBName
+			}
+		}
+
+		if idx.SortKey != "" {
+			if attr := q.metadata.AttributeMetadata(idx.SortKey); attr != nil && attr.DynamoDBName != "" {
+				normalizedIndexes[i].SortKey = attr.DynamoDBName
+			}
+		}
+	}
+
+	selector := index.NewSelector(normalizedIndexes)
 
 	// Convert our conditions to index.Condition type
 	indexConditions := make([]index.Condition, len(q.conditions))
 	for i, cond := range q.conditions {
-		_, goField, _ := q.normalizeCondition(cond)
-		if goField == "" {
-			goField = cond.Field
-		}
+		normalized, _, _ := q.normalizeCondition(cond)
 		indexConditions[i] = index.Condition{
-			Field:    goField,
-			Operator: cond.Operator,
-			Value:    cond.Value,
+			Field:    normalized.Field,
+			Operator: normalized.Operator,
+			Value:    normalized.Value,
 		}
 	}
 

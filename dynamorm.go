@@ -739,15 +739,23 @@ func (q *query) allInternal(dest any) error {
 			continue
 		}
 
-		if fieldMeta.IsPK || (q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata)) {
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+
+		if isPK || isSK {
 			// DynamoDB supports these operators for key conditions:
 			// Partition key: = (equality only)
 			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
 			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
 				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
 				cond.op == "BETWEEN" {
-				keyConditions = append(keyConditions, cond)
-				useQuery = true
+				// Partition keys still require equality. If a non-equality comparison is attempted
+				// against the partition key, treat it as a filter to surface the correct Dynamo error.
+				if isPK && cond.op != "=" {
+					filterConditions = append(filterConditions, cond)
+				} else {
+					keyConditions = append(keyConditions, cond)
+					useQuery = true
+				}
 			} else {
 				filterConditions = append(filterConditions, cond)
 			}
@@ -849,15 +857,21 @@ func (q *query) Count() (int64, error) {
 			continue
 		}
 
-		if fieldMeta.IsPK || (q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata)) {
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+
+		if isPK || isSK {
 			// DynamoDB supports these operators for key conditions:
 			// Partition key: = (equality only)
 			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
 			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
 				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
 				cond.op == "BETWEEN" {
-				keyConditions = append(keyConditions, cond)
-				useQuery = true
+				if isPK && cond.op != "=" {
+					filterConditions = append(filterConditions, cond)
+				} else {
+					keyConditions = append(keyConditions, cond)
+					useQuery = true
+				}
 			} else {
 				filterConditions = append(filterConditions, cond)
 			}
@@ -1930,13 +1944,42 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 // isIndexKey checks if a field is a key in the specified index
 func (q *query) isIndexKey(fieldMeta *model.FieldMetadata, indexName string, metadata *model.Metadata) bool {
+	return q.isIndexPartitionKey(fieldMeta, indexName, metadata) ||
+		q.isIndexSortKey(fieldMeta, indexName, metadata)
+}
+
+func (q *query) isIndexPartitionKey(fieldMeta *model.FieldMetadata, indexName string, metadata *model.Metadata) bool {
 	for _, index := range metadata.Indexes {
-		if index.Name == indexName {
-			return (index.PartitionKey != nil && index.PartitionKey.Name == fieldMeta.Name) ||
-				(index.SortKey != nil && index.SortKey.Name == fieldMeta.Name)
+		if index.Name == indexName && index.PartitionKey != nil && index.PartitionKey.Name == fieldMeta.Name {
+			return true
 		}
 	}
 	return false
+}
+
+func (q *query) isIndexSortKey(fieldMeta *model.FieldMetadata, indexName string, metadata *model.Metadata) bool {
+	for _, index := range metadata.Indexes {
+		if index.Name == indexName && index.SortKey != nil && index.SortKey.Name == fieldMeta.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func (q *query) determineKeyRoles(fieldMeta *model.FieldMetadata, metadata *model.Metadata) (bool, bool) {
+	isPK := fieldMeta.IsPK
+	isSK := fieldMeta.IsSK
+
+	if q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata) {
+		if !isPK && q.isIndexPartitionKey(fieldMeta, q.indexName, metadata) {
+			isPK = true
+		}
+		if !isSK && q.isIndexSortKey(fieldMeta, q.indexName, metadata) {
+			isSK = true
+		}
+	}
+
+	return isPK, isSK
 }
 
 // unmarshalItems converts DynamoDB items to Go slice
@@ -2419,10 +2462,8 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 			return nil, fmt.Errorf("field %s not found in model", cond.field)
 		}
 
-		isKey := fieldMeta.IsPK || fieldMeta.IsSK ||
-			(q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata))
-
-		if isKey {
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+		if isPK || isSK {
 			keyConditions = append(keyConditions, cond)
 		} else {
 			filterConditions = append(filterConditions, cond)
