@@ -1207,7 +1207,29 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		var keyConditions []Condition
 		var filterConditions []Condition
 
+		resolveNames := func(field string) (string, string) {
+			if field == "" {
+				return "", ""
+			}
+			goName := field
+			attrName := field
+			if meta := q.metadata.AttributeMetadata(field); meta != nil {
+				if meta.Name != "" {
+					goName = meta.Name
+				}
+				if meta.DynamoDBName != "" {
+					attrName = meta.DynamoDBName
+				} else {
+					attrName = goName
+				}
+			}
+			return goName, attrName
+		}
+
 		primaryKey := q.metadata.PrimaryKey()
+		primaryPKGo, primaryPKAttr := resolveNames(primaryKey.PartitionKey)
+		primarySKGo, primarySKAttr := resolveNames(primaryKey.SortKey)
+
 		indexPK := bestIndex.PartitionKey
 		indexSK := bestIndex.SortKey
 
@@ -1217,23 +1239,55 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 			indexSK = primaryKey.SortKey
 		}
 
-		pkAttrName := indexPK
-		if pkMeta := q.metadata.AttributeMetadata(indexPK); pkMeta != nil && pkMeta.DynamoDBName != "" {
-			pkAttrName = pkMeta.DynamoDBName
+		pkGoName, pkAttrName := resolveNames(indexPK)
+		if pkGoName == "" {
+			pkGoName = primaryPKGo
+		}
+		if pkAttrName == "" {
+			pkAttrName = primaryPKAttr
 		}
 
-		skAttrName := indexSK
-		if indexSK != "" {
-			if skMeta := q.metadata.AttributeMetadata(indexSK); skMeta != nil && skMeta.DynamoDBName != "" {
-				skAttrName = skMeta.DynamoDBName
-			}
+		skGoName, skAttrName := resolveNames(indexSK)
+		if skGoName == "" {
+			skGoName = primarySKGo
+		}
+		if skAttrName == "" {
+			skAttrName = primarySKAttr
 		}
 
 		for _, original := range q.conditions {
 			normalized, goField, attrName := q.normalizeCondition(original)
 
-			isPartitionKey := strings.EqualFold(goField, indexPK) || strings.EqualFold(attrName, pkAttrName)
-			isSortKey := indexSK != "" && (strings.EqualFold(goField, indexSK) || strings.EqualFold(attrName, skAttrName))
+			condGoName := goField
+			condAttrName := attrName
+
+			if meta := q.metadata.AttributeMetadata(goField); meta != nil {
+				if meta.Name != "" {
+					condGoName = meta.Name
+				}
+				if meta.DynamoDBName != "" {
+					condAttrName = meta.DynamoDBName
+				} else if condAttrName == "" {
+					condAttrName = condGoName
+				}
+			} else if meta := q.metadata.AttributeMetadata(attrName); meta != nil {
+				if meta.Name != "" {
+					condGoName = meta.Name
+				}
+				if meta.DynamoDBName != "" {
+					condAttrName = meta.DynamoDBName
+				}
+			}
+
+			isPartitionKey := false
+			if pkGoName != "" {
+				isPartitionKey = strings.EqualFold(condGoName, pkGoName) || strings.EqualFold(condAttrName, pkAttrName)
+			}
+
+			isSortKey := false
+			if skGoName != "" {
+				isSortKey = strings.EqualFold(condGoName, skGoName) || strings.EqualFold(condAttrName, skAttrName)
+			}
 
 			if isPartitionKey || isSortKey {
 				keyConditions = append(keyConditions, normalized)

@@ -60,8 +60,8 @@ func (m *attrAwareMetadata) TableName() string {
 
 func (m *attrAwareMetadata) PrimaryKey() core.KeySchema {
 	return core.KeySchema{
-		PartitionKey: "HashtagPK",
-		SortKey:      "HashtagSK",
+		PartitionKey: "PK",
+		SortKey:      "SK",
 	}
 }
 
@@ -71,10 +71,8 @@ func (m *attrAwareMetadata) Indexes() []core.IndexSchema {
 
 func (m *attrAwareMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	mapping := map[string]*core.AttributeMetadata{
-		"HashtagPK": {Name: "HashtagPK", Type: "S", DynamoDBName: "PK"},
-		"HashtagSK": {Name: "HashtagSK", Type: "S", DynamoDBName: "SK"},
-		"PK":        {Name: "HashtagPK", Type: "S", DynamoDBName: "PK"},
-		"SK":        {Name: "HashtagSK", Type: "S", DynamoDBName: "SK"},
+		"PK": {Name: "PK", Type: "S", DynamoDBName: "PK"},
+		"SK": {Name: "SK", Type: "S", DynamoDBName: "SK"},
 	}
 	return mapping[field]
 }
