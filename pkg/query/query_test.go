@@ -318,6 +318,35 @@ func TestQuery_SortKeyDetectedWithRegistryMetadata(t *testing.T) {
 	require.Equal(t, "SK", compiled.ExpressionAttributeNames["#n2"])
 }
 
+func TestQuery_CustomAttributeBeginsWithAsKeyCondition(t *testing.T) {
+	type Notification struct {
+		Partition string `dynamorm:"pk,attr:PK"`
+		Sort      string `dynamorm:"sk,attr:SK"`
+		Type      string `dynamorm:"attr:type"`
+	}
+
+	reg := model.NewRegistry()
+	require.NoError(t, reg.Register(&Notification{}))
+	meta, err := reg.GetMetadata(&Notification{})
+	require.NoError(t, err)
+
+	adapter := &registryMetadataAdapter{meta: meta}
+	executor := &mockExecutor{}
+
+	q := query.New(&Notification{}, adapter, executor)
+
+	q.Where("PK", "=", "USER#admin").
+		Where("SK", "begins_with", "NOTIF#")
+
+	compiled, err := q.Compile()
+	require.NoError(t, err)
+	require.Equal(t, "Query", compiled.Operation)
+	require.Contains(t, compiled.KeyConditionExpression, "begins_with")
+	require.Empty(t, compiled.FilterExpression)
+	require.Equal(t, "PK", compiled.ExpressionAttributeNames["#n1"])
+	require.Equal(t, "SK", compiled.ExpressionAttributeNames["#n2"])
+}
+
 func TestQuery_BatchGet(t *testing.T) {
 	metadata := &mockMetadata{}
 	executor := &mockBatchExecutor{}

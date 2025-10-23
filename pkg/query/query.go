@@ -998,9 +998,18 @@ func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 	// Convert our conditions to index.Condition type
 	indexConditions := make([]index.Condition, len(q.conditions))
 	for i, cond := range q.conditions {
-		normalized, _, _ := q.normalizeCondition(cond)
+		normalized, goField, attrName := q.normalizeCondition(cond)
+
+		fieldForIndex := goField
+		if fieldForIndex == "" {
+			fieldForIndex = attrName
+		}
+		if fieldForIndex == "" {
+			fieldForIndex = normalized.Field
+		}
+
 		indexConditions[i] = index.Condition{
-			Field:    normalized.Field,
+			Field:    fieldForIndex,
 			Operator: normalized.Operator,
 			Value:    normalized.Value,
 		}
