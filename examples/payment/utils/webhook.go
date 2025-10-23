@@ -125,7 +125,7 @@ func (w *WebhookSender) processWebhook(job *WebhookJob) error {
 		Attempts:   0,
 		Status:     payment.WebhookStatusPending,
 		CreatedAt:  time.Now(),
-		ExpiresAt:  time.Now().Add(24 * time.Hour), // Expire after 24 hours
+		ExpiresAt:  time.Now().Add(24 * time.Hour).Unix(), // Expire after 24 hours (Unix timestamp)
 	}
 
 	// Save webhook record

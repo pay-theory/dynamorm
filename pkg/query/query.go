@@ -992,25 +992,8 @@ func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 	// Add GSIs and LSIs
 	rawIndexes = append(rawIndexes, q.metadata.Indexes()...)
 
-	// Normalize index key names to DynamoDB attribute names where possible
-	normalizedIndexes := make([]core.IndexSchema, len(rawIndexes))
-	for i, idx := range rawIndexes {
-		normalizedIndexes[i] = idx
-
-		if idx.PartitionKey != "" {
-			if attr := q.metadata.AttributeMetadata(idx.PartitionKey); attr != nil && attr.DynamoDBName != "" {
-				normalizedIndexes[i].PartitionKey = attr.DynamoDBName
-			}
-		}
-
-		if idx.SortKey != "" {
-			if attr := q.metadata.AttributeMetadata(idx.SortKey); attr != nil && attr.DynamoDBName != "" {
-				normalizedIndexes[i].SortKey = attr.DynamoDBName
-			}
-		}
-	}
-
-	selector := index.NewSelector(normalizedIndexes)
+	// Keep Go field names; Compile() resolves to DynamoDB names when needed
+	selector := index.NewSelector(rawIndexes)
 
 	// Convert our conditions to index.Condition type
 	indexConditions := make([]index.Condition, len(q.conditions))
@@ -1289,24 +1272,26 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		primaryPKGo, primaryPKAttr := resolveNames(primaryKey.PartitionKey)
 		primarySKGo, primarySKAttr := resolveNames(primaryKey.SortKey)
 
-		indexPK := bestIndex.PartitionKey
-		indexSK := bestIndex.SortKey
+		// Resolve Go and DynamoDB names for the keys based on the selected index
+		var pkGoName, pkAttrName, skGoName, skAttrName string
 
-		// If using primary table
 		if bestIndex.Name == "" {
-			indexPK = primaryKey.PartitionKey
-			indexSK = primaryKey.SortKey
+			// Primary table uses primary key definition
+			pkGoName, pkAttrName = resolveNames(primaryKey.PartitionKey)
+			skGoName, skAttrName = resolveNames(primaryKey.SortKey)
+		} else {
+			// Secondary indexes provide their own Go field names
+			pkGoName, pkAttrName = resolveNames(bestIndex.PartitionKey)
+			skGoName, skAttrName = resolveNames(bestIndex.SortKey)
 		}
 
-		pkGoName, pkAttrName := resolveNames(indexPK)
+		// Fall back to primary key metadata if resolution fails
 		if pkGoName == "" {
 			pkGoName = primaryPKGo
 		}
 		if pkAttrName == "" {
 			pkAttrName = primaryPKAttr
 		}
-
-		skGoName, skAttrName := resolveNames(indexSK)
 		if skGoName == "" {
 			skGoName = primarySKGo
 		}

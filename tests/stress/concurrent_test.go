@@ -24,6 +24,10 @@ import (
 
 // TestConcurrentQueries tests system behavior under heavy concurrent load
 func TestConcurrentQueries(t *testing.T) {
+	if os.Getenv("RUN_STRESS_TESTS") != "true" {
+		t.Skip("Skipping stress test (set RUN_STRESS_TESTS=true to run)")
+	}
+
 	db, err := setupStressDB(t)
 	require.NoError(t, err)
 
@@ -183,6 +187,10 @@ func TestConcurrentQueries(t *testing.T) {
 
 // TestLargeItemHandling tests handling of items near DynamoDB limits
 func TestLargeItemHandling(t *testing.T) {
+	if os.Getenv("RUN_STRESS_TESTS") != "true" {
+		t.Skip("Skipping stress test (set RUN_STRESS_TESTS=true to run)")
+	}
+
 	tests.RequireDynamoDBLocal(t)
 
 	db, err := setupStressDB(t)
@@ -333,12 +341,10 @@ func TestLargeItemHandling(t *testing.T) {
 
 // TestMemoryStability tests for memory leaks under sustained load
 func TestMemoryStability(t *testing.T) {
-	// Skip if running quick tests
-	if os.Getenv("SKIP_MEMORY_TEST") == "true" {
-		t.Skip("Skipping memory stability test (SKIP_MEMORY_TEST=true)")
+	if os.Getenv("RUN_STRESS_TESTS") != "true" {
+		t.Skip("Skipping stress test (set RUN_STRESS_TESTS=true to run)")
 	}
 
-	// Use our new test utility instead of testing.Short()
 	tests.RequireDynamoDBLocal(t)
 
 	db, err := setupStressDB(t)

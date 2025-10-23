@@ -125,7 +125,7 @@ type IdempotencyRecord struct {
 	Response    string    `dynamorm:"json" json:"response"`
 	StatusCode  int       `json:"status_code"`
 	CreatedAt   time.Time `dynamorm:"created_at" json:"created_at"`
-	ExpiresAt   time.Time `dynamorm:"ttl" json:"expires_at"`
+	ExpiresAt   int64     `dynamorm:"ttl" json:"expires_at"` // Unix timestamp
 }
 
 // Settlement represents a batch settlement
@@ -167,7 +167,7 @@ type Webhook struct {
 	ResponseCode int            `json:"response_code,omitempty"`
 	ResponseBody string         `json:"response_body,omitempty"`
 	CreatedAt    time.Time      `dynamorm:"created_at" json:"created_at"`
-	ExpiresAt    time.Time      `dynamorm:"ttl" json:"expires_at"`
+	ExpiresAt    int64          `dynamorm:"ttl" json:"expires_at"` // Unix timestamp
 }
 
 // WebhookStatus constants
