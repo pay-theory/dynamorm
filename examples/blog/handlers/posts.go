@@ -81,7 +81,6 @@ func (h *PostHandler) listPosts(ctx context.Context, request events.APIGatewayPr
 	cursor := request.QueryStringParameters["cursor"]
 	authorID := request.QueryStringParameters["author_id"]
 	categoryID := request.QueryStringParameters["category_id"]
-	tag := request.QueryStringParameters["tag"]
 
 	// Decode cursor if provided
 	cursorData, err := DecodeCursor(cursor)
@@ -119,11 +118,8 @@ func (h *PostHandler) listPosts(ctx context.Context, request events.APIGatewayPr
 		query = query.Filter("CategoryID", "=", categoryID)
 	}
 
-	if tag != "" {
-		// For contains operation, we might need a different approach
-		// For now, we'll skip this filter
-		// query = query.Filter("contains(Tags, :tag)", tag)
-	}
+	// Tag filtering using DynamoDB expressions would require a contains condition.
+	// This can be added in the future when tag queries are supported.
 
 	// Execute query
 	var posts []*models.Post
@@ -163,9 +159,11 @@ func (h *PostHandler) listPosts(ctx context.Context, request events.APIGatewayPr
 	// Batch get authors
 	if len(authorIDs) > 0 {
 		var authors []*models.Author
-		err = h.db.Model(&models.Author{}).
+		if err := h.db.Model(&models.Author{}).
 			Where("ID", "in", authorIDs).
-			All(&authors)
+			All(&authors); err != nil {
+			return errorResponse(http.StatusInternalServerError, "Failed to fetch authors"), nil
+		}
 
 		for _, author := range authors {
 			authorMap[author.ID] = author

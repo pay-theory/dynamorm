@@ -9,7 +9,11 @@ import (
 // TestWithRetryGSI verifies that WithRetry works correctly for GSI queries
 func TestWithRetryGSI(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Create table
@@ -142,7 +146,11 @@ func TestWithRetryGSI(t *testing.T) {
 // TestWithRetryTiming verifies the timing behavior of WithRetry
 func TestWithRetryTiming(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Create table

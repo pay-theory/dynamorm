@@ -125,7 +125,11 @@ func (f *ConfigurableMockDBFactory) WithConfig(config FactoryConfig) Configurabl
 func (f *ConfigurableMockDBFactory) CreateDB(config session.Config) (core.ExtendedDB, error) {
 	// Apply any configuration-specific behavior here
 	if f.config.EnableLogging {
-		// In a real implementation, we'd wrap the mock with logging
+		if f.OnCreateDB == nil {
+			f.OnCreateDB = func(cfg session.Config) {
+				// Placeholder hook for logging; callers can replace this function to capture config.
+			}
+		}
 	}
 
 	return f.MockDBFactory.CreateDB(config)

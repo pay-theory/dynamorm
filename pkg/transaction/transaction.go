@@ -60,7 +60,7 @@ func (tx *Transaction) Create(model any) error {
 	}
 
 	// Build condition expression to ensure item doesn't exist
-	conditionExpression := fmt.Sprintf("attribute_not_exists(#pk)")
+	conditionExpression := "attribute_not_exists(#pk)"
 	expressionAttributeNames := map[string]string{
 		"#pk": metadata.PrimaryKey.PartitionKey.DBName,
 	}
@@ -127,7 +127,7 @@ func (tx *Transaction) Update(model any) error {
 		}
 		expressionAttributeValues[attrValue] = av
 
-		updateExpression += fmt.Sprintf("%s = %s", attrName, attrValue)
+		updateExpression += attrName + " = " + attrValue
 		updateCount++
 	}
 
@@ -147,7 +147,7 @@ func (tx *Transaction) Update(model any) error {
 			expressionAttributeValues[":currentVer"] = av
 
 			// Increment version
-			updateExpression += fmt.Sprintf(", #ver = :newVer")
+			updateExpression += ", #ver = :newVer"
 			newAv, err := tx.converter.ToAttributeValue(currentVersion + 1)
 			if err != nil {
 				return fmt.Errorf("failed to convert new version: %w", err)
@@ -171,7 +171,7 @@ func (tx *Transaction) Update(model any) error {
 		}
 
 		if !alreadyUpdated {
-			updateExpression += fmt.Sprintf(", #upd = :updTime")
+			updateExpression += ", #upd = :updTime"
 			expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
 
 			av, err := tx.converter.ToAttributeValue(time.Now())

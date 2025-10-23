@@ -574,20 +574,15 @@ func setupStressDB(t *testing.T) (core.ExtendedDB, error) {
 	// We need to create a client from config since we can't access db's internal client
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           "http://localhost:8000",
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy", "")),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	client := dynamodb.NewFromConfig(cfg)
+	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String("http://localhost:8000")
+	})
 
 	for _, table := range tables {
 		for i := 0; i < 30; i++ {

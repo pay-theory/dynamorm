@@ -17,12 +17,8 @@ func TestLambdaEnvironmentDetection(t *testing.T) {
 	assert.Equal(t, 0, GetLambdaMemoryMB())
 
 	// Set Lambda environment variables
-	os.Setenv("AWS_LAMBDA_FUNCTION_NAME", "test-function")
-	os.Setenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "512")
-	defer func() {
-		os.Unsetenv("AWS_LAMBDA_FUNCTION_NAME")
-		os.Unsetenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE")
-	}()
+	t.Setenv("AWS_LAMBDA_FUNCTION_NAME", "test-function")
+	t.Setenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "512")
 
 	assert.True(t, IsLambdaEnvironment())
 	assert.Equal(t, 512, GetLambdaMemoryMB())
@@ -36,8 +32,7 @@ func TestLambdaDBCreation(t *testing.T) {
 	}
 
 	// Set test environment
-	os.Setenv("AWS_REGION", "us-east-1")
-	defer os.Unsetenv("AWS_REGION")
+	t.Setenv("AWS_REGION", "us-east-1")
 
 	db, err := NewLambdaOptimized()
 	require.NoError(t, err)

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -182,7 +183,9 @@ func (w *WebhookSender) deliverWebhook(webhook *payment.Webhook, secret string) 
 			webhook.Status = payment.WebhookStatusFailed
 			webhook.ResponseBody = fmt.Sprintf("Network error: %v", err)
 		} else {
-			defer resp.Body.Close()
+			defer func() {
+				_ = resp.Body.Close()
+			}()
 			webhook.ResponseCode = resp.StatusCode
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -313,6 +316,8 @@ func (r *RetryWorker) processRetries() {
 		}
 
 		// Retry delivery
-		r.webhookSender.deliverWebhook(webhook, merchant.WebhookSecret)
+		if err := r.webhookSender.deliverWebhook(webhook, merchant.WebhookSecret); err != nil {
+			log.Printf("failed to redeliver webhook %s: %v", webhook.ID, err)
+		}
 	}
 }

@@ -112,12 +112,13 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 			}
 		}
 
-		// Migrate to V2 with transformation
-		err = db.AutoMigrateWithOptions(&UserV1{},
-			dynamorm.WithTargetModel(&UserV2{}),
-			dynamorm.WithDataCopy(true),
-			dynamorm.WithTransform(transformFunc),
-		)
+	// Migrate to V2 with transformation
+	err = db.AutoMigrateWithOptions(&UserV1{},
+		dynamorm.WithTargetModel(&UserV2{}),
+		dynamorm.WithDataCopy(true),
+		dynamorm.WithTransform(transformFunc),
+	)
+	require.NoError(t, err)
 
 		// Note: The transform function is not fully implemented in the current version
 		// This test demonstrates the intended API
@@ -159,12 +160,13 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Migrate with custom batch size
-		err = db.AutoMigrateWithOptions(&UserV1{},
-			dynamorm.WithTargetModel(&UserV2{}),
-			dynamorm.WithDataCopy(true),
-			dynamorm.WithBatchSize(10), // Process 10 items at a time
-		)
+	// Migrate with custom batch size
+	err = db.AutoMigrateWithOptions(&UserV1{},
+		dynamorm.WithTargetModel(&UserV2{}),
+		dynamorm.WithDataCopy(true),
+		dynamorm.WithBatchSize(10), // Process 10 items at a time
+	)
+	require.NoError(t, err)
 
 		// Clean up
 		_ = db.DeleteTable(&UserV1{})

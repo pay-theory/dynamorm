@@ -198,7 +198,8 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 	var lsiList []types.LocalSecondaryIndex
 
 	for _, index := range metadata.Indexes {
-		if index.Type == model.GlobalSecondaryIndex {
+		switch index.Type {
+		case model.GlobalSecondaryIndex:
 			gsi := types.GlobalSecondaryIndex{
 				IndexName: aws.String(index.Name),
 				KeySchema: []types.KeySchemaElement{
@@ -207,9 +208,7 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 						KeyType:       types.KeyTypeHash,
 					},
 				},
-				Projection: &types.Projection{
-					ProjectionType: types.ProjectionTypeAll, // Default to ALL
-				},
+				Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
 			}
 
 			if index.SortKey != nil {
@@ -219,18 +218,16 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 				})
 			}
 
-			// Set projection type based on metadata
 			if index.ProjectionType != "" {
 				gsi.Projection.ProjectionType = types.ProjectionType(index.ProjectionType)
-
-				// If INCLUDE projection, add non-key attributes
 				if index.ProjectionType == "INCLUDE" && len(index.ProjectedFields) > 0 {
 					gsi.Projection.NonKeyAttributes = index.ProjectedFields
 				}
 			}
 
 			gsiList = append(gsiList, gsi)
-		} else if index.Type == model.LocalSecondaryIndex {
+
+		case model.LocalSecondaryIndex:
 			lsi := types.LocalSecondaryIndex{
 				IndexName: aws.String(index.Name),
 				KeySchema: []types.KeySchemaElement{
@@ -239,9 +236,7 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 						KeyType:       types.KeyTypeHash,
 					},
 				},
-				Projection: &types.Projection{
-					ProjectionType: types.ProjectionTypeAll, // Default to ALL
-				},
+				Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
 			}
 
 			if index.SortKey != nil {
@@ -251,11 +246,8 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 				})
 			}
 
-			// Set projection type based on metadata
 			if index.ProjectionType != "" {
 				lsi.Projection.ProjectionType = types.ProjectionType(index.ProjectionType)
-
-				// If INCLUDE projection, add non-key attributes
 				if index.ProjectionType == "INCLUDE" && len(index.ProjectedFields) > 0 {
 					lsi.Projection.NonKeyAttributes = index.ProjectedFields
 				}

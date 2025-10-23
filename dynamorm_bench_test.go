@@ -343,7 +343,9 @@ func BenchmarkMarshalItem_Optimized(b *testing.B) {
 	}
 
 	// Warm up the cache
-	m.MarshalItem(user, metadata)
+	if _, err := m.MarshalItem(user, metadata); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -438,7 +440,9 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 		q := &query{db: db}
 
 		// Warm up cache
-		q.marshalItem(user, metadata)
+		if _, err := q.marshalItem(user, metadata); err != nil {
+			b.Fatal(err)
+		}
 
 		b.ResetTimer()
 		b.ReportAllocs()

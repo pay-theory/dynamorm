@@ -328,6 +328,7 @@ func TestPaymentErrorScenarios(t *testing.T) {
 		return nil, nil
 	})
 	// Error would occur due to context cancellation in real scenario
+	require.Error(t, err)
 
 	// Test Case 4: Recovery procedures
 	// Create a payment in pending state

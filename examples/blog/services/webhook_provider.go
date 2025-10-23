@@ -133,7 +133,9 @@ func (p *WebhookProvider) sendWebhook(ctx context.Context, url string, payload [
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	// Read response body
 	body, _ := io.ReadAll(resp.Body)

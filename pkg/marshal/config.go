@@ -91,7 +91,6 @@ func GetGlobalConfig() Config {
 type MarshalerFactory struct {
 	config    Config
 	converter *pkgTypes.Converter
-	once      sync.Once
 }
 
 // NewMarshalerFactory creates a new factory with the given configuration

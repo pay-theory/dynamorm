@@ -100,11 +100,11 @@ func TestCompleteWorkflow(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Query products by category
+		// Scan products by category (CategoryID is sort key, so we need to scan)
 		var electronics []Product
-		err = testCtx.DB.Model(&Product{CategoryID: "electronics"}).
+		err = testCtx.DB.Model(&Product{}).
 			Where("CategoryID", "=", "electronics").
-			All(&electronics)
+			Scan(&electronics)
 		require.NoError(t, err)
 		assert.Len(t, electronics, 2)
 	})

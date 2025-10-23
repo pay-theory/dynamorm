@@ -65,7 +65,9 @@ func TestWebhookSender(t *testing.T) {
 
 		// Return success
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "received"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "received"}); err != nil {
+			t.Errorf("failed to write webhook response: %v", err)
+		}
 	}))
 	defer webhookServer.Close()
 
@@ -164,11 +166,15 @@ func TestWebhookRetry(t *testing.T) {
 		if currentAttempt <= 2 {
 			// Fail first 2 attempts
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": "temporary failure"})
+			if err := json.NewEncoder(w).Encode(map[string]string{"error": "temporary failure"}); err != nil {
+				t.Errorf("failed to write temporary failure response: %v", err)
+			}
 		} else {
 			// Succeed on 3rd attempt
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "success"}); err != nil {
+				t.Errorf("failed to write success response: %v", err)
+			}
 		}
 	}))
 	defer webhookServer.Close()
@@ -365,4 +371,3 @@ func createJWT(header, claims map[string]interface{}, secret string) string {
 	
 	return message + "." + signature
 }
-

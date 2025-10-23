@@ -209,7 +209,7 @@ func TestWithContext(t *testing.T) {
 // TestTypeAliases verifies that type aliases work
 func TestTypeAliases(t *testing.T) {
 	// These should compile without issues
-	var _ *mocks.Query = new(mocks.MockQuery)
-	var _ *mocks.DB = new(mocks.MockDB)
-	var _ *mocks.UpdateBuilder = new(mocks.MockUpdateBuilder)
+	_ = new(mocks.Query)
+	_ = new(mocks.DB)
+	_ = new(mocks.UpdateBuilder)
 }
