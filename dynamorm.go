@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -482,6 +483,13 @@ type condition struct {
 	value any
 }
 
+func normalizeOperator(op string) string {
+	if op == "" {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(op))
+}
+
 type orderBy struct {
 	field string
 	order string
@@ -766,9 +774,15 @@ func (q *query) allInternal(dest any) error {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 			continue
 		}
 
@@ -778,22 +792,22 @@ func (q *query) allInternal(dest any) error {
 			// DynamoDB supports these operators for key conditions:
 			// Partition key: = (equality only)
 			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
-			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
-				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
-				cond.op == "BETWEEN" {
+			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == "BETWEEN" {
 				// Partition keys still require equality. If a non-equality comparison is attempted
 				// against the partition key, treat it as a filter to surface the correct Dynamo error.
-				if isPK && cond.op != "=" {
-					filterConditions = append(filterConditions, cond)
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
 				} else {
-					keyConditions = append(keyConditions, cond)
+					keyConditions = append(keyConditions, normalizedCond)
 					useQuery = true
 				}
 			} else {
-				filterConditions = append(filterConditions, cond)
+				filterConditions = append(filterConditions, normalizedCond)
 			}
 		} else {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
@@ -890,9 +904,15 @@ func (q *query) Count() (int64, error) {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 			continue
 		}
 
@@ -902,20 +922,20 @@ func (q *query) Count() (int64, error) {
 			// DynamoDB supports these operators for key conditions:
 			// Partition key: = (equality only)
 			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
-			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
-				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
-				cond.op == "BETWEEN" {
-				if isPK && cond.op != "=" {
-					filterConditions = append(filterConditions, cond)
+			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == "BETWEEN" {
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
 				} else {
-					keyConditions = append(keyConditions, cond)
+					keyConditions = append(keyConditions, normalizedCond)
 					useQuery = true
 				}
 			} else {
-				filterConditions = append(filterConditions, cond)
+				filterConditions = append(filterConditions, normalizedCond)
 			}
 		} else {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
@@ -1456,7 +1476,7 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 
 	// First try to extract from conditions
 	for _, cond := range q.conditions {
-		if cond.op != "=" {
+		if normalizeOperator(cond.op) != "=" {
 			continue
 		}
 
@@ -1832,7 +1852,8 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 	// Add key conditions
 	for _, cond := range keyConditions {
 		fieldMeta, _ := lookupField(metadata, cond.field)
-		if err := builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value); err != nil {
+		op := normalizeOperator(cond.op)
+		if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
 			return nil, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
 		}
 	}
@@ -1840,12 +1861,13 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 	// Add filter conditions
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		}
@@ -1939,13 +1961,14 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 	// Add filter conditions from parameters (these come from Where() conditions)
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 				q.recordBuilderError(err)
 				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 				q.recordBuilderError(err)
 				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
@@ -2108,7 +2131,8 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 	// Add key conditions
 	for _, cond := range keyConditions {
 		fieldMeta, _ := lookupField(metadata, cond.field)
-		if err := builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value); err != nil {
+		op := normalizeOperator(cond.op)
+		if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
 			return 0, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
 		}
 	}
@@ -2116,12 +2140,13 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 	// Add filter conditions
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		}
@@ -2187,13 +2212,14 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 	// Add filter conditions from parameters (these come from Where() conditions)
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 				q.recordBuilderError(err)
 				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 				q.recordBuilderError(err)
 				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
@@ -2427,7 +2453,8 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 			continue
 		}
 
-		if err := builder.AddConditionExpression(cond.field, cond.op, cond.value); err != nil {
+		op := normalizeOperator(cond.op)
+		if err := builder.AddConditionExpression(cond.field, op, cond.value); err != nil {
 			return fmt.Errorf("failed to add condition %s: %w", cond.field, err)
 		}
 		hasConditions = true
@@ -2557,16 +2584,33 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	var filterConditions []condition
 
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists {
-			return nil, fmt.Errorf("field %s not found in model", cond.field)
+			filterConditions = append(filterConditions, normalizedCond)
+			continue
 		}
 
 		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
 		if isPK || isSK {
-			keyConditions = append(keyConditions, cond)
+			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == "BETWEEN" {
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
+				} else {
+					keyConditions = append(keyConditions, normalizedCond)
+				}
+			} else {
+				filterConditions = append(filterConditions, normalizedCond)
+			}
 		} else {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
@@ -2582,7 +2626,8 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		// Add key conditions
 		for _, cond := range keyConditions {
 			fieldMeta, _ := lookupField(metadata, cond.field)
-			if err := builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value); err != nil {
+			op := normalizeOperator(cond.op)
+			if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
 				return nil, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
 			}
 		}
@@ -2590,12 +2635,13 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		// Add filter conditions
 		for _, cond := range filterConditions {
 			fieldMeta, exists := lookupField(metadata, cond.field)
+			op := normalizeOperator(cond.op)
 			if exists {
-				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 				}
 			} else {
-				if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+				if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 				}
 			}
@@ -2666,12 +2712,13 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		// Add filter conditions
 		for _, cond := range filterConditions {
 			fieldMeta, exists := lookupField(metadata, cond.field)
+			op := normalizeOperator(cond.op)
 			if exists {
-				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 				}
 			} else {
-				if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+				if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 				}
 			}
@@ -2919,21 +2966,28 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 	// Add filter conditions
 	var filterConditions []condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists || (!fieldMeta.IsPK && !fieldMeta.IsSK) {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
 				q.recordBuilderError(err)
 				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
 		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, cond.op, cond.value); err != nil {
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
 				q.recordBuilderError(err)
 				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 			}
@@ -3117,7 +3171,7 @@ func convertConditions(conditions []condition) []queryPkg.Condition {
 	for i, cond := range conditions {
 		result[i] = queryPkg.Condition{
 			Field:    cond.field,
-			Operator: cond.op,
+			Operator: normalizeOperator(cond.op),
 			Value:    cond.value,
 		}
 	}
