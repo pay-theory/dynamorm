@@ -4,6 +4,7 @@ package dynamorm
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"reflect"
@@ -19,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 var (
@@ -108,11 +110,8 @@ func createLambdaDB() (*LambdaDB, error) {
 		config.WithRetryMaxAttempts(3),
 	}
 
-	// Enable X-Ray if available
-	if os.Getenv("_X_AMZN_TRACE_ID") != "" {
-		// X-Ray tracing is automatically enabled in Lambda
-		// The SDK will pick it up from environment
-	}
+// Enable X-Ray tracing automatically when running in Lambda. The AWS SDK picks up
+// X-Ray configuration from the environment, so no explicit setup is required here.
 
 	cfg := session.Config{
 		Region:           getRegion(),
@@ -172,6 +171,15 @@ func (ldb *LambdaDB) PreRegisterModels(models ...any) error {
 	return nil
 }
 
+// RegisterTypeConverter registers a custom converter on the underlying DB and
+// clears any cached marshalers so the converter takes effect immediately.
+func (ldb *LambdaDB) RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error {
+	if ldb == nil || ldb.db == nil {
+		return fmt.Errorf("lambda DB is not initialized")
+	}
+	return ldb.db.RegisterTypeConverter(typ, converter)
+}
+
 // IsModelRegistered checks if a model is already registered
 func (ldb *LambdaDB) IsModelRegistered(model any) bool {
 	modelType := reflect.TypeOf(model)
@@ -219,10 +227,16 @@ func (ldb *LambdaDB) OptimizeForMemory() {
 		memoryMB = 512 // Default
 	}
 
-	// Scale buffer sizes with memory
+	// Scale timeout buffers with available memory
+	buffer := 100 * time.Millisecond
+	if memoryMB >= 2048 {
+		buffer = 50 * time.Millisecond
+	} else if memoryMB <= 512 {
+		buffer = 200 * time.Millisecond
+	}
+
 	if ldb.db != nil {
-		// For now, we don't expose internal buffer configuration
-		// This is a placeholder for future optimization
+		ldb.db.lambdaTimeoutBuffer = buffer
 	}
 }
 
@@ -232,8 +246,7 @@ func (ldb *LambdaDB) OptimizeForColdStart() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				// Silently recover from any panic during connection pre-warming
-				// This is a best-effort optimization
+				log.Printf("dynamorm: lambda pre-warm encountered panic: %v", r)
 			}
 		}()
 
@@ -412,8 +425,13 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 	phaseStart = time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
-	client.ListTables(ctx, &dynamodb.ListTablesInput{Limit: aws.Int32(1)})
-	phases["first_connection"] = time.Since(phaseStart)
+	if _, err := client.ListTables(ctx, &dynamodb.ListTablesInput{Limit: aws.Int32(1)}); err != nil {
+		duration := time.Since(phaseStart)
+		phases["first_connection_error"] = duration
+		phases["first_connection"] = duration
+	} else {
+		phases["first_connection"] = time.Since(phaseStart)
+	}
 
 	totalDuration := time.Since(start)
 

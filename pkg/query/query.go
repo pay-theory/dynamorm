@@ -32,6 +32,8 @@ type Query struct {
 	metadata core.ModelMetadata
 	executor QueryExecutor
 	builder  *expr.Builder
+	// builderErr captures any expression builder errors encountered while composing filters
+	builderErr error
 
 	// Parallel scan configuration
 	segment       *int32
@@ -49,6 +51,28 @@ type Condition struct {
 	Field    string
 	Operator string
 	Value    any
+}
+
+// normalizeCondition resolves a condition's field to its canonical DynamoDB attribute name
+// and returns the normalized condition along with the Go field name and DynamoDB attribute name.
+func (q *Query) normalizeCondition(cond Condition) (Condition, string, string) {
+	normalized := cond
+	goField := cond.Field
+	attrName := cond.Field
+
+	if q.metadata != nil {
+		if meta := q.metadata.AttributeMetadata(cond.Field); meta != nil {
+			goField = meta.Name
+			if meta.DynamoDBName != "" {
+				attrName = meta.DynamoDBName
+			} else {
+				attrName = meta.Name
+			}
+			normalized.Field = attrName
+		}
+	}
+
+	return normalized, goField, attrName
 }
 
 // Filter represents a filter expression
@@ -145,7 +169,9 @@ func (q *Query) Filter(field string, op string, value any) core.Query {
 		q.builder = expr.NewBuilder()
 	}
 
-	q.builder.AddFilterCondition("AND", field, op, value)
+	if err := q.builder.AddFilterCondition("AND", field, op, value); err != nil {
+		q.recordBuilderError(err)
+	}
 	return q
 }
 
@@ -199,6 +225,9 @@ func (q *Query) WithRetry(maxRetries int, initialDelay time.Duration) core.Query
 
 // First executes the query and returns the first result
 func (q *Query) First(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Set limit to 1 for efficiency
 	q.limit = 1
 
@@ -215,6 +244,9 @@ func (q *Query) First(dest any) error {
 
 // All executes the query and returns all results
 func (q *Query) All(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	compiled, err := q.Compile()
 	if err != nil {
 		return err
@@ -228,6 +260,9 @@ func (q *Query) All(dest any) error {
 
 // Count returns the count of matching items
 func (q *Query) Count() (int64, error) {
+	if err := q.checkBuilderError(); err != nil {
+		return 0, err
+	}
 	compiled, err := q.Compile()
 	if err != nil {
 		return 0, err
@@ -252,6 +287,9 @@ func (q *Query) Count() (int64, error) {
 
 // Create creates a new item
 func (q *Query) Create() error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Marshal the model to AttributeValues
 	item, err := convertItemToAttributeValue(q.model)
 	if err != nil {
@@ -283,7 +321,9 @@ func (q *Query) Create() error {
 		primaryKey := q.metadata.PrimaryKey()
 		if primaryKey.PartitionKey != "" {
 			builder := expr.NewBuilder()
-			builder.AddFilterCondition("AND", primaryKey.PartitionKey, "attribute_not_exists", nil)
+			if err := builder.AddFilterCondition("AND", primaryKey.PartitionKey, "attribute_not_exists", nil); err != nil {
+				return fmt.Errorf("failed to build default condition: %w", err)
+			}
 			components := builder.Build()
 			compiled.ConditionExpression = components.FilterExpression
 			compiled.ExpressionAttributeNames = components.ExpressionAttributeNames
@@ -301,6 +341,9 @@ func (q *Query) Create() error {
 
 // CreateOrUpdate creates a new item or updates an existing one (upsert)
 func (q *Query) CreateOrUpdate() error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Build the item to put
 	item := make(map[string]types.AttributeValue)
 
@@ -396,6 +439,9 @@ func isZeroValue(v reflect.Value) bool {
 
 // Update updates specified fields on an item
 func (q *Query) Update(fields ...string) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Validate we have key conditions
 	primaryKey := q.metadata.PrimaryKey()
 	keyValues := make(map[string]any)
@@ -516,7 +562,9 @@ func (q *Query) Update(fields ...string) error {
 			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
 			continue
 		}
-		builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
+		if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
+			return fmt.Errorf("failed to add filter condition for %s: %w", cond.Field, err)
+		}
 	}
 
 	filterComponents := builder.Build()
@@ -583,6 +631,9 @@ func (q *Query) Update(fields ...string) error {
 
 // Delete deletes an item
 func (q *Query) Delete() error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Validate we have key conditions
 	primaryKey := q.metadata.PrimaryKey()
 	keyValues := make(map[string]any)
@@ -616,7 +667,9 @@ func (q *Query) Delete() error {
 			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
 			continue
 		}
-		builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
+		if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
+			return fmt.Errorf("failed to add filter condition for %s: %w", cond.Field, err)
+		}
 	}
 
 	components := builder.Build()
@@ -650,6 +703,9 @@ func (q *Query) Delete() error {
 
 // Scan performs a table scan
 func (q *Query) Scan(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	compiled, err := q.compileScan()
 	if err != nil {
 		return err
@@ -667,6 +723,9 @@ func (q *Query) ParallelScan(segment int32, totalSegments int32) core.Query {
 
 // ScanAllSegments performs a parallel scan across all segments and combines results
 func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Validate destination is a slice pointer
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
@@ -750,6 +809,9 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 
 // BatchGet retrieves multiple items by their primary keys
 func (q *Query) BatchGet(keys []any, dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Validate dest is a pointer to slice
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
@@ -822,6 +884,9 @@ func (q *Query) BatchGet(keys []any, dest any) error {
 
 // BatchCreate creates multiple items
 func (q *Query) BatchCreate(items any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Validate items is a slice
 	itemsValue := reflect.ValueOf(items)
 	if itemsValue.Kind() != reflect.Slice {
@@ -913,29 +978,40 @@ func (q *Query) WithContext(ctx context.Context) core.Query {
 // selectBestIndex analyzes conditions and selects the optimal index
 func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 	// Get all indexes including the primary index
-	allIndexes := make([]core.IndexSchema, 0, len(q.metadata.Indexes())+1)
+	rawIndexes := make([]core.IndexSchema, 0, len(q.metadata.Indexes())+1)
 
-	// Add the primary index
+	// Add the primary index (name is empty)
 	primaryKey := q.metadata.PrimaryKey()
-	allIndexes = append(allIndexes, core.IndexSchema{
-		Name:         "", // Empty name indicates primary index
+	rawIndexes = append(rawIndexes, core.IndexSchema{
+		Name:         "",
 		Type:         "PRIMARY",
 		PartitionKey: primaryKey.PartitionKey,
 		SortKey:      primaryKey.SortKey,
 	})
 
 	// Add GSIs and LSIs
-	allIndexes = append(allIndexes, q.metadata.Indexes()...)
+	rawIndexes = append(rawIndexes, q.metadata.Indexes()...)
 
-	selector := index.NewSelector(allIndexes)
+	// Keep Go field names; Compile() resolves to DynamoDB names when needed
+	selector := index.NewSelector(rawIndexes)
 
 	// Convert our conditions to index.Condition type
 	indexConditions := make([]index.Condition, len(q.conditions))
 	for i, cond := range q.conditions {
+		normalized, goField, attrName := q.normalizeCondition(cond)
+
+		fieldForIndex := goField
+		if fieldForIndex == "" {
+			fieldForIndex = attrName
+		}
+		if fieldForIndex == "" {
+			fieldForIndex = normalized.Field
+		}
+
 		indexConditions[i] = index.Condition{
-			Field:    cond.Field,
-			Operator: cond.Operator,
-			Value:    cond.Value,
+			Field:    fieldForIndex,
+			Operator: normalized.Operator,
+			Value:    normalized.Value,
 		}
 	}
 
@@ -948,6 +1024,9 @@ func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 
 // AllPaginated executes the query and returns paginated results
 func (q *Query) AllPaginated(dest any) (*core.PaginatedResult, error) {
+	if err := q.checkBuilderError(); err != nil {
+		return nil, err
+	}
 	// Set a reasonable limit if not specified
 	if q.limit == 0 {
 		q.limit = 100
@@ -1024,9 +1103,7 @@ func (q *Query) SetCursor(cursor string) error {
 // Cursor is a fluent method to set the pagination cursor
 func (q *Query) Cursor(cursor string) core.Query {
 	if err := q.SetCursor(cursor); err != nil {
-		// Store error to be returned on execution
-		// This pattern is common in fluent interfaces
-		// The error will be checked and returned when the query is executed
+		q.recordBuilderError(err)
 	}
 	return q
 }
@@ -1181,36 +1258,107 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		var keyConditions []Condition
 		var filterConditions []Condition
 
-		primaryKey := q.metadata.PrimaryKey()
-		indexPK := bestIndex.PartitionKey
-		indexSK := bestIndex.SortKey
-
-		// If using primary table
-		if bestIndex.Name == "" {
-			indexPK = primaryKey.PartitionKey
-			indexSK = primaryKey.SortKey
+		resolveNames := func(field string) (string, string) {
+			if field == "" {
+				return "", ""
+			}
+			goName := field
+			attrName := field
+			if meta := q.metadata.AttributeMetadata(field); meta != nil {
+				if meta.Name != "" {
+					goName = meta.Name
+				}
+				if meta.DynamoDBName != "" {
+					attrName = meta.DynamoDBName
+				} else {
+					attrName = goName
+				}
+			}
+			return goName, attrName
 		}
 
-		for _, cond := range q.conditions {
-			if cond.Field == indexPK || (indexSK != "" && cond.Field == indexSK) {
-				keyConditions = append(keyConditions, cond)
+		primaryKey := q.metadata.PrimaryKey()
+		primaryPKGo, primaryPKAttr := resolveNames(primaryKey.PartitionKey)
+		primarySKGo, primarySKAttr := resolveNames(primaryKey.SortKey)
+
+		// Resolve Go and DynamoDB names for the keys based on the selected index
+		var pkGoName, pkAttrName, skGoName, skAttrName string
+
+		if bestIndex.Name == "" {
+			// Primary table uses primary key definition
+			pkGoName, pkAttrName = resolveNames(primaryKey.PartitionKey)
+			skGoName, skAttrName = resolveNames(primaryKey.SortKey)
+		} else {
+			// Secondary indexes provide their own Go field names
+			pkGoName, pkAttrName = resolveNames(bestIndex.PartitionKey)
+			skGoName, skAttrName = resolveNames(bestIndex.SortKey)
+		}
+
+		// Fall back to primary key metadata if resolution fails
+		if pkGoName == "" {
+			pkGoName = primaryPKGo
+		}
+		if pkAttrName == "" {
+			pkAttrName = primaryPKAttr
+		}
+		if skGoName == "" {
+			skGoName = primarySKGo
+		}
+		if skAttrName == "" {
+			skAttrName = primarySKAttr
+		}
+
+		for _, original := range q.conditions {
+			normalized, goField, attrName := q.normalizeCondition(original)
+
+			condGoName := goField
+			condAttrName := attrName
+
+			if meta := q.metadata.AttributeMetadata(goField); meta != nil {
+				if meta.Name != "" {
+					condGoName = meta.Name
+				}
+				if meta.DynamoDBName != "" {
+					condAttrName = meta.DynamoDBName
+				} else if condAttrName == "" {
+					condAttrName = condGoName
+				}
+			} else if meta := q.metadata.AttributeMetadata(attrName); meta != nil {
+				if meta.Name != "" {
+					condGoName = meta.Name
+				}
+				if meta.DynamoDBName != "" {
+					condAttrName = meta.DynamoDBName
+				}
+			}
+
+			isPartitionKey := false
+			if pkGoName != "" {
+				isPartitionKey = strings.EqualFold(condGoName, pkGoName) || strings.EqualFold(condAttrName, pkAttrName)
+			}
+
+			isSortKey := false
+			if skGoName != "" {
+				isSortKey = strings.EqualFold(condGoName, skGoName) || strings.EqualFold(condAttrName, skAttrName)
+			}
+
+			if isPartitionKey || isSortKey {
+				keyConditions = append(keyConditions, normalized)
 			} else {
-				filterConditions = append(filterConditions, cond)
+				filterConditions = append(filterConditions, normalized)
 			}
 		}
 
 		// Add key conditions
 		for _, cond := range keyConditions {
-			err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value)
-			if err != nil {
+			if err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value); err != nil {
 				return nil, err
 			}
 		}
 
 		// Add filter conditions from Where clauses
 		for _, cond := range filterConditions {
-			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-			if err != nil {
+			if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
 				return nil, err
 			}
 		}
@@ -1219,9 +1367,9 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		compiled.Operation = "Scan"
 
 		// All conditions become filters
-		for _, cond := range q.conditions {
-			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-			if err != nil {
+		for _, original := range q.conditions {
+			normalized, _, _ := q.normalizeCondition(original)
+			if err := builder.AddFilterCondition("AND", normalized.Field, normalized.Operator, normalized.Value); err != nil {
 				return nil, err
 			}
 		}
@@ -1254,7 +1402,7 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 	}
 
 	// Handle cursor/exclusive start key
-	if q.exclusive != nil && len(q.exclusive) > 0 {
+	if len(q.exclusive) > 0 {
 		compiled.ExclusiveStartKey = q.exclusive
 	}
 
@@ -1283,9 +1431,9 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 	}
 
 	// Add filter conditions from Where clauses
-	for _, cond := range q.conditions {
-		err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-		if err != nil {
+	for _, original := range q.conditions {
+		normalized, _, _ := q.normalizeCondition(original)
+		if err := builder.AddFilterCondition("AND", normalized.Field, normalized.Operator, normalized.Value); err != nil {
 			return nil, err
 		}
 	}
@@ -1356,7 +1504,9 @@ func (q *Query) OrFilter(field string, op string, value any) core.Query {
 		q.builder = expr.NewBuilder()
 	}
 
-	q.builder.AddFilterCondition("OR", field, op, value)
+	if err := q.builder.AddFilterCondition("OR", field, op, value); err != nil {
+		q.recordBuilderError(err)
+	}
 	return q
 }
 
@@ -1379,6 +1529,9 @@ func (q *Query) FilterGroup(fn func(core.Query)) core.Query {
 
 	// Execute the user's function to build the sub-query
 	fn(subQuery)
+	if err := subQuery.checkBuilderError(); err != nil {
+		q.recordBuilderError(err)
+	}
 
 	// Build the components from the sub-query
 	components := subBuilder.Build()
@@ -1407,6 +1560,9 @@ func (q *Query) OrFilterGroup(fn func(core.Query)) core.Query {
 
 	// Execute the user's function to build the sub-query
 	fn(subQuery)
+	if err := subQuery.checkBuilderError(); err != nil {
+		q.recordBuilderError(err)
+	}
 
 	// Build the components from the sub-query
 	components := subBuilder.Build()
@@ -1414,6 +1570,18 @@ func (q *Query) OrFilterGroup(fn func(core.Query)) core.Query {
 	// Add the built group to the main builder
 	q.builder.AddGroupFilter("OR", components)
 	return q
+}
+
+// recordBuilderError memoizes the first builder error encountered
+func (q *Query) recordBuilderError(err error) {
+	if err != nil && q.builderErr == nil {
+		q.builderErr = err
+	}
+}
+
+// checkBuilderError returns any previously recorded builder error
+func (q *Query) checkBuilderError() error {
+	return q.builderErr
 }
 
 // UpdateBuilder returns a builder for complex update operations

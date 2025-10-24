@@ -8,10 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
@@ -318,180 +315,11 @@ func TestBatchOperations(t *testing.T) {
 	})
 }
 
-// testMetadataAdapter adapts BatchTestItem to metadata interface
-type testMetadataAdapter struct{}
-
-func (m *testMetadataAdapter) TableName() string {
-	return "batch_test_table"
-}
-
-func (m *testMetadataAdapter) PrimaryKey() core.KeySchema {
-	return core.KeySchema{
-		PartitionKey: "ID",
-		SortKey:      "SKValue",
-	}
-}
-
-func (m *testMetadataAdapter) Indexes() []core.IndexSchema {
-	return []core.IndexSchema{
-		{
-			Name:         "category-index",
-			Type:         "GSI",
-			PartitionKey: "Category",
-			SortKey:      "Price",
-		},
-	}
-}
-
-func (m *testMetadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
-	metadata := map[string]*core.AttributeMetadata{
-		"ID":        {Name: "ID", Type: "string", DynamoDBName: "pk"},
-		"SKValue":   {Name: "SKValue", Type: "string", DynamoDBName: "sk"},
-		"Name":      {Name: "Name", Type: "string", DynamoDBName: "name"},
-		"Category":  {Name: "Category", Type: "string", DynamoDBName: "category"},
-		"Value":     {Name: "Value", Type: "number", DynamoDBName: "value"},
-		"Price":     {Name: "Price", Type: "number", DynamoDBName: "price"},
-		"Active":    {Name: "Active", Type: "bool", DynamoDBName: "active"},
-		"Tags":      {Name: "Tags", Type: "list", DynamoDBName: "tags"},
-		"CreatedAt": {Name: "CreatedAt", Type: "string", DynamoDBName: "created_at"},
-		"UpdatedAt": {Name: "UpdatedAt", Type: "string", DynamoDBName: "updated_at"},
-	}
-
-	if meta, ok := metadata[field]; ok {
-		return meta
-	}
-	return nil
-}
-
-// testBatchExecutor implements the executor interfaces for testing
-type testBatchExecutor struct {
-	client *dynamodb.Client
-	ctx    context.Context
-}
-
-func (e *testBatchExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
-	// Mock implementation
-	return nil
-}
-
-func (e *testBatchExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
-	// Mock implementation
-	return nil
-}
-
-func (e *testBatchExecutor) ExecuteBatchWriteItem(tableName string, writeRequests []types.WriteRequest) (*core.BatchWriteResult, error) {
-	// Execute actual batch write
-	batchInput := &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]types.WriteRequest{
-			tableName: writeRequests,
-		},
-	}
-
-	output, err := e.client.BatchWriteItem(e.ctx, batchInput)
-	if err != nil {
-		return nil, err
-	}
-
-	return &core.BatchWriteResult{
-		UnprocessedItems: output.UnprocessedItems,
-		ConsumedCapacity: output.ConsumedCapacity,
-	}, nil
-}
-
 // Helper functions
 
-// TestBatchOperationsErrorHandling tests error scenarios
-// COMMENTED OUT: This test uses query.New directly which is not supported in integration tests
-/*
-func TestBatchOperationsErrorHandling(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
 
-	t.Run("BatchDelete_WithInvalidKeys", func(t *testing.T) {
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    context.Background(),
-		})
 
-		// Try to delete with incomplete keys
-		invalidKeys := []any{
-			BatchTestItem{ID: "missing_sk"}, // Missing sort key
-		}
 
-		err := q.BatchDelete(invalidKeys)
-		assert.Error(t, err)
-	})
-
-	t.Run("BatchWrite_Retries", func(t *testing.T) {
-		// Test retry logic with unprocessed items
-		// This would require a mock that simulates unprocessed items
-		t.Skip("Requires mock executor for retry simulation")
-	})
-}
-*/
-
-// TestBatchOperationsPerformance tests performance characteristics
-// COMMENTED OUT: This test uses query.New directly which is not supported in integration tests
-/*
-func TestBatchOperationsPerformance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping performance test")
-	}
-
-	t.Run("ParallelVsSequential", func(t *testing.T) {
-		// Create many items for testing
-		var items []BatchTestItem
-		for i := 0; i < 100; i++ {
-			items = append(items, BatchTestItem{
-				ID:      fmt.Sprintf("perf%d", i/25),
-				SKValue: fmt.Sprintf("item%d", i),
-				Name:    fmt.Sprintf("Performance Test Item %d", i),
-				Value:   i,
-			})
-		}
-
-		// Convert to any slice
-		anyItems := make([]any, len(items))
-		for i, item := range items {
-			anyItems[i] = item
-		}
-
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    context.Background(),
-		})
-
-		// Test sequential
-		seqOpts := &query.BatchUpdateOptions{
-			MaxBatchSize: 25,
-			Parallel:     false,
-		}
-
-		start := time.Now()
-		_ = q.BatchUpdateWithOptions(anyItems, seqOpts, "Name")
-		seqDuration := time.Since(start)
-
-		// Test parallel
-		parOpts := &query.BatchUpdateOptions{
-			MaxBatchSize:   25,
-			Parallel:       true,
-			MaxConcurrency: 4,
-		}
-
-		start = time.Now()
-		_ = q.BatchUpdateWithOptions(anyItems, parOpts, "Name")
-		parDuration := time.Since(start)
-
-		// Log performance results
-		t.Logf("Sequential duration: %v", seqDuration)
-		t.Logf("Parallel duration: %v", parDuration)
-
-		// Parallel should generally be faster for large batches
-		// But this is not guaranteed in test environments
-	})
-}
-*/
 
 func TestBatchOperationsE2E(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
@@ -510,7 +338,9 @@ func TestBatchOperationsE2E(t *testing.T) {
 
 	db, err := dynamorm.New(sessionConfig)
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() {
+		assert.NoError(t, db.Close())
+	})
 
 	// ... existing code ...
 }

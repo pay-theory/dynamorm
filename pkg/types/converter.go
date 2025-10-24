@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -15,6 +16,7 @@ import (
 type Converter struct {
 	// customConverters allows registration of custom type converters
 	customConverters map[reflect.Type]CustomConverter
+	mu               sync.RWMutex
 }
 
 // CustomConverter defines the interface for custom type converters
@@ -35,7 +37,41 @@ func NewConverter() *Converter {
 
 // RegisterConverter registers a custom converter for a specific type
 func (c *Converter) RegisterConverter(typ reflect.Type, converter CustomConverter) {
+	if typ == nil || converter == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.customConverters[typ] = converter
+}
+
+// HasCustomConverter returns true if a custom converter exists for the given type.
+func (c *Converter) HasCustomConverter(typ reflect.Type) bool {
+	_, ok := c.lookupConverter(typ)
+	return ok
+}
+
+// lookupConverter returns a registered converter for the provided type, walking pointer
+// indirections until a match is found or no further pointer element exists.
+func (c *Converter) lookupConverter(typ reflect.Type) (CustomConverter, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if typ == nil {
+		return nil, false
+	}
+
+	for {
+		if converter, ok := c.customConverters[typ]; ok {
+			return converter, true
+		}
+
+		if typ.Kind() != reflect.Ptr {
+			break
+		}
+		typ = typ.Elem()
+	}
+
+	return nil, false
 }
 
 // ToAttributeValue converts a Go value to DynamoDB AttributeValue
@@ -59,7 +95,7 @@ func (c *Converter) toAttributeValue(v reflect.Value) (types.AttributeValue, err
 	}
 
 	// Check for custom converter
-	if converter, exists := c.customConverters[v.Type()]; exists {
+	if converter, exists := c.lookupConverter(v.Type()); exists {
 		return converter.ToAttributeValue(v.Interface())
 	}
 
@@ -204,7 +240,7 @@ func (c *Converter) fromAttributeValue(av types.AttributeValue, target reflect.V
 	}
 
 	// Check for custom converter
-	if converter, exists := c.customConverters[target.Type()]; exists {
+	if converter, exists := c.lookupConverter(target.Type()); exists {
 		return converter.FromAttributeValue(av, target.Addr().Interface())
 	}
 

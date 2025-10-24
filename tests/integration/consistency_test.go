@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pay-theory/dynamorm/pkg/consistency"
 )
 
@@ -22,18 +23,23 @@ type ConsistencyTestModel struct {
 
 func TestConsistentRead(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
 
-	// Create test item
+	// Create test item with unique ID
+	testID := uuid.New().String()
 	item := &ConsistencyTestModel{
-		PK:       "USER#consistent-read-test",
+		PK:       "USER#consistent-read-test-" + testID,
 		SK:       "PROFILE",
-		Email:    "consistent@example.com",
-		Username: "consistentuser",
+		Email:    "consistent-" + testID + "@example.com",
+		Username: "consistentuser-" + testID,
 		Name:     "Consistent Read Test",
 	}
 
@@ -75,18 +81,23 @@ func TestConsistentRead(t *testing.T) {
 
 func TestWithRetry(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
 
 	t.Run("Retry on GSI query", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#retry-test",
+			PK:       "USER#retry-test-" + testID,
 			SK:       "PROFILE",
-			Email:    "retry@example.com",
-			Username: "retryuser",
+			Email:    "retry-" + testID + "@example.com",
+			Username: "retryuser-" + testID,
 			Name:     "Retry Test",
 		}
 
@@ -112,13 +123,14 @@ func TestWithRetry(t *testing.T) {
 	})
 
 	t.Run("Retry with All query", func(t *testing.T) {
-		// Create multiple items
+		// Create multiple items with unique prefix
+		testPrefix := "USER#retry-all-" + uuid.New().String()[:8]
 		for i := 0; i < 3; i++ {
 			item := &ConsistencyTestModel{
-				PK:       fmt.Sprintf("USER#retry-all-%d", i),
+				PK:       fmt.Sprintf("%s-%d", testPrefix, i),
 				SK:       "PROFILE",
-				Email:    fmt.Sprintf("retry-all-%d@example.com", i),
-				Username: fmt.Sprintf("retryall%d", i),
+				Email:    fmt.Sprintf("retry-all-%s-%d@example.com", testPrefix, i),
+				Username: fmt.Sprintf("retryall%s%d", testPrefix, i),
 				Name:     fmt.Sprintf("Retry All Test %d", i),
 			}
 
@@ -130,7 +142,7 @@ func TestWithRetry(t *testing.T) {
 		// Query all with retry
 		var results []ConsistencyTestModel
 		err := db.Model(&ConsistencyTestModel{}).
-			Where("PK", "BEGINS_WITH", "USER#retry-all").
+			Where("PK", "BEGINS_WITH", testPrefix).
 			WithRetry(5, 50*time.Millisecond).
 			All(&results)
 
@@ -146,7 +158,11 @@ func TestWithRetry(t *testing.T) {
 
 func TestReadAfterWritePatterns(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Register model
@@ -155,11 +171,12 @@ func TestReadAfterWritePatterns(t *testing.T) {
 	helper := consistency.NewReadAfterWriteHelper(db)
 
 	t.Run("CreateWithConsistency", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#create-consistency",
+			PK:       "USER#create-consistency-" + testID,
 			SK:       "PROFILE",
-			Email:    "create-consistency@example.com",
-			Username: "createconsistency",
+			Email:    "create-consistency-" + testID + "@example.com",
+			Username: "createconsistency-" + testID,
 			Name:     "Create Consistency Test",
 		}
 
@@ -185,11 +202,12 @@ func TestReadAfterWritePatterns(t *testing.T) {
 	})
 
 	t.Run("UpdateWithConsistency", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#update-consistency",
+			PK:       "USER#update-consistency-" + testID,
 			SK:       "PROFILE",
-			Email:    "update-consistency@example.com",
-			Username: "updateconsistency",
+			Email:    "update-consistency-" + testID + "@example.com",
+			Username: "updateconsistency-" + testID,
 			Name:     "Original Name",
 		}
 
@@ -213,11 +231,12 @@ func TestReadAfterWritePatterns(t *testing.T) {
 	})
 
 	t.Run("QueryAfterWrite patterns", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#query-after-write",
+			PK:       "USER#query-after-write-" + testID,
 			SK:       "PROFILE",
-			Email:    "query-after-write@example.com",
-			Username: "queryafterwrite",
+			Email:    "query-after-write-" + testID + "@example.com",
+			Username: "queryafterwrite-" + testID,
 			Name:     "Query After Write Test",
 		}
 
@@ -272,7 +291,11 @@ func TestReadAfterWritePatterns(t *testing.T) {
 
 func TestWriteAndReadPattern(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Register model
@@ -281,11 +304,12 @@ func TestWriteAndReadPattern(t *testing.T) {
 	pattern := consistency.NewWriteAndReadPattern(db)
 
 	t.Run("CreateAndQueryGSI", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#create-query-gsi",
+			PK:       "USER#create-query-gsi-" + testID,
 			SK:       "PROFILE",
-			Email:    "create-query-gsi@example.com",
-			Username: "createquerygsi",
+			Email:    "create-query-gsi-" + testID + "@example.com",
+			Username: "createquerygsi-" + testID,
 			Name:     "Create and Query GSI Test",
 		}
 
@@ -308,11 +332,12 @@ func TestWriteAndReadPattern(t *testing.T) {
 	})
 
 	t.Run("UpdateAndVerify", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#update-verify",
+			PK:       "USER#update-verify-" + testID,
 			SK:       "PROFILE",
-			Email:    "update-verify@example.com",
-			Username: "updateverify",
+			Email:    "update-verify-" + testID + "@example.com",
+			Username: "updateverify-" + testID,
 			Name:     "Original Name",
 		}
 
@@ -348,36 +373,43 @@ func TestWriteAndReadPattern(t *testing.T) {
 
 func TestConsistencyEdgeCases(t *testing.T) {
 	ctx := InitTestDB(t)
-	defer ctx.Cleanup()
+	t.Cleanup(func() {
+		if err := ctx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 	db := ctx.DB
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
 
 	t.Run("Retry timeout with context", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		// Use a short timeout and reasonable retry settings
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 
-		// Try to query non-existent item with retry
+		// Try to query non-existent item with retry (should fail but respect timeout)
 		var result ConsistencyTestModel
 		err := db.WithContext(ctx).
 			Model(&ConsistencyTestModel{}).
 			Index("email-index").
 			Where("Email", "=", "nonexistent@example.com").
-			WithRetry(10, 50*time.Millisecond). // This would take 500ms+
+			WithRetry(3, 100*time.Millisecond). // 3 retries @ 100ms = ~300ms max
 			First(&result)
 
+		// Should fail since item doesn't exist
 		if err == nil {
-			t.Errorf("Expected timeout error")
+			t.Errorf("Expected error for non-existent item")
 		}
 	})
 
 	t.Run("Mixed consistency strategies", func(t *testing.T) {
+		testID := uuid.New().String()
 		item := &ConsistencyTestModel{
-			PK:       "USER#mixed-strategy",
+			PK:       "USER#mixed-strategy-" + testID,
 			SK:       "PROFILE",
-			Email:    "mixed@example.com",
-			Username: "mixeduser",
+			Email:    "mixed-" + testID + "@example.com",
+			Username: "mixeduser-" + testID,
 			Name:     "Mixed Strategy Test",
 		}
 

@@ -104,7 +104,9 @@ func (s *CommonScenarios) SetupTransactionScenario(success bool) {
 			Run(func(args mock.Arguments) {
 				fn := args.Get(0).(func(*core.Tx) error)
 				// Execute the transaction function with a mock transaction
-				fn(&core.Tx{})
+				if err := fn(&core.Tx{}); err != nil {
+					panic(err)
+				}
 			}).Return(nil).Maybe()
 	} else {
 		s.db.MockDB.On("Transaction", mock.AnythingOfType("func(*core.Tx) error")).

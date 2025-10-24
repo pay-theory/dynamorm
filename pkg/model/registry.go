@@ -303,7 +303,7 @@ func parseFields(modelType reflect.Type, metadata *Metadata, indexMap map[string
 			index, exists := indexMap[indexName]
 			if !exists {
 				// Check if this is an LSI based on field tags
-				indexType := GlobalSecondaryIndex
+				var indexType IndexType
 				if _, isLSI := fieldMeta.Tags["lsi:"+indexName]; isLSI {
 					indexType = LocalSecondaryIndex
 				} else {
@@ -619,39 +619,5 @@ func isStandaloneTag(s string) bool {
 		}
 	}
 
-	return false
-}
-
-// getNextTagPart extracts the next tag part after current position
-func getNextTagPart(s string) string {
-	s = strings.TrimSpace(s)
-	commaIdx := strings.Index(s, ",")
-	colonIdx := strings.Index(s, ":")
-
-	if commaIdx == -1 {
-		return s
-	}
-	if colonIdx == -1 || colonIdx > commaIdx {
-		return s[:commaIdx]
-	}
-	return s[:colonIdx]
-}
-
-// isKnownSimpleTag checks if a string is a known simple tag
-func isKnownSimpleTag(s string) bool {
-	knownTags := []string{
-		"pk", "sk", "version", "ttl", "created_at", "updated_at",
-		"set", "omitempty", "binary", "json", "encrypted",
-	}
-	s = strings.TrimSpace(s)
-	for _, tag := range knownTags {
-		if s == tag {
-			return true
-		}
-	}
-	// Also check for known key:value tags
-	if strings.HasPrefix(s, "attr:") || strings.HasPrefix(s, "project:") {
-		return true
-	}
 	return false
 }

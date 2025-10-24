@@ -122,7 +122,9 @@ func TestNewSession(t *testing.T) {
 			// Verify that region option is not added when empty
 			for _, opt := range opts {
 				loadOpts := &config.LoadOptions{}
-				opt(loadOpts)
+				if err := opt(loadOpts); err != nil {
+					t.Fatalf("unexpected error applying config option: %v", err)
+				}
 			}
 			return aws.Config{}, nil
 		}
@@ -176,7 +178,9 @@ func TestNewSession(t *testing.T) {
 		configLoadFunc = func(ctx context.Context, opts ...func(*config.LoadOptions) error) (aws.Config, error) {
 			loadOpts := &config.LoadOptions{}
 			for _, opt := range opts {
-				opt(loadOpts)
+				if err := opt(loadOpts); err != nil {
+					t.Fatalf("unexpected error applying config option: %v", err)
+				}
 			}
 			return aws.Config{Region: loadOpts.Region}, nil
 		}
@@ -332,7 +336,9 @@ func TestSessionIntegration(t *testing.T) {
 		configLoadFunc = func(ctx context.Context, opts ...func(*config.LoadOptions) error) (aws.Config, error) {
 			loadOpts := &config.LoadOptions{}
 			for _, opt := range opts {
-				opt(loadOpts)
+				if err := opt(loadOpts); err != nil {
+					t.Fatalf("unexpected error applying config option: %v", err)
+				}
 			}
 			return aws.Config{}, nil
 		}

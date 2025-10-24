@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -847,17 +848,13 @@ func attributeValueToInterface(av types.AttributeValue) (interface{}, error) {
 	case *types.AttributeValueMemberS:
 		return v.Value, nil
 	case *types.AttributeValueMemberN:
-		// Try to parse as int first, then float
-		if val, err := fmt.Sscanf(v.Value, "%d", new(int64)); err == nil && val == 1 {
-			var n int64
-			fmt.Sscanf(v.Value, "%d", &n)
-			return n, nil
+		if intVal, err := strconv.ParseInt(v.Value, 10, 64); err == nil {
+			return intVal, nil
 		}
-		var f float64
-		if _, err := fmt.Sscanf(v.Value, "%f", &f); err != nil {
-			return nil, err
+		if floatVal, err := strconv.ParseFloat(v.Value, 64); err == nil {
+			return floatVal, nil
 		}
-		return f, nil
+		return nil, fmt.Errorf("invalid number format: %s", v.Value)
 	case *types.AttributeValueMemberBOOL:
 		return v.Value, nil
 	case *types.AttributeValueMemberNULL:

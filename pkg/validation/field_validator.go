@@ -679,16 +679,3 @@ func validateSliceLength(length int) error {
 
 	return nil
 }
-
-// validateMapLength validates map lengths
-func validateMapLength(length int) error {
-	if length > 100 { // Reasonable limit for map size
-		return &SecurityError{
-			Type:   "InvalidValue",
-			Field:  "",
-			Detail: "map value exceeds maximum keys",
-		}
-	}
-
-	return nil
-}

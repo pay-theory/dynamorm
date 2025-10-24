@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,12 +54,12 @@ type DB struct {
 //	    if image == nil {
 //	        return nil, nil
 //	    }
-//	
+//
 //	    var model MyModel
 //	    if err := dynamorm.UnmarshalItem(image, &model); err != nil {
 //	        return nil, fmt.Errorf("failed to unmarshal: %w", err)
 //	    }
-//	
+//
 //	    return &model, nil
 //	}
 func UnmarshalItem(item map[string]types.AttributeValue, dest interface{}) error {
@@ -92,7 +93,7 @@ func UnmarshalStreamImage(streamImage map[string]events.DynamoDBAttributeValue, 
 	for k, v := range streamImage {
 		item[k] = convertLambdaAttributeValue(v)
 	}
-	
+
 	return UnmarshalItem(item, dest)
 }
 
@@ -140,11 +141,13 @@ func New(config session.Config) (core.ExtendedDB, error) {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
+	converter := pkgTypes.NewConverter()
+
 	return &DB{
 		session:   sess,
 		registry:  model.NewRegistry(),
-		converter: pkgTypes.NewConverter(),
-		marshaler: marshal.New(),
+		converter: converter,
+		marshaler: marshal.New(converter),
 		ctx:       context.Background(),
 	}, nil
 }
@@ -153,6 +156,28 @@ func New(config session.Config) (core.ExtendedDB, error) {
 // Use this when you only need core functionality and want easier mocking
 func NewBasic(config session.Config) (core.DB, error) {
 	return New(config)
+}
+
+// RegisterTypeConverter registers a custom converter for a specific Go type. This allows
+// callers to control how values are marshaled to and unmarshaled from DynamoDB without
+// forking the internal marshaler. Registering a converter clears any cached marshalers
+// so subsequent operations use the new logic.
+func (db *DB) RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error {
+	if typ == nil {
+		return fmt.Errorf("converter type cannot be nil")
+	}
+	if converter == nil {
+		return fmt.Errorf("converter implementation cannot be nil")
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	db.converter.RegisterConverter(typ, converter)
+	if db.marshaler != nil {
+		db.marshaler.ClearCache()
+	}
+	return nil
 }
 
 // Model returns a new query builder for the given model
@@ -427,6 +452,8 @@ type query struct {
 	model   any
 	ctx     context.Context
 	builder *expr.Builder
+	// builderErr captures any expression builder error encountered during query construction
+	builderErr error
 
 	// Query conditions
 	conditions []condition
@@ -454,6 +481,13 @@ type condition struct {
 	field string
 	op    string
 	value any
+}
+
+func normalizeOperator(op string) string {
+	if op == "" {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(op))
 }
 
 type orderBy struct {
@@ -509,13 +543,17 @@ func (q *query) Index(indexName string) core.Query {
 
 // Filter adds an AND filter condition
 func (q *query) Filter(field string, op string, value any) core.Query {
-	q.builder.AddFilterCondition("AND", field, op, value)
+	if err := q.builder.AddFilterCondition("AND", field, op, value); err != nil {
+		q.recordBuilderError(err)
+	}
 	return q
 }
 
 // OrFilter adds an OR filter condition
 func (q *query) OrFilter(field string, op string, value any) core.Query {
-	q.builder.AddFilterCondition("OR", field, op, value)
+	if err := q.builder.AddFilterCondition("OR", field, op, value); err != nil {
+		q.recordBuilderError(err)
+	}
 	return q
 }
 
@@ -549,6 +587,18 @@ func (q *query) addGroup(logicalOp string, fn func(q core.Query)) {
 
 	// Add the built group to the main builder
 	q.builder.AddGroupFilter(logicalOp, components)
+}
+
+// recordBuilderError memoizes the first builder error encountered
+func (q *query) recordBuilderError(err error) {
+	if err != nil && q.builderErr == nil {
+		q.builderErr = err
+	}
+}
+
+// checkBuilderError returns any previously recorded builder error
+func (q *query) checkBuilderError() error {
+	return q.builderErr
 }
 
 // OrderBy sets the sort order for the query
@@ -595,6 +645,9 @@ func (q *query) WithRetry(maxRetries int, initialDelay time.Duration) core.Query
 
 // First retrieves the first matching item
 func (q *query) First(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	if q.retryConfig != nil {
 		return q.firstWithRetry(dest)
 	}
@@ -603,6 +656,9 @@ func (q *query) First(dest any) error {
 
 // firstInternal is the actual implementation of First
 func (q *query) firstInternal(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -648,6 +704,9 @@ func (q *query) firstInternal(dest any) error {
 
 // firstWithRetry executes First with retry logic
 func (q *query) firstWithRetry(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	delay := q.retryConfig.initialDelay
 	maxDelay := 5 * time.Second
 	backoffFactor := 2.0
@@ -677,6 +736,9 @@ func (q *query) firstWithRetry(dest any) error {
 
 // All retrieves all matching items
 func (q *query) All(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	if q.retryConfig != nil {
 		return q.allWithRetry(dest)
 	}
@@ -685,6 +747,9 @@ func (q *query) All(dest any) error {
 
 // allInternal is the actual implementation of All
 func (q *query) allInternal(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -709,26 +774,40 @@ func (q *query) allInternal(dest any) error {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 			continue
 		}
 
-		if fieldMeta.IsPK || (q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata)) {
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+
+		if isPK || isSK {
 			// DynamoDB supports these operators for key conditions:
 			// Partition key: = (equality only)
 			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
-			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
-				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
-				cond.op == "BETWEEN" {
-				keyConditions = append(keyConditions, cond)
-				useQuery = true
+			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == "BETWEEN" {
+				// Partition keys still require equality. If a non-equality comparison is attempted
+				// against the partition key, treat it as a filter to surface the correct Dynamo error.
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
+				} else {
+					keyConditions = append(keyConditions, normalizedCond)
+					useQuery = true
+				}
 			} else {
-				filterConditions = append(filterConditions, cond)
+				filterConditions = append(filterConditions, normalizedCond)
 			}
 		} else {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
@@ -750,6 +829,9 @@ func (q *query) allInternal(dest any) error {
 
 // allWithRetry executes All with retry logic
 func (q *query) allWithRetry(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	delay := q.retryConfig.initialDelay
 	maxDelay := 5 * time.Second
 	backoffFactor := 2.0
@@ -806,6 +888,9 @@ func (q *query) allWithRetry(dest any) error {
 
 // Count returns the number of matching items
 func (q *query) Count() (int64, error) {
+	if err := q.checkBuilderError(); err != nil {
+		return 0, err
+	}
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -819,26 +904,38 @@ func (q *query) Count() (int64, error) {
 
 	// Check if we have partition key condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 			continue
 		}
 
-		if fieldMeta.IsPK || (q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata)) {
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+
+		if isPK || isSK {
 			// DynamoDB supports these operators for key conditions:
 			// Partition key: = (equality only)
 			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
-			if cond.op == "=" || cond.op == "BEGINS_WITH" ||
-				cond.op == "<" || cond.op == "<=" || cond.op == ">" || cond.op == ">=" ||
-				cond.op == "BETWEEN" {
-				keyConditions = append(keyConditions, cond)
-				useQuery = true
+			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == "BETWEEN" {
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
+				} else {
+					keyConditions = append(keyConditions, normalizedCond)
+					useQuery = true
+				}
 			} else {
-				filterConditions = append(filterConditions, cond)
+				filterConditions = append(filterConditions, normalizedCond)
 			}
 		} else {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
@@ -851,6 +948,9 @@ func (q *query) Count() (int64, error) {
 
 // Create creates a new item
 func (q *query) Create() error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -877,6 +977,9 @@ func (q *query) Create() error {
 
 // CreateOrUpdate creates a new item or updates an existing one (upsert)
 func (q *query) CreateOrUpdate() error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -919,6 +1022,9 @@ func (q *query) CreateOrUpdate() error {
 
 // Update updates the matching items
 func (q *query) Update(fields ...string) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -931,6 +1037,9 @@ func (q *query) Update(fields ...string) error {
 
 // Delete deletes the matching items
 func (q *query) Delete() error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -943,6 +1052,9 @@ func (q *query) Delete() error {
 
 // Scan performs a table scan
 func (q *query) Scan(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -971,6 +1083,9 @@ func (q *query) Scan(dest any) error {
 
 // BatchGet retrieves multiple items by their primary keys
 func (q *query) BatchGet(keys []any, dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Get model metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
@@ -1108,6 +1223,9 @@ func (q *query) BatchGet(keys []any, dest any) error {
 
 // BatchCreate creates multiple items
 func (q *query) BatchCreate(items any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -1202,6 +1320,9 @@ func (q *query) BatchCreate(items any) error {
 
 // BatchDelete deletes multiple items by their primary keys
 func (q *query) BatchDelete(keys []any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -1355,7 +1476,7 @@ func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 
 	// First try to extract from conditions
 	for _, cond := range q.conditions {
-		if cond.op != "=" {
+		if normalizeOperator(cond.op) != "=" {
 			continue
 		}
 
@@ -1593,11 +1714,15 @@ func (q *query) putItem(metadata *model.Metadata) error {
 	// Add condition to ensure item doesn't already exist
 	pkField := metadata.PrimaryKey.PartitionKey
 	builder := expr.NewBuilder()
-	builder.AddConditionExpression(pkField.DBName, "NOT_EXISTS", nil)
+	if err := builder.AddConditionExpression(pkField.DBName, "NOT_EXISTS", nil); err != nil {
+		return fmt.Errorf("failed to add partition key condition: %w", err)
+	}
 
 	if metadata.PrimaryKey.SortKey != nil {
 		skField := metadata.PrimaryKey.SortKey
-		builder.AddConditionExpression(skField.DBName, "NOT_EXISTS", nil)
+		if err := builder.AddConditionExpression(skField.DBName, "NOT_EXISTS", nil); err != nil {
+			return fmt.Errorf("failed to add sort key condition: %w", err)
+		}
 	}
 
 	components := builder.Build()
@@ -1727,16 +1852,24 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 	// Add key conditions
 	for _, cond := range keyConditions {
 		fieldMeta, _ := lookupField(metadata, cond.field)
-		builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
+		op := normalizeOperator(cond.op)
+		if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
+			return nil, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
+		}
 	}
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		} else {
-			builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		}
 	}
 
@@ -1828,10 +1961,17 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 	// Add filter conditions from parameters (these come from Where() conditions)
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+				q.recordBuilderError(err)
+				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		} else {
-			builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+				q.recordBuilderError(err)
+				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		}
 	}
 
@@ -1906,13 +2046,42 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 // isIndexKey checks if a field is a key in the specified index
 func (q *query) isIndexKey(fieldMeta *model.FieldMetadata, indexName string, metadata *model.Metadata) bool {
+	return q.isIndexPartitionKey(fieldMeta, indexName, metadata) ||
+		q.isIndexSortKey(fieldMeta, indexName, metadata)
+}
+
+func (q *query) isIndexPartitionKey(fieldMeta *model.FieldMetadata, indexName string, metadata *model.Metadata) bool {
 	for _, index := range metadata.Indexes {
-		if index.Name == indexName {
-			return (index.PartitionKey != nil && index.PartitionKey.Name == fieldMeta.Name) ||
-				(index.SortKey != nil && index.SortKey.Name == fieldMeta.Name)
+		if index.Name == indexName && index.PartitionKey != nil && index.PartitionKey.Name == fieldMeta.Name {
+			return true
 		}
 	}
 	return false
+}
+
+func (q *query) isIndexSortKey(fieldMeta *model.FieldMetadata, indexName string, metadata *model.Metadata) bool {
+	for _, index := range metadata.Indexes {
+		if index.Name == indexName && index.SortKey != nil && index.SortKey.Name == fieldMeta.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func (q *query) determineKeyRoles(fieldMeta *model.FieldMetadata, metadata *model.Metadata) (bool, bool) {
+	isPK := fieldMeta.IsPK
+	isSK := fieldMeta.IsSK
+
+	if q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata) {
+		if !isPK && q.isIndexPartitionKey(fieldMeta, q.indexName, metadata) {
+			isPK = true
+		}
+		if !isSK && q.isIndexSortKey(fieldMeta, q.indexName, metadata) {
+			isSK = true
+		}
+	}
+
+	return isPK, isSK
 }
 
 // unmarshalItems converts DynamoDB items to Go slice
@@ -1962,16 +2131,24 @@ func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []cond
 	// Add key conditions
 	for _, cond := range keyConditions {
 		fieldMeta, _ := lookupField(metadata, cond.field)
-		builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
+		op := normalizeOperator(cond.op)
+		if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
+			return 0, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
+		}
 	}
 
 	// Add filter conditions
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		} else {
-			builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		}
 	}
 
@@ -2035,10 +2212,17 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 	// Add filter conditions from parameters (these come from Where() conditions)
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+				q.recordBuilderError(err)
+				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		} else {
-			builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+				q.recordBuilderError(err)
+				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		}
 	}
 
@@ -2171,7 +2355,9 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	// Add version check if version field exists
 	if metadata.VersionField != nil {
 		currentVersion := modelValue.FieldByIndex(metadata.VersionField.IndexPath).Int()
-		builder.AddConditionExpression(metadata.VersionField.DBName, "=", currentVersion)
+		if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", currentVersion); err != nil {
+			return fmt.Errorf("failed to add version condition: %w", err)
+		}
 	}
 
 	// Build the update expression
@@ -2253,7 +2439,9 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 		}
 		versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
 		if !versionValue.IsZero() {
-			builder.AddConditionExpression(metadata.VersionField.DBName, "=", versionValue.Int())
+			if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", versionValue.Int()); err != nil {
+				return fmt.Errorf("failed to add version condition: %w", err)
+			}
 			hasConditions = true
 		}
 	}
@@ -2265,7 +2453,10 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 			continue
 		}
 
-		builder.AddConditionExpression(cond.field, cond.op, cond.value)
+		op := normalizeOperator(cond.op)
+		if err := builder.AddConditionExpression(cond.field, op, cond.value); err != nil {
+			return fmt.Errorf("failed to add condition %s: %w", cond.field, err)
+		}
 		hasConditions = true
 	}
 
@@ -2374,6 +2565,9 @@ func (db *DB) TransactionFunc(fn func(tx any) error) error {
 
 // AllPaginated retrieves all matching items with pagination metadata
 func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
+	if err := q.checkBuilderError(); err != nil {
+		return nil, err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return nil, err
@@ -2390,18 +2584,33 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	var filterConditions []condition
 
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
-		if !exists {
-			return nil, fmt.Errorf("field %s not found in model", cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
 		}
 
-		isKey := fieldMeta.IsPK || fieldMeta.IsSK ||
-			(q.indexName != "" && q.isIndexKey(fieldMeta, q.indexName, metadata))
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
+		if !exists {
+			filterConditions = append(filterConditions, normalizedCond)
+			continue
+		}
 
-		if isKey {
-			keyConditions = append(keyConditions, cond)
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+		if isPK || isSK {
+			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == "BETWEEN" {
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
+				} else {
+					keyConditions = append(keyConditions, normalizedCond)
+				}
+			} else {
+				filterConditions = append(filterConditions, normalizedCond)
+			}
 		} else {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
@@ -2417,16 +2626,24 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		// Add key conditions
 		for _, cond := range keyConditions {
 			fieldMeta, _ := lookupField(metadata, cond.field)
-			builder.AddKeyCondition(fieldMeta.DBName, cond.op, cond.value)
+			op := normalizeOperator(cond.op)
+			if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
+				return nil, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
+			}
 		}
 
 		// Add filter conditions
 		for _, cond := range filterConditions {
 			fieldMeta, exists := lookupField(metadata, cond.field)
+			op := normalizeOperator(cond.op)
 			if exists {
-				builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+				}
 			} else {
-				builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+				if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+				}
 			}
 		}
 
@@ -2495,10 +2712,15 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		// Add filter conditions
 		for _, cond := range filterConditions {
 			fieldMeta, exists := lookupField(metadata, cond.field)
+			op := normalizeOperator(cond.op)
 			if exists {
-				builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+				}
 			} else {
-				builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+				if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+				}
 			}
 		}
 
@@ -2643,6 +2865,9 @@ func (q *query) ParallelScan(segment int32, totalSegments int32) core.Query {
 
 // ScanAllSegments performs parallel scan across all segments automatically
 func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -2687,6 +2912,7 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 				db:            q.db,
 				model:         q.model,
 				builder:       q.builder,
+				builderErr:    q.builderErr,
 				conditions:    q.conditions,
 				indexName:     q.indexName,
 				orderBy:       q.orderBy,
@@ -2740,18 +2966,31 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 	// Add filter conditions
 	var filterConditions []condition
 	for _, cond := range q.conditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
 		if !exists || (!fieldMeta.IsPK && !fieldMeta.IsSK) {
-			filterConditions = append(filterConditions, cond)
+			filterConditions = append(filterConditions, normalizedCond)
 		}
 	}
 
 	for _, cond := range filterConditions {
 		fieldMeta, exists := lookupField(metadata, cond.field)
+		op := normalizeOperator(cond.op)
 		if exists {
-			builder.AddFilterCondition("AND", fieldMeta.DBName, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
+				q.recordBuilderError(err)
+				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		} else {
-			builder.AddFilterCondition("AND", cond.field, cond.op, cond.value)
+			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
+				q.recordBuilderError(err)
+				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+			}
 		}
 	}
 
@@ -2836,6 +3075,9 @@ func (q *query) SetCursor(cursor string) error {
 
 // BatchWrite performs mixed batch write operations (puts and deletes)
 func (q *query) BatchWrite(putItems []any, deleteKeys []any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -2861,6 +3103,9 @@ func (q *query) BatchWrite(putItems []any, deleteKeys []any) error {
 
 // BatchUpdateWithOptions performs batch update operations with custom options
 func (q *query) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
 	// Check Lambda timeout
 	if err := q.checkLambdaTimeout(); err != nil {
 		return err
@@ -2926,7 +3171,7 @@ func convertConditions(conditions []condition) []queryPkg.Condition {
 	for i, cond := range conditions {
 		result[i] = queryPkg.Condition{
 			Field:    cond.field,
-			Operator: cond.op,
+			Operator: normalizeOperator(cond.op),
 			Value:    cond.value,
 		}
 	}

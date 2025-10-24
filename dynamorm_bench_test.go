@@ -257,7 +257,7 @@ func BenchmarkMarshalItem_PrimitivesOnly(b *testing.B) {
 // Benchmark the optimized marshaler
 func BenchmarkMarshalItem_Optimized(b *testing.B) {
 	// Import the marshal package
-	m := marshal.New()
+	m := marshal.New(nil)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -343,7 +343,9 @@ func BenchmarkMarshalItem_Optimized(b *testing.B) {
 	}
 
 	// Warm up the cache
-	m.MarshalItem(user, metadata)
+	if _, err := m.MarshalItem(user, metadata); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -430,14 +432,17 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 	})
 
 	b.Run("Optimized", func(b *testing.B) {
+		converter := pkgTypes.NewConverter()
 		db := &DB{
-			converter: pkgTypes.NewConverter(),
-			marshaler: marshal.New(),
+			converter: converter,
+			marshaler: marshal.New(converter),
 		}
 		q := &query{db: db}
 
 		// Warm up cache
-		q.marshalItem(user, metadata)
+		if _, err := q.marshalItem(user, metadata); err != nil {
+			b.Fatal(err)
+		}
 
 		b.ResetTimer()
 		b.ReportAllocs()

@@ -133,8 +133,8 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 	}
 
 	// Import the marshal package for proper field name mapping
-	marshaler := marshal.New()
 	converter := pkgTypes.NewConverter()
+	marshaler := marshal.New(converter)
 
 	// Create a wrapper for model-to-model transforms
 	return func(sourceItem map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
@@ -224,15 +224,7 @@ func validateRequiredFields(item map[string]types.AttributeValue, metadata *mode
 		}
 	}
 
-	// Check other required fields (non-omitempty fields)
-	for _, field := range metadata.Fields {
-		if !field.OmitEmpty && !field.IsPK && !field.IsSK {
-			if _, exists := item[field.DBName]; !exists {
-				// This is a warning rather than an error for flexibility
-				// In practice, you might want to make this configurable
-			}
-		}
-	}
+	// Additional validation for other fields could be added here if needed.
 
 	return nil
 }

@@ -36,7 +36,11 @@ func (BinRecordTest) TableName() string {
 // TestModelWithContext verifies that model registration works correctly when using WithContext
 func TestModelWithContext(t *testing.T) {
 	testCtx := InitTestDB(t)
-	defer testCtx.Cleanup()
+	t.Cleanup(func() {
+		if err := testCtx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 
 	// Ensure table exists
 	err := testCtx.DB.AutoMigrate(&ModelRegTest{})
@@ -119,7 +123,11 @@ func TestModelWithContext(t *testing.T) {
 // TestBreakpointDebugging helps verify that breakpoints work correctly
 func TestBreakpointDebugging(t *testing.T) {
 	testCtx := InitTestDB(t)
-	defer testCtx.Cleanup()
+	t.Cleanup(func() {
+		if err := testCtx.Cleanup(); err != nil {
+			t.Logf("cleanup failed: %v", err)
+		}
+	})
 
 	// Ensure table exists
 	err := testCtx.DB.AutoMigrate(&BinRecordTest{})

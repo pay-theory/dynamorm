@@ -3,9 +3,11 @@ package core
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 // DB represents the main database connection interface
@@ -37,6 +39,10 @@ type ExtendedDB interface {
 	// AutoMigrateWithOptions performs enhanced auto-migration with data copy support
 	// opts should be of type schema.AutoMigrateOption
 	AutoMigrateWithOptions(model any, opts ...any) error
+
+	// RegisterTypeConverter registers a custom converter for a specific Go type, allowing
+	// callers to override how values are marshaled to and unmarshaled from DynamoDB.
+	RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error
 
 	// CreateTable creates a DynamoDB table for the given model
 	// opts should be of type schema.TableOption

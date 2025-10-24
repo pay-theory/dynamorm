@@ -1,11 +1,14 @@
 package tests
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/google/uuid"
 
 	"github.com/pay-theory/dynamorm"
@@ -61,7 +64,7 @@ func BenchmarkIdempotencyCheck(b *testing.B) {
 	// Pre-populate some idempotency records
 	for i := 0; i < 1000; i++ {
 		key := fmt.Sprintf("bench-key-%d", i)
-		_, _ = idempotency.Process(nil, merchant.ID, key, func() (any, error) {
+		_, _ = idempotency.Process(context.TODO(), merchant.ID, key, func() (any, error) {
 			return &payment.Payment{ID: fmt.Sprintf("payment-%d", i)}, nil
 		})
 	}
@@ -72,7 +75,7 @@ func BenchmarkIdempotencyCheck(b *testing.B) {
 		for pb.Next() {
 			// Mix of existing and new keys
 			key := fmt.Sprintf("bench-key-%d", i%1500)
-			_, _ = idempotency.Process(nil, merchant.ID, key, func() (any, error) {
+			_, _ = idempotency.Process(context.TODO(), merchant.ID, key, func() (any, error) {
 				return &payment.Payment{ID: fmt.Sprintf("payment-new-%d", i)}, nil
 			})
 			i++
@@ -470,6 +473,15 @@ func initBenchDB(_ *testing.B) (core.ExtendedDB, error) {
 	db, err := dynamorm.New(dynamorm.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(aws.CredentialsProviderFunc(
+				func(ctx context.Context) (aws.Credentials, error) {
+					return aws.Credentials{
+						AccessKeyID:     "dummy",
+						SecretAccessKey: "dummy",
+					}, nil
+				})),
+		},
 	})
 	if err != nil {
 		return nil, err

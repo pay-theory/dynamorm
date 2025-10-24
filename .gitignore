@@ -85,6 +85,8 @@ Thumbs.db
 /main
 main
 cleanup.sh
+.gocache/
+.gomodcache/
 
 # Example binaries
 examples/optimization/optimization

@@ -62,7 +62,7 @@ type ExportJob struct {
 	Error      string                 `json:"error,omitempty"`
 	CreatedAt  time.Time              `dynamorm:"created_at" json:"created_at"`
 	UpdatedAt  time.Time              `dynamorm:"updated_at" json:"updated_at"`
-	ExpiresAt  time.Time              `dynamorm:"ttl" json:"expires_at"`
+	ExpiresAt  int64                  `dynamorm:"ttl" json:"expires_at"` // Unix timestamp
 }
 
 // QueryHandler handles payment query requests
@@ -296,7 +296,7 @@ func (h *QueryHandler) exportPayments(_ context.Context, merchantID string, req 
 		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // Expire after 7 days
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour).Unix(), // Expire after 7 days (Unix timestamp)
 	}
 
 	// Save export job to DynamoDB

@@ -218,31 +218,3 @@ func debugAWSSDK(ctx context.Context) {
 		fmt.Println("   ✓ ListTables succeeded - AWS credentials are configured")
 	}
 }
-
-// Helper function to get AWS credentials info
-func getAWSInfo() {
-	fmt.Println("\nAWS Environment Information:")
-	fmt.Println("----------------------------")
-
-	envVars := []string{
-		"AWS_REGION",
-		"AWS_DEFAULT_REGION",
-		"AWS_PROFILE",
-		"AWS_ACCESS_KEY_ID",
-		"AWS_SECRET_ACCESS_KEY",
-		"AWS_SESSION_TOKEN",
-		"AWS_LAMBDA_FUNCTION_NAME",
-	}
-
-	for _, env := range envVars {
-		value := os.Getenv(env)
-		if value != "" {
-			if env == "AWS_ACCESS_KEY_ID" || env == "AWS_SECRET_ACCESS_KEY" {
-				// Mask sensitive values
-				fmt.Printf("%s: ***\n", env)
-			} else {
-				fmt.Printf("%s: %s\n", env, value)
-			}
-		}
-	}
-}

@@ -1,10 +1,12 @@
 package schema
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
@@ -50,10 +52,17 @@ func TestCreateTable(t *testing.T) {
 	}
 	tests.RequireDynamoDBLocal(t)
 
-	// Create test session
+	// Create test session with dummy credentials for DynamoDB Local
 	sess, err := session.NewSession(&session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		CredentialsProvider: aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			}),
 	})
 	require.NoError(t, err)
 
@@ -181,10 +190,17 @@ func TestTableExists(t *testing.T) {
 	}
 	tests.RequireDynamoDBLocal(t)
 
-	// Create test session
+	// Create test session with dummy credentials for DynamoDB Local
 	sess, err := session.NewSession(&session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		CredentialsProvider: aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			}),
 	})
 	require.NoError(t, err)
 
@@ -223,10 +239,17 @@ func TestUpdateTable(t *testing.T) {
 	}
 	tests.RequireDynamoDBLocal(t)
 
-	// Create test session
+	// Create test session with dummy credentials for DynamoDB Local
 	sess, err := session.NewSession(&session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		CredentialsProvider: aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			}),
 	})
 	require.NoError(t, err)
 

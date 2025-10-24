@@ -122,12 +122,12 @@ func createMetadata(fields ...*model.FieldMetadata) *model.Metadata {
 }
 
 func TestNew(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 	assert.NotNil(t, marshaler)
 }
 
 func TestMarshalItem_SimpleTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	tests := []struct {
 		name     string
@@ -171,7 +171,7 @@ func TestMarshalItem_SimpleTypes(t *testing.T) {
 }
 
 func TestMarshalItem_ComplexTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	now := time.Now()
 	optional := "optional-value"
@@ -238,7 +238,7 @@ func TestMarshalItem_ComplexTypes(t *testing.T) {
 }
 
 func TestMarshalItem_PointerTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test with non-nil pointers
 	str := "test-string"
@@ -281,7 +281,7 @@ func TestMarshalItem_PointerTypes(t *testing.T) {
 }
 
 func TestMarshalItem_OmitEmpty(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test with empty values
 	input := OmitEmptyStruct{
@@ -309,7 +309,7 @@ func TestMarshalItem_OmitEmpty(t *testing.T) {
 }
 
 func TestMarshalItem_Errors(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	tests := []struct {
 		name     string
@@ -347,7 +347,7 @@ func TestMarshalItem_Errors(t *testing.T) {
 }
 
 func TestMarshalItem_AllTypesSupport(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	now := time.Now()
 	input := AllTypesStruct{
@@ -394,7 +394,7 @@ func TestMarshalItem_AllTypesSupport(t *testing.T) {
 }
 
 func TestMarshalItem_VersionField(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test with zero version
 	input1 := VersionedStruct{ID: "test-id", Version: 0}
@@ -415,7 +415,7 @@ func TestMarshalItem_VersionField(t *testing.T) {
 }
 
 func TestMarshalItem_ConcurrentAccess(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	metadata := createMetadata(
 		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
@@ -457,7 +457,7 @@ func TestMarshalItem_ConcurrentAccess(t *testing.T) {
 }
 
 func TestMarshalItem_CacheReuse(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	metadata := createMetadata(
 		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
@@ -479,7 +479,7 @@ func TestMarshalItem_CacheReuse(t *testing.T) {
 }
 
 func TestMarshalComplexValue_EdgeCases(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test nil slice
 	var nilSlice []string
@@ -513,7 +513,7 @@ func TestMarshalComplexValue_EdgeCases(t *testing.T) {
 }
 
 func TestMarshalValue_AllNumericTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	tests := []struct {
 		name     string
@@ -542,7 +542,7 @@ func TestMarshalValue_AllNumericTypes(t *testing.T) {
 }
 
 func BenchmarkMarshalItem_Simple(b *testing.B) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	input := SimpleStruct{
 		ID:     "bench-id",
@@ -567,7 +567,7 @@ func BenchmarkMarshalItem_Simple(b *testing.B) {
 }
 
 func BenchmarkMarshalItem_Complex(b *testing.B) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	optional := "optional"
 	input := ComplexStruct{
@@ -600,7 +600,7 @@ func BenchmarkMarshalItem_Complex(b *testing.B) {
 
 // Additional tests for edge cases and special scenarios
 func TestMarshalItem_SpecialStringSetHandling(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test empty string set with omitempty
 	type StringSetStruct struct {
@@ -627,7 +627,7 @@ func TestMarshalItem_SpecialStringSetHandling(t *testing.T) {
 }
 
 func TestMarshalItem_DeepNestedStructures(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	type NestedMap struct {
 		ID      string                       `dynamodb:"id"`

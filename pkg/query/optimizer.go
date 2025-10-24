@@ -478,12 +478,12 @@ func (oq *OptimizedQuery) Execute(dest any) error {
 
 	switch oq.plan.Operation {
 	case "Query":
-		err = oq.Query.All(dest)
+		err = oq.All(dest)
 	case "Scan":
 		if oq.plan.ParallelSegments > 1 {
-			err = oq.Query.ScanAllSegments(dest, int32(oq.plan.ParallelSegments))
+			err = oq.ScanAllSegments(dest, int32(oq.plan.ParallelSegments))
 		} else {
-			err = oq.Query.Scan(dest)
+			err = oq.Scan(dest)
 		}
 	default:
 		err = fmt.Errorf("unsupported operation: %s", oq.plan.Operation)

@@ -512,13 +512,6 @@ type TestContact struct {
 func isDynamoDBLocalRunning(endpoint string) bool {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...any) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           endpoint,
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
 		config.WithCredentialsProvider(aws.CredentialsProviderFunc(
 			func(ctx context.Context) (aws.Credentials, error) {
 				return aws.Credentials{
@@ -531,7 +524,9 @@ func isDynamoDBLocalRunning(endpoint string) bool {
 		return false
 	}
 
-	client := dynamodb.NewFromConfig(cfg)
+	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

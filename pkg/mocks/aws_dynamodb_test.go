@@ -274,9 +274,9 @@ func TestHelperFunctions(t *testing.T) {
 // TestTypeAliases verifies that type aliases work for AWS mocks
 func TestAWSMockTypeAliases(t *testing.T) {
 	// These should compile without issues
-	var _ *mocks.DynamoDBClient = new(mocks.MockDynamoDBClient)
-	var _ *mocks.TableExistsWaiter = new(mocks.MockTableExistsWaiter)
-	var _ *mocks.TableNotExistsWaiter = new(mocks.MockTableNotExistsWaiter)
+	_ = new(mocks.DynamoDBClient)
+	_ = new(mocks.TableExistsWaiter)
+	_ = new(mocks.TableNotExistsWaiter)
 }
 
 // TestIntegrationScenario demonstrates a complete infrastructure testing scenario

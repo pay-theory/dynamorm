@@ -360,18 +360,18 @@ func TestAddGroupFilter(t *testing.T) {
 	mainBuilder := expr.NewBuilder()
 
 	// Add a regular filter
-	mainBuilder.AddFilterCondition("AND", "status", "=", "active")
+	require.NoError(t, mainBuilder.AddFilterCondition("AND", "status", "=", "active"))
 
 	// Create a sub-group
 	subBuilder := expr.NewBuilder()
-	subBuilder.AddFilterCondition("AND", "age", ">", 18)
-	subBuilder.AddFilterCondition("OR", "role", "=", "admin")
+	require.NoError(t, subBuilder.AddFilterCondition("AND", "age", ">", 18))
+	require.NoError(t, subBuilder.AddFilterCondition("OR", "role", "=", "admin"))
 
 	subComponents := subBuilder.Build()
 	mainBuilder.AddGroupFilter("AND", subComponents)
 
 	// Add another regular filter
-	mainBuilder.AddFilterCondition("AND", "verified", "=", true)
+	require.NoError(t, mainBuilder.AddFilterCondition("AND", "verified", "=", true))
 
 	components := mainBuilder.Build()
 
@@ -557,12 +557,12 @@ func TestBuildCompleteExpression(t *testing.T) {
 	builder := expr.NewBuilder()
 
 	// Add key conditions
-	builder.AddKeyCondition("pk", "=", "USER#123")
-	builder.AddKeyCondition("sk", "BEGINS_WITH", "ORDER#")
+	require.NoError(t, builder.AddKeyCondition("pk", "=", "USER#123"))
+	require.NoError(t, builder.AddKeyCondition("sk", "BEGINS_WITH", "ORDER#"))
 
 	// Add filters
-	builder.AddFilterCondition("AND", "status", "=", "active")
-	builder.AddFilterCondition("AND", "amount", ">", 100)
+	require.NoError(t, builder.AddFilterCondition("AND", "status", "=", "active"))
+	require.NoError(t, builder.AddFilterCondition("AND", "amount", ">", 100))
 
 	// Add projection
 	builder.AddProjection("id", "status", "amount", "createdAt")
@@ -572,7 +572,7 @@ func TestBuildCompleteExpression(t *testing.T) {
 	builder.AddUpdateAdd("totalAmount", 100)
 
 	// Add condition
-	builder.AddConditionExpression("version", "=", 1)
+	require.NoError(t, builder.AddConditionExpression("version", "=", 1))
 
 	components := builder.Build()
 

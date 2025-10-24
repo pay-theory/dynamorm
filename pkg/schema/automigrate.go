@@ -375,8 +375,8 @@ func (m *Manager) processItems(ctx context.Context, client *dynamodb.Client, ite
 				return fmt.Errorf("failed to write items to target table: %w", err)
 			}
 
-			// Check for unprocessed items
-			if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
+		// Check for unprocessed items
+		if len(result.UnprocessedItems) > 0 {
 				if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
 					remainingRequests = unprocessed
 					retryCount++
@@ -503,8 +503,8 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 						return fmt.Errorf("failed to write batch: %w", err)
 					}
 
-					// Check for unprocessed items
-					if batchResult.UnprocessedItems != nil && len(batchResult.UnprocessedItems) > 0 {
+			// Check for unprocessed items
+			if len(batchResult.UnprocessedItems) > 0 {
 						if unprocessed, exists := batchResult.UnprocessedItems[targetTable]; exists && len(unprocessed) > 0 {
 							remainingRequests = unprocessed
 							retryCount++

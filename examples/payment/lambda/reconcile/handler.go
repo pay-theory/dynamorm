@@ -95,7 +95,9 @@ func (h *ReconcileHandler) processFile(ctx context.Context, record events.S3Even
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() {
+		_ = result.Body.Close()
+	}()
 
 	// Parse CSV
 	reader := csv.NewReader(result.Body)
@@ -212,12 +214,14 @@ func (h *ReconcileHandler) processFile(ctx context.Context, record events.S3Even
 	}
 
 	// Audit the reconciliation
-	h.auditTracker.Track("reconciliation", "completed", map[string]any{
+	if err := h.auditTracker.Track("reconciliation", "completed", map[string]any{
 		"file":       key,
 		"processed":  totalProcessed,
 		"errors":     totalErrors,
 		"settlement": settlement.ID,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to track reconciliation audit: %w", err)
+	}
 
 	fmt.Printf("Reconciliation completed: %d processed, %d errors\n", totalProcessed, totalErrors)
 	return nil
@@ -285,12 +289,14 @@ func (h *ReconcileHandler) processBatch(ctx context.Context, batch []*Reconcilia
 	}
 
 	// Audit the reconciliation
-	h.auditTracker.Track("reconciliation", "completed", map[string]any{
+	if err := h.auditTracker.Track("reconciliation", "completed", map[string]any{
 		"file":       fmt.Sprintf("BATCH-%d", time.Now().Unix()),
 		"processed":  len(batch),
 		"errors":     0,
 		"settlement": settlement.ID,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to track reconciliation audit: %w", err)
+	}
 
 	fmt.Printf("Reconciliation completed: %d processed, 0 errors\n", len(batch))
 	return nil

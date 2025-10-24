@@ -123,8 +123,10 @@ func (t *TestDB) ExpectTransaction(setupFunc func(tx *core.Tx)) *TestDB {
 				setupFunc(mockTx)
 			}
 
-			// Execute the transaction function
-			txFn(mockTx)
+		// Execute the transaction function
+		if err := txFn(mockTx); err != nil {
+			panic(err)
+		}
 		}).Return(nil).Once()
 	return t
 }
