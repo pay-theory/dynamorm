@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/naming"
 )
 
 // Converter handles conversion between Go types and DynamoDB AttributeValues
@@ -404,7 +405,16 @@ func (c *Converter) mapToStruct(m map[string]types.AttributeValue, target reflec
 			continue
 		}
 
-		av, exists := m[field.Name]
+		attrName, skip := naming.ResolveAttrName(field)
+		if skip {
+			continue
+		}
+
+		if err := naming.ValidateAttrName(attrName); err != nil {
+			return fmt.Errorf("field %s: %w", field.Name, err)
+		}
+
+		av, exists := m[attrName]
 		if !exists {
 			continue
 		}

@@ -302,8 +302,8 @@ func TestBuildAttributeDefinitions(t *testing.T) {
 			attrMap[*attr.AttributeName] = attr.AttributeType
 		}
 
-		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["ID"])
-		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["Email"])
+		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["id"])
+		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["email"])
 	})
 
 	t.Run("TableWithIndexes", func(t *testing.T) {
@@ -321,11 +321,11 @@ func TestBuildAttributeDefinitions(t *testing.T) {
 			attrMap[*attr.AttributeName] = attr.AttributeType
 		}
 
-		assert.Contains(t, attrMap, "OrderID")
-		assert.Contains(t, attrMap, "CustomerID")
-		assert.Contains(t, attrMap, "OrderDate")
-		assert.Contains(t, attrMap, "Status")
-		assert.Contains(t, attrMap, "UpdatedAt")
+		assert.Contains(t, attrMap, "orderID")
+		assert.Contains(t, attrMap, "customerID")
+		assert.Contains(t, attrMap, "orderDate")
+		assert.Contains(t, attrMap, "status")
+		assert.Contains(t, attrMap, "updatedAt")
 	})
 }
 

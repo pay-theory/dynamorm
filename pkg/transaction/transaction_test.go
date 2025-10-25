@@ -230,7 +230,7 @@ func TestTransactionGet(t *testing.T) {
 		readItem := tx.reads[0]
 		assert.NotNil(t, readItem.Get)
 		assert.Equal(t, "Users", *readItem.Get.TableName)
-		assert.Contains(t, readItem.Get.Key, "ID")
+		assert.Contains(t, readItem.Get.Key, "id")
 	})
 
 	t.Run("MultipleGets", func(t *testing.T) {
@@ -318,7 +318,7 @@ func TestExtractPrimaryKey(t *testing.T) {
 		key, err := tx.extractPrimaryKey(user, metadata)
 		assert.NoError(t, err)
 		assert.Len(t, key, 1)
-		assert.Contains(t, key, "ID")
+		assert.Contains(t, key, "id")
 	})
 
 	t.Run("CompositeKey", func(t *testing.T) {
@@ -332,8 +332,8 @@ func TestExtractPrimaryKey(t *testing.T) {
 		key, err := tx.extractPrimaryKey(account, metadata)
 		assert.NoError(t, err)
 		assert.Len(t, key, 2)
-		assert.Contains(t, key, "AccountID")
-		assert.Contains(t, key, "UserID")
+		assert.Contains(t, key, "accountID")
+		assert.Contains(t, key, "userID")
 	})
 
 	t.Run("MissingPartitionKey", func(t *testing.T) {
@@ -379,13 +379,13 @@ func TestMarshalItem(t *testing.T) {
 
 		item, err := tx.marshalItem(user, metadata)
 		assert.NoError(t, err)
-		assert.Contains(t, item, "ID")
-		assert.Contains(t, item, "Email")
-		assert.Contains(t, item, "Name")
-		assert.Contains(t, item, "Balance")
-		assert.Contains(t, item, "Version")
-		assert.Contains(t, item, "CreatedAt")
-		assert.Contains(t, item, "UpdatedAt")
+		assert.Contains(t, item, "id")
+		assert.Contains(t, item, "email")
+		assert.Contains(t, item, "name")
+		assert.Contains(t, item, "balance")
+		assert.Contains(t, item, "version")
+		assert.Contains(t, item, "createdAt")
+		assert.Contains(t, item, "updatedAt")
 	})
 
 	t.Run("OmitEmpty", func(t *testing.T) {
@@ -405,9 +405,9 @@ func TestMarshalItem(t *testing.T) {
 
 		item, err := tx.marshalItem(user, metadata)
 		assert.NoError(t, err)
-		assert.Contains(t, item, "ID")
-		assert.Contains(t, item, "Name")
+		assert.Contains(t, item, "id")
+		assert.Contains(t, item, "name")
 		// Balance should still be included (0 is valid)
-		assert.Contains(t, item, "Balance")
+		assert.Contains(t, item, "balance")
 	})
 }

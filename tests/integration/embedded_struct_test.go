@@ -23,13 +23,13 @@ type BaseModel struct {
 
 	// Common metadata fields
 	Type      string    `dynamorm:"attr:type"`
-	AccountID string    `dynamorm:"attr:account_id"`
+	AccountID string    `dynamorm:"attr:accountId"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
 	Version   int       `dynamorm:"version"`
 
 	// Soft delete support
 	Deleted   bool      `json:"deleted,omitempty" dynamorm:"attr:deleted"`
-	DeletedAt time.Time `json:"-" dynamorm:"attr:deleted_at"`
+	DeletedAt time.Time `json:"-" dynamorm:"attr:deletedAt"`
 }
 
 // EmbeddedCustomer model with embedded BaseModel
