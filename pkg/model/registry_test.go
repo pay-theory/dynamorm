@@ -39,7 +39,7 @@ type SpecialFieldsModel struct {
 }
 
 type CustomAttributeModel struct {
-	ID       string   `dynamorm:"pk,attr:user_id"`
+	ID       string   `dynamorm:"pk,attr:userId"`
 	UserName string   `dynamorm:"attr:username"`
 	Tags     []string `dynamorm:"set"`
 	Optional string   `dynamorm:"omitempty"`
@@ -181,7 +181,7 @@ func TestRegisterCustomAttributeModel(t *testing.T) {
 	// Check custom attribute names
 	idField := metadata.Fields["ID"]
 	require.NotNil(t, idField)
-	assert.Equal(t, "user_id", idField.DBName)
+	assert.Equal(t, "userId", idField.DBName)
 
 	usernameField := metadata.Fields["UserName"]
 	require.NotNil(t, usernameField)
@@ -198,7 +198,7 @@ func TestRegisterCustomAttributeModel(t *testing.T) {
 	assert.True(t, optionalField.OmitEmpty)
 
 	// Check fields by DB name
-	assert.Equal(t, idField, metadata.FieldsByDBName["user_id"])
+	assert.Equal(t, idField, metadata.FieldsByDBName["userId"])
 	assert.Equal(t, usernameField, metadata.FieldsByDBName["username"])
 }
 

@@ -25,7 +25,7 @@ type BaseModel struct {
 
 	// Common metadata
 	Type      string    `dynamorm:"attr:type"`
-	TenantID  string    `dynamorm:"attr:tenant_id"`
+	TenantID  string    `dynamorm:"attr:tenantId"`
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
 	Version   int       `dynamorm:"version"`
@@ -57,7 +57,7 @@ type EmbeddedProduct struct {
 	Description string  `dynamorm:"attr:description"`
 	Price       float64 `dynamorm:"attr:price"`
 	Stock       int     `dynamorm:"attr:stock"`
-	CategoryID  string  `dynamorm:"attr:category_id"`
+	CategoryID  string  `dynamorm:"attr:categoryId"`
 }
 
 // TableName returns the DynamoDB table name
@@ -71,10 +71,10 @@ type EmbeddedOrder struct {
 
 	// Order-specific fields
 	ID         string    `dynamorm:"attr:id"`
-	CustomerID string    `dynamorm:"attr:customer_id"`
+	CustomerID string    `dynamorm:"attr:customerId"`
 	Total      float64   `dynamorm:"attr:total"`
 	Status     string    `dynamorm:"attr:status"`
-	OrderedAt  time.Time `dynamorm:"attr:ordered_at"`
+	OrderedAt  time.Time `dynamorm:"attr:orderedAt"`
 }
 
 // TableName returns the DynamoDB table name

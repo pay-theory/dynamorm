@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/naming"
 )
 
 // Registry manages registered models and their metadata
@@ -341,7 +342,7 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int) (*FieldMetad
 	meta := &FieldMetadata{
 		Name:      field.Name,
 		Type:      field.Type,
-		DBName:    field.Name,
+		DBName:    naming.DefaultAttrName(field.Name),
 		Index:     indexPath[len(indexPath)-1], // Keep for backward compatibility
 		IndexPath: indexPath,
 		Tags:      make(map[string]string),
@@ -369,7 +370,7 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int) (*FieldMetad
 		// Handle key:value tags
 		if colonIdx := strings.Index(part, ":"); colonIdx > 0 {
 			key := part[:colonIdx]
-			value := part[colonIdx+1:]
+			value := strings.TrimSpace(part[colonIdx+1:])
 
 			switch key {
 			case "attr":
@@ -440,6 +441,10 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int) (*FieldMetad
 	// Validate field type for special tags
 	if err := validateFieldType(meta); err != nil {
 		return nil, err
+	}
+
+	if err := naming.ValidateAttrName(meta.DBName); err != nil {
+		return nil, fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
 	}
 
 	return meta, nil

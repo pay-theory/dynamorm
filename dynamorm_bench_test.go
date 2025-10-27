@@ -458,7 +458,7 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 type BenchmarkModel struct {
 	ID        string    `dynamorm:"pk,attr:id"`
 	Name      string    `dynamorm:"attr:name"`
-	CreatedAt time.Time `dynamorm:"attr:created_at"`
+	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 }
 
 func (b BenchmarkModel) TableName() string {

@@ -12,16 +12,16 @@ import (
 type UpdateProduct struct {
 	ID           string    `dynamorm:"pk"`
 	Category     string    `dynamorm:"sk"`
-	Name         string    `dynamorm:"attr:product_name"`
+	Name         string    `dynamorm:"attr:productName"`
 	Price        float64   `dynamorm:"attr:price"`
-	Stock        int       `dynamorm:"attr:stock_count"`
+	Stock        int       `dynamorm:"attr:stockCount"`
 	Tags         []string  `dynamorm:"attr:tags,set,omitempty"`
 	Features     []string  `dynamorm:"attr:features"`
 	Ratings      []float64 `dynamorm:"attr:ratings"`
 	Description  string    `dynamorm:"attr:description,omitempty"`
 	Discount     float64   `dynamorm:"attr:discount,omitempty"`
 	Version      int64     `dynamorm:"version"`
-	Active       bool      `dynamorm:"attr:is_active"`
+	Active       bool      `dynamorm:"attr:isActive"`
 	LastModified time.Time `dynamorm:"updated_at"`
 	CreatedAt    time.Time `dynamorm:"created_at"`
 }
@@ -31,13 +31,13 @@ type UserProfile struct {
 	UserID       string            `dynamorm:"pk"`
 	Email        string            `dynamorm:"sk"`
 	Username     string            `dynamorm:"attr:username"`
-	FullName     string            `dynamorm:"attr:full_name,omitempty"`
+	FullName     string            `dynamorm:"attr:fullName,omitempty"`
 	Age          int               `dynamorm:"attr:age,omitempty"`
 	Score        float64           `dynamorm:"attr:score"`
 	Achievements []string          `dynamorm:"attr:achievements"`
 	Settings     map[string]string `dynamorm:"attr:settings"`
-	LoginCount   int64             `dynamorm:"attr:login_count"`
-	LastLogin    time.Time         `dynamorm:"attr:last_login"`
+	LoginCount   int64             `dynamorm:"attr:loginCount"`
+	LastLogin    time.Time         `dynamorm:"attr:lastLogin"`
 	Version      int64             `dynamorm:"version"`
 }
 

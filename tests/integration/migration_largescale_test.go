@@ -19,7 +19,7 @@ type LargeDatasetV1 struct {
 	ID          string    `dynamorm:"pk"`
 	Category    string    `dynamorm:"sk"`
 	Data        string    `dynamorm:"attr:data"`
-	ProcessedAt time.Time `dynamorm:"attr:processed_at"`
+	ProcessedAt time.Time `dynamorm:"attr:processedAt"`
 	Version     int64     `dynamorm:"version"`
 }
 
@@ -32,9 +32,9 @@ type LargeDatasetV2 struct {
 	ID           string            `dynamorm:"pk"`
 	Category     string            `dynamorm:"sk"`
 	Data         string            `dynamorm:"attr:data"`
-	DataChecksum string            `dynamorm:"attr:data_checksum"`
-	ProcessedAt  time.Time         `dynamorm:"attr:processed_at"`
-	MigratedAt   time.Time         `dynamorm:"attr:migrated_at"`
+	DataChecksum string            `dynamorm:"attr:dataChecksum"`
+	ProcessedAt  time.Time         `dynamorm:"attr:processedAt"`
+	MigratedAt   time.Time         `dynamorm:"attr:migratedAt"`
 	Metadata     map[string]string `dynamorm:"attr:metadata"`
 	Version      int64             `dynamorm:"version"`
 }
@@ -89,19 +89,19 @@ func TestLargeScaleMigration(t *testing.T) {
 			if dataAttr, exists := source["data"]; exists {
 				if dataStr, ok := dataAttr.(*types.AttributeValueMemberS); ok {
 					checksum := calculateSimpleChecksum(dataStr.Value)
-					target["data_checksum"] = &types.AttributeValueMemberS{Value: checksum}
+					target["dataChecksum"] = &types.AttributeValueMemberS{Value: checksum}
 				}
 			}
 
 			// Add migration timestamp
-			target["migrated_at"] = &types.AttributeValueMemberS{
+			target["migratedAt"] = &types.AttributeValueMemberS{
 				Value: time.Now().Format(time.RFC3339),
 			}
 
 			// Add metadata
 			metadata := map[string]types.AttributeValue{
-				"source_table":      &types.AttributeValueMemberS{Value: "large_dataset_v1"},
-				"migration_version": &types.AttributeValueMemberS{Value: "1.0"},
+				"sourceTable":      &types.AttributeValueMemberS{Value: "large_dataset_v1"},
+				"migrationVersion": &types.AttributeValueMemberS{Value: "1.0"},
 			}
 			target["metadata"] = &types.AttributeValueMemberM{Value: metadata}
 
@@ -156,7 +156,7 @@ func TestLargeScaleMigration(t *testing.T) {
 			expectedChecksum := calculateSimpleChecksum(original.Data)
 			assert.Equal(t, expectedChecksum, migrated.DataChecksum)
 			assert.NotZero(t, migrated.MigratedAt)
-			assert.Equal(t, "large_dataset_v1", migrated.Metadata["source_table"])
+			assert.Equal(t, "large_dataset_v1", migrated.Metadata["sourceTable"])
 		}
 	})
 
@@ -199,7 +199,7 @@ func TestLargeScaleMigration(t *testing.T) {
 			for k, v := range source {
 				target[k] = v
 			}
-			target["migrated_at"] = &types.AttributeValueMemberS{
+			target["migratedAt"] = &types.AttributeValueMemberS{
 				Value: time.Now().Format(time.RFC3339),
 			}
 			return target, nil
