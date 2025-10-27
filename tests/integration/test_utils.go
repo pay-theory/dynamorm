@@ -33,6 +33,10 @@ type TestContext struct {
 func InitTestDB(t *testing.T) *TestContext {
 	t.Helper()
 
+	if testing.Short() {
+		t.Skip("Skipping integration test in -short mode")
+	}
+
 	// Always check for DynamoDB Local availability first
 	// This will skip the test with a clear message if DynamoDB Local is not running
 	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
