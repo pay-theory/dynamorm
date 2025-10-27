@@ -1848,6 +1848,9 @@ func isConditionalCheckFailedException(err error) bool {
 // executeQuery performs a DynamoDB Query operation
 func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
 	builder := expr.NewBuilder()
+	if q.builder != nil {
+		builder = q.builder.Clone()
+	}
 
 	// Add key conditions
 	for _, cond := range keyConditions {
@@ -2127,6 +2130,9 @@ func (q *query) unmarshalItems(items []map[string]types.AttributeValue, dest any
 // executeQueryCount performs a DynamoDB Query operation to count items
 func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) (int64, error) {
 	builder := expr.NewBuilder()
+	if q.builder != nil {
+		builder = q.builder.Clone()
+	}
 
 	// Add key conditions
 	for _, cond := range keyConditions {

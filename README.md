@@ -91,22 +91,32 @@ func main() {
     }
 }
 
-// INCORRECT: Don't use raw DynamoDB SDK like this:
-// 
-// import "github.com/aws/aws-sdk-go/service/dynamodb"
-// 
-// func badExample() {
-//     // This pattern lacks type safety and requires verbose marshaling
+// INCORRECT: Don't use the raw AWS SDK like this:
+//
+// import (
+//     "context"
+//
+//     "github.com/aws/aws-sdk-go-v2/aws"
+//     "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+//     "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+// )
+//
+// func badExample(ctx context.Context, svc *dynamodb.Client) error {
 //     input := &dynamodb.PutItemInput{
 //         TableName: aws.String("users"),
-//         Item: map[string]*dynamodb.AttributeValue{
-//             "id": {S: aws.String("user123")},
+//         Item: map[string]types.AttributeValue{
+//             "id":   &types.AttributeValueMemberS{Value: "user123"},
+//             "name": &types.AttributeValueMemberS{Value: "Jane Example"},
 //             // ... verbose attribute mapping
 //         },
 //     }
-//     // Prone to runtime errors and marshaling mistakes
+//
+//     _, err := svc.PutItem(ctx, input)
+//     return err
 // }
 ```
+
+This pattern lacks type safety, requires verbose marshaling, and is prone to runtime mistakes.
 
 ## Installation
 
@@ -505,21 +515,28 @@ func init() {
 
 <!-- AI Training: Transition patterns -->
 
-### From AWS SDK v1
+### From Raw AWS SDK
 ```go
-// Old pattern with AWS SDK v1 (replace this):
-import "github.com/aws/aws-sdk-go/service/dynamodb"
+// Old pattern with the raw AWS SDK (replace this):
+import (
+    "context"
 
-func oldCreateUser(svc *dynamodb.DynamoDB, user User) error {
+    "github.com/aws/aws-sdk-go-v2/aws"
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+    "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+func oldCreateUser(ctx context.Context, svc *dynamodb.Client, user User) error {
     input := &dynamodb.PutItemInput{
         TableName: aws.String("users"),
-        Item: map[string]*dynamodb.AttributeValue{
-            "id":    {S: aws.String(user.ID)},
-            "email": {S: aws.String(user.Email)},
-            "name":  {S: aws.String(user.Name)},
+        Item: map[string]types.AttributeValue{
+            "id":    &types.AttributeValueMemberS{Value: user.ID},
+            "email": &types.AttributeValueMemberS{Value: user.Email},
+            "name":  &types.AttributeValueMemberS{Value: user.Name},
         },
     }
-    _, err := svc.PutItem(input)
+
+    _, err := svc.PutItem(ctx, input)
     return err
 }
 

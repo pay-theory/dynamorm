@@ -334,6 +334,41 @@ func (b *Builder) Build() ExpressionComponents {
 	return components
 }
 
+// Clone creates a deep copy of the builder so additional expressions can be
+// composed without mutating the original instance.
+func (b *Builder) Clone() *Builder {
+	if b == nil {
+		return NewBuilder()
+	}
+
+	clone := NewBuilder()
+	clone.keyConditions = append(clone.keyConditions, b.keyConditions...)
+	clone.filterConditions = append(clone.filterConditions, b.filterConditions...)
+	clone.filterOperators = append(clone.filterOperators, b.filterOperators...)
+	clone.projections = append(clone.projections, b.projections...)
+	clone.conditions = append(clone.conditions, b.conditions...)
+
+	clone.names = make(map[string]string, len(b.names))
+	for k, v := range b.names {
+		clone.names[k] = v
+	}
+
+	clone.values = make(map[string]types.AttributeValue, len(b.values))
+	for k, v := range b.values {
+		clone.values[k] = v
+	}
+
+	clone.updateExpressions = make(map[string][]string, len(b.updateExpressions))
+	for action, exprs := range b.updateExpressions {
+		clone.updateExpressions[action] = append(clone.updateExpressions[action], exprs...)
+	}
+
+	clone.nameCounter = b.nameCounter
+	clone.valueCounter = b.valueCounter
+
+	return clone
+}
+
 // buildCondition builds a single condition expression with security validation
 func (b *Builder) buildCondition(field string, operator string, value any) (string, error) {
 	// SECURITY: Validate all inputs before processing

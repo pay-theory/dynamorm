@@ -45,6 +45,10 @@ func GetTestConfig() *TestConfig {
 func RequireDynamoDBLocal(t *testing.T) {
 	t.Helper()
 
+	if testing.Short() {
+		t.Skip("Skipping integration test in -short mode")
+	}
+
 	config := GetTestConfig()
 	if config.SkipIntegration {
 		t.Skip("Skipping integration test (SKIP_INTEGRATION=true)")

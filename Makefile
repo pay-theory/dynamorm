@@ -1,6 +1,6 @@
 # DynamORM Makefile
 
-.PHONY: all build test test-unit clean lint fmt docker-up docker-down docker-clean integration benchmark stress test-all
+.PHONY: all build test test-unit unit-cover clean lint fmt docker-up docker-down docker-clean integration benchmark stress test-all
 
 # Variables
 GOMOD := github.com/pay-theory/dynamorm
@@ -27,6 +27,10 @@ test: docker-up
 test-unit:
 	@echo "Running unit tests only..."
 	@go test -v -race -coverprofile=coverage.out $(UNIT_PACKAGES)
+
+unit-cover:
+	@echo "Running offline unit coverage..."
+	@go test ./... -short -coverpkg=./... -coverprofile=coverage_unit.out
 
 # Run integration tests (requires DynamoDB Local)
 integration: docker-up

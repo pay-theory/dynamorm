@@ -75,9 +75,14 @@ Unsure where to begin? Look for these labels:
    # Run tests
    make test
 
+   # Offline unit coverage baseline (skips DynamoDB Local)
+   make unit-cover
+
    # Run linter
    make lint
-   ```
+```
+
+`make unit-cover` runs `go test ./... -short -coverpkg=./... -coverprofile=coverage_unit.out` to establish an offline coverage baseline. Use the regular `make test` or other integration/stress targets when you need DynamoDB Local or AWS parity checks.
 
 3. **Create a Branch**
    ```bash
