@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.33] - 2025-10-28
+
 ### Added
 - `OrCondition` method to UpdateBuilder for OR logic in conditional expressions:
   - Enables complex business rules like rate limiting with privilege checks
