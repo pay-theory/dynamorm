@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved error messages to follow Go conventions (lowercase)
 
 ### Fixed
+- **[CRITICAL BUG FIX]** Custom type converters registered via `RegisterTypeConverter()` are now properly invoked during `Update()` operations
+  - Previously, custom converters only worked during `Create()` operations but were silently ignored during `Update()`, causing incorrect data storage (NULL values or nested struct representations instead of custom format)
+  - The expression builder now receives and uses the converter lookup, ensuring consistent behavior across all operations
+  - This fix affects: `Update()`, `UpdateBuilder()`, filter conditions, and all query/scan operations
+  - **Breaking Change Impact**: None - this only fixes broken functionality
+  - **Migration**: Code using custom converters with `Update()` will now work correctly without changes
+  - Added comprehensive test suite (`dynamorm_custom_converter_update_test.go`) to prevent regression
 - Circular dependencies between core and query packages
 - Interface signature mismatches for `BatchUpdateWithOptions` across packages
 - Missing mock implementations for `BatchWrite` and `BatchUpdateWithOptions` in test helpers

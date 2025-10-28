@@ -19,6 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testContextKey is a custom type for context keys to avoid collisions
+type testContextKey string
+
 type httpStubResponse struct {
 	target   string
 	status   int
@@ -99,18 +102,9 @@ func newStubbedDynamoClient(t *testing.T, stub *httpClientStub) *dynamodb.Client
 		},
 	}
 
-	cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(
-		func(service, region string, options ...any) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				URL:           "https://dynamodb.stub.local",
-				PartitionID:   "aws",
-				SigningName:   "dynamodb",
-				SigningRegion: region,
-			}, nil
-		},
-	)
-
-	return dynamodb.NewFromConfig(cfg)
+	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String("https://dynamodb.stub.local")
+	})
 }
 
 func readRequestJSON(t *testing.T, req *http.Request) map[string]any {
@@ -142,7 +136,7 @@ func marshalJSON(t *testing.T, v any) string {
 func TestNewBatchWriteExecutor(t *testing.T) {
 	stub := newHTTPClientStub(t, nil)
 	client := newStubbedDynamoClient(t, stub)
-	ctx := context.WithValue(context.Background(), struct{}{}, "marker")
+	ctx := context.WithValue(context.Background(), testContextKey("test"), "marker")
 
 	executor := NewBatchWriteExecutor(client, ctx)
 	require.NotNil(t, executor)
@@ -443,7 +437,7 @@ func TestBatchDeleteWithResult(t *testing.T) {
 func TestNewExecutorWithBatchSupport(t *testing.T) {
 	stub := newHTTPClientStub(t, nil)
 	client := newStubbedDynamoClient(t, stub)
-	ctx := context.WithValue(context.Background(), struct{}{}, "ctx-marker")
+	ctx := context.WithValue(context.Background(), testContextKey("test"), "ctx-marker")
 
 	executor := NewExecutorWithBatchSupport(client, ctx)
 	require.NotNil(t, executor)

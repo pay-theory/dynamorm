@@ -130,6 +130,19 @@ var reservedWords = map[string]bool{
 	"WRITE": true, "YEAR": true, "ZONE": true,
 }
 
+// CustomConverter defines the interface for custom type converters
+// This matches the interface in pkg/types to avoid circular dependencies
+type CustomConverter interface {
+	ToAttributeValue(value any) (types.AttributeValue, error)
+	FromAttributeValue(av types.AttributeValue, target any) error
+}
+
+// ConverterLookup provides access to registered custom converters
+type ConverterLookup interface {
+	HasCustomConverter(typ reflect.Type) bool
+	ToAttributeValue(value any) (types.AttributeValue, error)
+}
+
 // Builder compiles expressions for DynamoDB operations
 type Builder struct {
 	// Expression components
@@ -147,14 +160,28 @@ type Builder struct {
 	// Counters for placeholder generation
 	nameCounter  int
 	valueCounter int
+
+	// Custom converter support
+	converter ConverterLookup
 }
 
-// NewBuilder creates a new expression builder
+// NewBuilder creates a new expression builder without custom converter support
 func NewBuilder() *Builder {
 	return &Builder{
 		names:             make(map[string]string),
 		values:            make(map[string]types.AttributeValue),
 		updateExpressions: make(map[string][]string),
+		converter:         nil,
+	}
+}
+
+// NewBuilderWithConverter creates a new expression builder with custom converter support
+func NewBuilderWithConverter(converter ConverterLookup) *Builder {
+	return &Builder{
+		names:             make(map[string]string),
+		values:            make(map[string]types.AttributeValue),
+		updateExpressions: make(map[string][]string),
+		converter:         converter,
 	}
 }
 
@@ -366,6 +393,9 @@ func (b *Builder) Clone() *Builder {
 	clone.nameCounter = b.nameCounter
 	clone.valueCounter = b.valueCounter
 
+	// Preserve custom converter reference
+	clone.converter = b.converter
+
 	return clone
 }
 
@@ -546,7 +576,25 @@ func (b *Builder) addValueSecure(value any) string {
 	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
 
 	// Convert value to AttributeValue securely
-	av, err := ConvertToAttributeValueSecure(value)
+	var av types.AttributeValue
+	var err error
+
+	// First, check if we have a custom converter registered for this type
+	if b.converter != nil && value != nil {
+		valueType := reflect.TypeOf(value)
+		if b.converter.HasCustomConverter(valueType) {
+			// Use custom converter
+			av, err = b.converter.ToAttributeValue(value)
+			if err == nil {
+				b.values[placeholder] = av
+				return placeholder
+			}
+			// If custom converter fails, fall through to default conversion
+		}
+	}
+
+	// Fall back to default conversion
+	av, err = ConvertToAttributeValueSecure(value)
 	if err != nil {
 		// SECURITY: Store as NULL for safety without logging details
 		av = &types.AttributeValueMemberNULL{Value: true}

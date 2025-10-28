@@ -219,7 +219,7 @@ func (db *DB) Model(model any) core.Query {
 		db:         db,
 		model:      model,
 		ctx:        ctx,
-		builder:    expr.NewBuilder(),
+		builder:    expr.NewBuilderWithConverter(db.converter),
 		conditions: make([]condition, 0, 4), // Pre-allocate for typical use case
 	}
 }
@@ -571,7 +571,7 @@ func (q *query) OrFilterGroup(fn func(q core.Query)) core.Query {
 
 func (q *query) addGroup(logicalOp string, fn func(q core.Query)) {
 	// Create a new sub-query and builder for the group
-	subBuilder := expr.NewBuilder()
+	subBuilder := expr.NewBuilderWithConverter(q.db.converter)
 	subQuery := &query{
 		db:      q.db,
 		model:   q.model,
@@ -1105,7 +1105,7 @@ func (q *query) BatchGet(keys []any, dest any) error {
 
 	// Add projection if specified
 	if len(q.fields) > 0 {
-		builder := expr.NewBuilder()
+		builder := expr.NewBuilderWithConverter(q.db.converter)
 		builder.AddProjection(q.fields...)
 		components := builder.Build()
 
@@ -1555,7 +1555,7 @@ func (q *query) getItem(metadata *model.Metadata, pk map[string]any, dest any) e
 
 	// Add projection expression if fields are specified
 	if len(q.fields) > 0 {
-		builder := expr.NewBuilder()
+		builder := expr.NewBuilderWithConverter(q.db.converter)
 		builder.AddProjection(q.fields...)
 		components := builder.Build()
 
@@ -1713,7 +1713,7 @@ func (q *query) putItem(metadata *model.Metadata) error {
 
 	// Add condition to ensure item doesn't already exist
 	pkField := metadata.PrimaryKey.PartitionKey
-	builder := expr.NewBuilder()
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 	if err := builder.AddConditionExpression(pkField.DBName, "NOT_EXISTS", nil); err != nil {
 		return fmt.Errorf("failed to add partition key condition: %w", err)
 	}
@@ -1847,7 +1847,7 @@ func isConditionalCheckFailedException(err error) bool {
 
 // executeQuery performs a DynamoDB Query operation
 func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
-	builder := expr.NewBuilder()
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 	if q.builder != nil {
 		builder = q.builder.Clone()
 	}
@@ -1958,7 +1958,7 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 	// Use the existing builder from the query to preserve Filter() conditions
 	builder := q.builder
 	if builder == nil {
-		builder = expr.NewBuilder()
+		builder = expr.NewBuilderWithConverter(q.db.converter)
 	}
 
 	// Add filter conditions from parameters (these come from Where() conditions)
@@ -2129,7 +2129,7 @@ func (q *query) unmarshalItems(items []map[string]types.AttributeValue, dest any
 
 // executeQueryCount performs a DynamoDB Query operation to count items
 func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) (int64, error) {
-	builder := expr.NewBuilder()
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 	if q.builder != nil {
 		builder = q.builder.Clone()
 	}
@@ -2212,7 +2212,7 @@ func (q *query) executeScanCount(metadata *model.Metadata, filterConditions []co
 	// Use the existing builder from the query to preserve Filter() conditions
 	builder := q.builder
 	if builder == nil {
-		builder = expr.NewBuilder()
+		builder = expr.NewBuilderWithConverter(q.db.converter)
 	}
 
 	// Add filter conditions from parameters (these come from Where() conditions)
@@ -2306,8 +2306,8 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		keyMap[metadata.PrimaryKey.SortKey.DBName] = av
 	}
 
-	// Build update expression
-	builder := expr.NewBuilder()
+	// Build update expression with custom converter support
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 
 	modelValue := reflect.ValueOf(q.model)
 	if modelValue.Kind() == reflect.Ptr {
@@ -2434,7 +2434,7 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 	}
 
 	// Add condition expression if we have additional conditions
-	builder := expr.NewBuilder()
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 	hasConditions := false
 
 	// Check for version field condition
@@ -2627,7 +2627,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 	if len(keyConditions) > 0 {
 		// Use Query operation
-		builder := expr.NewBuilder()
+		builder := expr.NewBuilderWithConverter(q.db.converter)
 
 		// Add key conditions
 		for _, cond := range keyConditions {
@@ -2713,7 +2713,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		lastEvaluatedKey = output.LastEvaluatedKey
 	} else {
 		// Use Scan operation
-		builder := expr.NewBuilder()
+		builder := expr.NewBuilderWithConverter(q.db.converter)
 
 		// Add filter conditions
 		for _, cond := range filterConditions {
@@ -2967,7 +2967,7 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 
 // executeScanSegment executes a scan for a specific segment
 func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegments int32) ([]map[string]types.AttributeValue, error) {
-	builder := expr.NewBuilder()
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 
 	// Add filter conditions
 	var filterConditions []condition

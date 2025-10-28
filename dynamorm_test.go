@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	_ "unsafe"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -24,7 +26,6 @@ import (
 	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 	"github.com/stretchr/testify/require"
-	_ "unsafe"
 )
 
 //go:linkname sessionConfigLoadFunc github.com/pay-theory/dynamorm/pkg/session.configLoadFunc
@@ -85,10 +86,8 @@ func newCapturingHTTPClient(responses map[string]string) *capturingHTTPClient {
 		"DynamoDB_20120810.GetItem": {{body: `{"Item":null}`}},
 	}
 
-	if responses != nil {
-		for k, v := range responses {
-			defaults[k] = []stubbedResponse{{body: v}}
-		}
+	for k, v := range responses {
+		defaults[k] = []stubbedResponse{{body: v}}
 	}
 
 	return &capturingHTTPClient{
