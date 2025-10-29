@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.34] - 2025-10-29
+
+### Fixed
+- **[CRITICAL]** Custom converters now properly invoked during `Update()` operations
+  - Security validation was rejecting custom struct types before converter check
+  - Fixed by checking for custom converters BEFORE security validation
+  - Custom types with registered converters now bypass security validation (converters handle their own validation)
+  - Removed silent NULL fallbacks - validation/conversion failures now panic with clear error messages
+- Field name validation in `Update()` - unknown field names now return clear error messages instead of silently skipping
+
 ## [1.0.33] - 2025-10-28
 
 ### Added
+- Support for legacy snake_case naming convention alongside default camelCase:
+  - New `naming:snake_case` struct tag to opt-in to snake_case attribute names
+  - Automatic conversion of Go field names to snake_case (e.g., `FirstName` → `first_name`)
+  - Smart acronym handling in snake_case conversion (e.g., `UserID` → `user_id`, `URLValue` → `url_value`)
+  - Per-model naming convention detection and validation
+  - Both naming conventions can coexist in the same application
+  - Integration tests demonstrating mixed convention usage
 - `OrCondition` method to UpdateBuilder for OR logic in conditional expressions:
   - Enables complex business rules like rate limiting with privilege checks
   - Supports mixing AND/OR conditions with left-to-right evaluation

@@ -563,15 +563,6 @@ func (b *Builder) isReservedWord(word string) bool {
 
 // addValueSecure adds an attribute value with security validation
 func (b *Builder) addValueSecure(value any) string {
-	// Security validation
-	if err := validation.ValidateValue(value); err != nil {
-		// SECURITY: Return safe placeholder without logging value details
-		b.valueCounter++
-		placeholder := fmt.Sprintf(":invalid%d", b.valueCounter)
-		b.values[placeholder] = &types.AttributeValueMemberNULL{Value: true}
-		return placeholder
-	}
-
 	b.valueCounter++
 	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
 
@@ -579,25 +570,32 @@ func (b *Builder) addValueSecure(value any) string {
 	var av types.AttributeValue
 	var err error
 
-	// First, check if we have a custom converter registered for this type
+	// CRITICAL: Check for custom converter FIRST, before security validation
+	// Custom converters handle their own validation and marshaling
 	if b.converter != nil && value != nil {
 		valueType := reflect.TypeOf(value)
 		if b.converter.HasCustomConverter(valueType) {
-			// Use custom converter
+			// Use custom converter - bypass security validation for custom types
 			av, err = b.converter.ToAttributeValue(value)
-			if err == nil {
-				b.values[placeholder] = av
-				return placeholder
+			if err != nil {
+				// Custom converter failed - this is a real error, return NULL
+				av = &types.AttributeValueMemberNULL{Value: true}
 			}
-			// If custom converter fails, fall through to default conversion
+			b.values[placeholder] = av
+			return placeholder
 		}
 	}
 
-	// Fall back to default conversion
+	// Security validation for non-custom types
+	if err := validation.ValidateValue(value); err != nil {
+		// Don't silently convert to NULL - this hides bugs
+		panic(fmt.Sprintf("DynamORM: Invalid value type %T failed security validation: %v", value, err))
+	}
+
+	// Convert using default conversion
 	av, err = ConvertToAttributeValueSecure(value)
 	if err != nil {
-		// SECURITY: Store as NULL for safety without logging details
-		av = &types.AttributeValueMemberNULL{Value: true}
+		panic(fmt.Sprintf("DynamORM: Failed to convert value type %T: %v", value, err))
 	}
 
 	b.values[placeholder] = av

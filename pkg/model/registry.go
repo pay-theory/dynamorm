@@ -91,16 +91,17 @@ func (r *Registry) GetMetadataByTable(tableName string) (*Metadata, error) {
 
 // Metadata holds all metadata for a model
 type Metadata struct {
-	Type           reflect.Type
-	TableName      string
-	PrimaryKey     *KeySchema
-	Indexes        []IndexSchema
-	Fields         map[string]*FieldMetadata
-	FieldsByDBName map[string]*FieldMetadata
-	VersionField   *FieldMetadata
-	TTLField       *FieldMetadata
-	CreatedAtField *FieldMetadata
-	UpdatedAtField *FieldMetadata
+	Type             reflect.Type
+	TableName        string
+	NamingConvention naming.Convention
+	PrimaryKey       *KeySchema
+	Indexes          []IndexSchema
+	Fields           map[string]*FieldMetadata
+	FieldsByDBName   map[string]*FieldMetadata
+	VersionField     *FieldMetadata
+	TTLField         *FieldMetadata
+	CreatedAtField   *FieldMetadata
+	UpdatedAtField   *FieldMetadata
 }
 
 // KeySchema represents a primary key or index key schema
@@ -188,12 +189,16 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 		tableName = getTableName(modelType)
 	}
 
+	// Detect naming convention from struct tags
+	convention := detectNamingConvention(modelType)
+
 	metadata := &Metadata{
-		Type:           modelType,
-		TableName:      tableName,
-		Fields:         make(map[string]*FieldMetadata),
-		FieldsByDBName: make(map[string]*FieldMetadata),
-		Indexes:        make([]IndexSchema, 0),
+		Type:             modelType,
+		TableName:        tableName,
+		NamingConvention: convention,
+		Fields:           make(map[string]*FieldMetadata),
+		FieldsByDBName:   make(map[string]*FieldMetadata),
+		Indexes:          make([]IndexSchema, 0),
 	}
 
 	indexMap := make(map[string]*IndexSchema)
@@ -244,7 +249,7 @@ func parseFields(modelType reflect.Type, metadata *Metadata, indexMap map[string
 		}
 
 		// Parse regular field
-		fieldMeta, err := parseFieldMetadata(field, currentPath)
+		fieldMeta, err := parseFieldMetadata(field, currentPath, metadata.NamingConvention)
 		if err != nil {
 			return fmt.Errorf("field validation failed: %w", err)
 		}
@@ -338,11 +343,11 @@ func parseFields(modelType reflect.Type, metadata *Metadata, indexMap map[string
 }
 
 // parseFieldMetadata parses metadata for a single field
-func parseFieldMetadata(field reflect.StructField, indexPath []int) (*FieldMetadata, error) {
+func parseFieldMetadata(field reflect.StructField, indexPath []int, convention naming.Convention) (*FieldMetadata, error) {
 	meta := &FieldMetadata{
 		Name:      field.Name,
 		Type:      field.Type,
-		DBName:    naming.DefaultAttrName(field.Name),
+		DBName:    naming.ConvertAttrName(field.Name, convention),
 		Index:     indexPath[len(indexPath)-1], // Keep for backward compatibility
 		IndexPath: indexPath,
 		Tags:      make(map[string]string),
@@ -443,7 +448,7 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int) (*FieldMetad
 		return nil, err
 	}
 
-	if err := naming.ValidateAttrName(meta.DBName); err != nil {
+	if err := naming.ValidateAttrName(meta.DBName, convention); err != nil {
 		return nil, fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
 	}
 
@@ -591,6 +596,38 @@ func splitTags(tag string) []string {
 	}
 
 	return parts
+}
+
+// detectNamingConvention scans struct fields for a naming convention tag.
+// It looks for a field (typically blank identifier _) with tag `dynamorm:"naming:snake_case"`.
+// Returns CamelCase (default) if no naming tag is found.
+func detectNamingConvention(modelType reflect.Type) naming.Convention {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		tag := field.Tag.Get("dynamorm")
+
+		if tag == "" {
+			continue
+		}
+
+		// Look for naming:snake_case or naming:camel_case
+		parts := strings.Split(tag, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "naming:") {
+				convention := strings.TrimPrefix(part, "naming:")
+				switch convention {
+				case "snake_case":
+					return naming.SnakeCase
+				case "camel_case", "camelCase":
+					return naming.CamelCase
+				}
+			}
+		}
+	}
+
+	// Default to CamelCase
+	return naming.CamelCase
 }
 
 // isStandaloneTag checks if the string starts with a standalone tag (not an index modifier)

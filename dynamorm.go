@@ -2307,12 +2307,15 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	}
 
 	// Build update expression with custom converter support
+	fmt.Printf("🔍 DYNAMORM UPDATE: q.db=%T, q.db.converter=%p\n", q.db, q.db.converter)
 	builder := expr.NewBuilderWithConverter(q.db.converter)
+	fmt.Printf("🔍 DYNAMORM UPDATE: Builder created with converter=%p\n", builder)
 
 	modelValue := reflect.ValueOf(q.model)
 	if modelValue.Kind() == reflect.Ptr {
 		modelValue = modelValue.Elem()
 	}
+	fmt.Printf("🔍 DYNAMORM UPDATE: Model type=%v\n", modelValue.Type())
 
 	// Determine which fields to update
 	fieldsToUpdate := fields
@@ -2331,13 +2334,18 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	}
 
 	// Build SET expressions
+	fmt.Printf("🔍 DYNAMORM UPDATE: Fields to update: %v\n", fieldsToUpdate)
 	for _, fieldName := range fieldsToUpdate {
 		fieldMeta, exists := lookupField(metadata, fieldName)
 		if !exists {
-			continue
+			// Don't silently skip - return error for unknown fields
+			fmt.Printf("❌ DYNAMORM UPDATE: Field '%s' not found in metadata\n", fieldName)
+			return fmt.Errorf("field '%s' not found in model metadata (use Go field name or DB attribute name)", fieldName)
 		}
 
 		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		fmt.Printf("🔍 DYNAMORM UPDATE: Field '%s' -> DB name '%s', value type=%T\n",
+			fieldName, fieldMeta.DBName, fieldValue.Interface())
 
 		// Handle special fields
 		if fieldMeta.IsUpdatedAt {
@@ -2349,6 +2357,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		} else {
 			// Regular field update
 			value := fieldValue.Interface()
+			fmt.Printf("🔍 DYNAMORM UPDATE: Calling AddUpdateSet('%s', %T)\n", fieldMeta.DBName, value)
 			builder.AddUpdateSet(fieldMeta.DBName, value)
 		}
 	}
