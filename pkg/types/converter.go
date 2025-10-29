@@ -48,7 +48,16 @@ func (c *Converter) RegisterConverter(typ reflect.Type, converter CustomConverte
 
 // HasCustomConverter returns true if a custom converter exists for the given type.
 func (c *Converter) HasCustomConverter(typ reflect.Type) bool {
-	_, ok := c.lookupConverter(typ)
+	converter, ok := c.lookupConverter(typ)
+	fmt.Printf("🔍 CONVERTER.HasCustomConverter(%v): found=%v, converter=%p\n", typ, ok, converter)
+	if c != nil {
+		c.mu.RLock()
+		fmt.Printf("🔍 CONVERTER: Total registered converters: %d\n", len(c.customConverters))
+		for regType := range c.customConverters {
+			fmt.Printf("    - %v\n", regType)
+		}
+		c.mu.RUnlock()
+	}
 	return ok
 }
 

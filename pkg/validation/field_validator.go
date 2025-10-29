@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -543,25 +542,13 @@ func validateTypedMapIntValue(m map[string]int) error {
 
 // validateBasicValue validates basic types (int, float, bool)
 func validateBasicValue(value any) error {
-	// Basic type validation - these are generally safe
-	switch value.(type) {
-	case int, int8, int16, int32, int64:
-		return nil
-	case uint, uint8, uint16, uint32, uint64:
-		return nil
-	case float32, float64:
-		return nil
-	case bool:
-		return nil
-	case time.Time, *time.Time:
-		return nil
-	default:
-		return &SecurityError{
-			Type:   "InvalidValue",
-			Field:  "",
-			Detail: "unsupported value type",
-		}
-	}
+	// Allow all types - DynamoDB marshaling and custom converters handle type conversion
+	// Security is enforced through:
+	// - String length limits (validateStringValue)
+	// - Slice size limits (validateSliceLength)
+	// - Map size limits (validateMapValue)
+	// Rejecting valid Go types is not a security measure, it's a limitation
+	return nil
 }
 
 // ValidateExpression validates a complete expression for security

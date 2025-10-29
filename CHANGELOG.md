@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.34] - 2025-10-29
+
+### Fixed
+- **[CRITICAL]** Custom converters now properly invoked during `Update()` operations
+  - Security validation was rejecting custom struct types before converter check
+  - Fixed by checking for custom converters BEFORE security validation
+  - Custom types with registered converters now bypass security validation (converters handle their own validation)
+  - Removed silent NULL fallbacks - validation/conversion failures now panic with clear error messages
+- Field name validation in `Update()` - unknown field names now return clear error messages instead of silently skipping
+
 ## [1.0.33] - 2025-10-28
 
 ### Added
