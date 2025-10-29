@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Support for legacy snake_case naming convention alongside default camelCase:
+  - New `naming:snake_case` struct tag to opt-in to snake_case attribute names
+  - Automatic conversion of Go field names to snake_case (e.g., `FirstName` → `first_name`)
+  - Smart acronym handling in snake_case conversion (e.g., `UserID` → `user_id`, `URLValue` → `url_value`)
+  - Per-model naming convention detection and validation
+  - Both naming conventions can coexist in the same application
+  - Integration tests demonstrating mixed convention usage
 - `OrCondition` method to UpdateBuilder for OR logic in conditional expressions:
   - Enables complex business rules like rate limiting with privilege checks
   - Supports mixing AND/OR conditions with left-to-right evaluation

@@ -399,18 +399,21 @@ func (c *Converter) mapToStruct(m map[string]types.AttributeValue, target reflec
 
 	targetType := target.Type()
 
+	// Detect naming convention from struct tags
+	convention := detectNamingConvention(targetType)
+
 	for i := 0; i < targetType.NumField(); i++ {
 		field := targetType.Field(i)
 		if !field.IsExported() {
 			continue
 		}
 
-		attrName, skip := naming.ResolveAttrName(field)
+		attrName, skip := naming.ResolveAttrNameWithConvention(field, convention)
 		if skip {
 			continue
 		}
 
-		if err := naming.ValidateAttrName(attrName); err != nil {
+		if err := naming.ValidateAttrName(attrName, convention); err != nil {
 			return fmt.Errorf("field %s: %w", field.Name, err)
 		}
 
@@ -534,4 +537,62 @@ func (c *Converter) ConvertToSet(slice any, isSet bool) (types.AttributeValue, e
 	}
 
 	return nil, fmt.Errorf("%w: unsupported set type", errors.ErrUnsupportedType)
+}
+
+// detectNamingConvention scans struct fields for a naming convention tag.
+// It looks for a field with tag `dynamorm:"naming:snake_case"`.
+// Returns CamelCase (default) if no naming tag is found.
+func detectNamingConvention(modelType reflect.Type) naming.Convention {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		tag := field.Tag.Get("dynamorm")
+
+		if tag == "" {
+			continue
+		}
+
+		// Look for naming:snake_case or naming:camel_case
+		parts := splitTag(tag)
+		for _, part := range parts {
+			if len(part) > 7 && part[:7] == "naming:" {
+				convention := part[7:]
+				switch convention {
+				case "snake_case":
+					return naming.SnakeCase
+				case "camel_case", "camelCase":
+					return naming.CamelCase
+				}
+			}
+		}
+	}
+
+	// Default to CamelCase
+	return naming.CamelCase
+}
+
+// splitTag splits a tag string by commas
+func splitTag(tag string) []string {
+	if tag == "" {
+		return nil
+	}
+
+	var parts []string
+	current := ""
+
+	for _, ch := range tag {
+		if ch == ',' {
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+		} else if ch != ' ' && ch != '\t' {
+			current += string(ch)
+		}
+	}
+
+	if current != "" {
+		parts = append(parts, current)
+	}
+
+	return parts
 }
