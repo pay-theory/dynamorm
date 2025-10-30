@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	"github.com/pay-theory/dynamorm/pkg/naming"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
@@ -20,6 +21,8 @@ type Marshaler struct {
 	cache sync.Map // map[reflect.Type]*structMarshaler
 	// Optional custom converter registry shared with DB
 	converter *pkgTypes.Converter
+	// Naming convention for nested structs (defaults to CamelCase)
+	namingConvention naming.Convention
 }
 
 // structMarshaler contains cached information for marshaling a specific struct type
@@ -78,6 +81,11 @@ func (m *Marshaler) MarshalItem(model any, metadata *model.Metadata) (map[string
 
 	if v.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("model must be a struct or pointer to struct")
+	}
+
+	// Set naming convention from metadata for nested struct marshaling
+	if metadata != nil {
+		m.namingConvention = metadata.NamingConvention
 	}
 
 	// Get or create cached marshaler
@@ -426,22 +434,23 @@ func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, 
 				return nil, fmt.Errorf("struct field %s: %w", field.Name, err)
 			}
 
-			// Parse JSON tag to get the field name
-			fieldName := field.Name
+			// Use same logic as top-level fields: naming convention first, then override with json tag if present
+			fieldName := naming.ConvertAttrName(field.Name, m.namingConvention)
+
+			// Check for json tag override
 			if jsonTag := field.Tag.Get("json"); jsonTag != "" && jsonTag != "-" {
-				// Handle json tag with options like "fieldname,omitempty"
-				if commaIdx := 0; commaIdx < len(jsonTag) {
-					for j, c := range jsonTag {
-						if c == ',' {
-							commaIdx = j
-							break
-						}
+				// Parse json tag, handling options like "fieldname,omitempty"
+				commaIdx := -1
+				for j, c := range jsonTag {
+					if c == ',' {
+						commaIdx = j
+						break
 					}
-					if commaIdx > 0 {
-						fieldName = jsonTag[:commaIdx]
-					} else if jsonTag != "" {
-						fieldName = jsonTag
-					}
+				}
+				if commaIdx > 0 {
+					fieldName = jsonTag[:commaIdx]
+				} else {
+					fieldName = jsonTag
 				}
 			}
 
