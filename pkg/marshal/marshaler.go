@@ -426,8 +426,26 @@ func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, 
 				return nil, fmt.Errorf("struct field %s: %w", field.Name, err)
 			}
 
-			// Use field name as key (could be enhanced with tag parsing)
-			structMap[field.Name] = av
+			// Parse JSON tag to get the field name
+			fieldName := field.Name
+			if jsonTag := field.Tag.Get("json"); jsonTag != "" && jsonTag != "-" {
+				// Handle json tag with options like "fieldname,omitempty"
+				if commaIdx := 0; commaIdx < len(jsonTag) {
+					for j, c := range jsonTag {
+						if c == ',' {
+							commaIdx = j
+							break
+						}
+					}
+					if commaIdx > 0 {
+						fieldName = jsonTag[:commaIdx]
+					} else if jsonTag != "" {
+						fieldName = jsonTag
+					}
+				}
+			}
+
+			structMap[fieldName] = av
 		}
 		return &types.AttributeValueMemberM{Value: structMap}, nil
 
