@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.36] - 2025-11-09
+
+### Fixed
+- Removed verbose debug logging from `Model.Update()` and the custom converter lookup so production logs stay clean without changing behavior.
+
+## [1.0.35] - 2025-10-31
+
+### Fixed
+- Nested structs flagged with `dynamorm:"json"` now apply the active naming convention (camelCase or snake_case) before honoring explicit `json` tags, keeping attribute names consistent at every level.
+
 ## [1.0.34] - 2025-10-29
 
 ### Fixed
@@ -179,7 +189,9 @@ See [Release Notes v1.0.1](docs/releases/v1.0.1-interface-improvements.md) for d
 - Expression builder
 - Basic documentation
 
-[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.36...HEAD
+[1.0.36]: https://github.com/dynamorm/dynamorm/compare/v1.0.35...v1.0.36
+[1.0.35]: https://github.com/dynamorm/dynamorm/compare/v1.0.34...v1.0.35
 [1.0.9]: https://github.com/dynamorm/dynamorm/compare/v1.0.3...v1.0.9
 [1.0.3]: https://github.com/dynamorm/dynamorm/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/dynamorm/dynamorm/compare/v1.0.1...v1.0.2
