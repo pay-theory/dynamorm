@@ -780,6 +780,17 @@ func newPattern() {
 6. **PREFER** transactions for multi-item consistency requirements
 7. **PREFER** batch operations for multiple items of same type
 
+## Demo Service (Phase 4 Helpers)
+
+Need a runnable example that strings the newest helpers together? `cmd/dynamorm-service` boots from the canonical quick-start snippet (README.md §§42-118) and layers on:
+
+- **Config plumbing (README.md §§121-206):** `DYNAMORM_RUNTIME_MODE` toggles `NewLambdaOptimized`, `New`, or local endpoints so you can mimic Lambda, standard, or DynamoDB Local setups without changing code.
+- **Conditional guards (README.md §§385-444):** Insert-only creates, optimistic updates, and guarded deletes all surface `customerrors.ErrConditionFailed` exactly like the docs describe.
+- **Transaction builder (README.md §§588-620):** Dual-writes use `db.Transact()` plus the context-aware `TransactWrite()` helper, logging `customerrors.TransactionError` metadata for observability.
+- **Retry-aware BatchGet (README.md §§445-541, 509-537):** The fluent builder example wires `core.RetryPolicy`, progress callbacks, chunk-level error hooks, and `dynamorm.NewKeyPair` key construction (per docs/archive/struct-definition-guide.md:393).
+
+Run it with `go run ./cmd/dynamorm-service` (standard mode) or set `DYNAMORM_RUNTIME_MODE=lambda|local` to exercise the other init paths. When sharing updates, link teammates to `docs/whats-new.md` for the Phase 4 summary outlining why these helpers are required across new services.
+
 ## API Reference
 
 <!-- AI Training: Semantic API understanding -->
