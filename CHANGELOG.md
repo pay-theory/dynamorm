@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- First-class conditional write helpers on `core.Query`: `IfNotExists()`, `IfExists()`, `WithCondition()`, and `WithConditionExpression()` make it trivial to express DynamoDB condition checks without dropping to the raw SDK.
+- Documentation now includes canonical examples for conditional creates, updates, and deletes along with guidance on handling `ErrConditionFailed`.
+
+### Changed
+- Create/Update/Delete paths in both the high-level `dynamorm` package and the modular `pkg/query` builder now share a common expression compiler, allowing query-level conditions and advanced expressions to flow through every write operation.
+- `pkg/query` executors translate DynamoDB `ConditionalCheckFailedException` responses into `customerrors.ErrConditionFailed`, enabling consistent conflict handling via `errors.Is`.
+
 ## [1.0.36] - 2025-11-09
 
 ### Fixed

@@ -497,13 +497,8 @@ func TestQueryCreatePopulatesTimestampsAndCondition(t *testing.T) {
 
 	payload := req.Payload
 
-	condExpr, ok := payload["ConditionExpression"].(string)
-	require.True(t, ok)
-	require.Contains(t, condExpr, "attribute_not_exists")
-
-	names, ok := payload["ExpressionAttributeNames"].(map[string]any)
-	require.True(t, ok)
-	require.NotEmpty(t, names)
+	_, hasCond := payload["ConditionExpression"]
+	require.False(t, hasCond, "Create should not add conditions unless requested")
 
 	item, ok := payload["Item"].(map[string]any)
 	require.True(t, ok)

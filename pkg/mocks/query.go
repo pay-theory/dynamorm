@@ -59,6 +59,30 @@ func (m *MockQuery) OrFilterGroup(fn func(core.Query)) core.Query {
 	return args.Get(0).(core.Query)
 }
 
+// IfNotExists adds a condition that the item must not exist
+func (m *MockQuery) IfNotExists() core.Query {
+	args := m.Called()
+	return args.Get(0).(core.Query)
+}
+
+// IfExists adds a condition that the item must exist
+func (m *MockQuery) IfExists() core.Query {
+	args := m.Called()
+	return args.Get(0).(core.Query)
+}
+
+// WithCondition adds a generic condition expression
+func (m *MockQuery) WithCondition(field, operator string, value any) core.Query {
+	args := m.Called(field, operator, value)
+	return args.Get(0).(core.Query)
+}
+
+// WithConditionExpression adds a raw condition expression
+func (m *MockQuery) WithConditionExpression(expr string, values map[string]any) core.Query {
+	args := m.Called(expr, values)
+	return args.Get(0).(core.Query)
+}
+
 // OrderBy sets the sort order
 func (m *MockQuery) OrderBy(field string, order string) core.Query {
 	args := m.Called(field, order)

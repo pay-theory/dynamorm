@@ -117,6 +117,7 @@ func (c TestCustomIDConverter) FromAttributeValue(av types.AttributeValue, targe
 type TestModelWithCustomID struct {
 	ID       string       `dynamorm:"pk"`
 	CustomID TestCustomID `dynamorm:"attr:custom_id"`
+	_        struct{}     `dynamorm:"naming:snake_case"`
 }
 
 // TestCustomConverterWithUpdate tests the bug fix for custom converters being ignored during Update()

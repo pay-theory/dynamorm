@@ -78,6 +78,14 @@ type Query interface {
 	OrFilter(field string, op string, value any) Query
 	FilterGroup(func(Query)) Query
 	OrFilterGroup(func(Query)) Query
+	// IfNotExists ensures the target item does not already exist before a write
+	IfNotExists() Query
+	// IfExists ensures the target item exists before executing a write
+	IfExists() Query
+	// WithCondition appends a simple condition expression for write operations
+	WithCondition(field, operator string, value any) Query
+	// WithConditionExpression adds a raw condition expression with placeholder values
+	WithConditionExpression(expr string, values map[string]any) Query
 	OrderBy(field string, order string) Query
 	Limit(limit int) Query
 

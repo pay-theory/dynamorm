@@ -119,9 +119,9 @@ func TestCreateTable(t *testing.T) {
 		for _, gsi := range desc.GlobalSecondaryIndexes {
 			if *gsi.IndexName == "customer-index" {
 				hasCustomerIndex = true
-				assert.Equal(t, "CustomerID", *gsi.KeySchema[0].AttributeName)
+				assert.Equal(t, "customerID", *gsi.KeySchema[0].AttributeName)
 				assert.Equal(t, types.KeyTypeHash, gsi.KeySchema[0].KeyType)
-				assert.Equal(t, "OrderDate", *gsi.KeySchema[1].AttributeName)
+				assert.Equal(t, "orderDate", *gsi.KeySchema[1].AttributeName)
 				assert.Equal(t, types.KeyTypeRange, gsi.KeySchema[1].KeyType)
 			}
 			if *gsi.IndexName == "status-index" {

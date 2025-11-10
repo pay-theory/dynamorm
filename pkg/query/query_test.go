@@ -1,8 +1,10 @@
 package query_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/query"
@@ -81,6 +83,33 @@ func (m *attrAwareMetadata) AttributeMetadata(field string) *core.AttributeMetad
 
 type mockExecutor struct {
 	mock.Mock
+}
+
+type recordingExecutor struct {
+	lastCompiled *core.CompiledQuery
+	lastItem     map[string]types.AttributeValue
+	lastKey      map[string]types.AttributeValue
+}
+
+func (r *recordingExecutor) ExecuteQuery(*core.CompiledQuery, any) error { return nil }
+func (r *recordingExecutor) ExecuteScan(*core.CompiledQuery, any) error  { return nil }
+
+func (r *recordingExecutor) ExecutePutItem(input *core.CompiledQuery, item map[string]types.AttributeValue) error {
+	r.lastCompiled = input
+	r.lastItem = item
+	return nil
+}
+
+func (r *recordingExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	r.lastCompiled = input
+	r.lastKey = key
+	return nil
+}
+
+func (r *recordingExecutor) ExecuteDeleteItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	r.lastCompiled = input
+	r.lastKey = key
+	return nil
 }
 
 type registryMetadataAdapter struct {
@@ -238,6 +267,131 @@ func TestQuery_Projection(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotEmpty(t, compiled.ProjectionExpression)
 	assert.Contains(t, compiled.ProjectionExpression, "#n")
+}
+
+func TestQuery_WriteConditions(t *testing.T) {
+	metadata := &mockMetadata{}
+
+	t.Run("create without helpers has no default condition", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#122"}
+		q := query.New(item, metadata, exec)
+
+		err := q.Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Equal(t, "", exec.lastCompiled.ConditionExpression)
+	})
+
+	t.Run("create ignores where clauses", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#122"}
+		q := query.New(item, metadata, exec)
+
+		err := q.Where("id", "=", "user#122").
+			Where("status", "=", "pending").
+			Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Equal(t, "", exec.lastCompiled.ConditionExpression)
+	})
+
+	t.Run("create with helpers", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#123", Status: "pending"}
+		q := query.New(item, metadata, exec)
+
+		err := q.IfNotExists().WithCondition("status", "=", "active").Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, "attribute_not_exists")
+
+		nameFound := false
+		for _, name := range exec.lastCompiled.ExpressionAttributeNames {
+			if name == "status" {
+				nameFound = true
+				break
+			}
+		}
+		assert.True(t, nameFound)
+
+		valueFound := false
+		for _, val := range exec.lastCompiled.ExpressionAttributeValues {
+			if member, ok := val.(*types.AttributeValueMemberS); ok && member.Value == "active" {
+				valueFound = true
+				break
+			}
+		}
+		assert.True(t, valueFound)
+	})
+
+	t.Run("create with raw expression", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#124"}
+		q := query.New(item, metadata, exec)
+
+		err := q.WithConditionExpression("attribute_exists(id) AND Status <> :inactive", map[string]any{
+			":inactive": "inactive",
+		}).Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Equal(t, "attribute_exists(id) AND Status <> :inactive", exec.lastCompiled.ConditionExpression)
+
+		val, ok := exec.lastCompiled.ExpressionAttributeValues[":inactive"].(*types.AttributeValueMemberS)
+		require.True(t, ok)
+		assert.Equal(t, "inactive", val.Value)
+	})
+
+	t.Run("raw expression maintains grouping", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#125"}
+		q := query.New(item, metadata, exec)
+
+		err := q.IfNotExists().
+			WithConditionExpression("attribute_exists(#pk) OR attribute_exists(GSI)", map[string]any{
+				":dummy": "value",
+			}).
+			Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, ") AND (")
+	})
+
+	t.Run("update with conditions", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#200", Status: "active", Data: "initial"}
+		q := query.New(item, metadata, exec)
+
+		err := q.Where("id", "=", item.ID).
+			Where("timestamp", "=", int64(1)).
+			WithCondition("status", "=", "active").
+			Update("Data")
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, "#")
+		foundStatusName := false
+		for placeholder, name := range exec.lastCompiled.ExpressionAttributeNames {
+			if strings.EqualFold(name, "status") {
+				assert.Contains(t, exec.lastCompiled.ConditionExpression, placeholder)
+				foundStatusName = true
+			}
+		}
+		assert.True(t, foundStatusName, "status field should be referenced in expression attribute names")
+	})
+
+	t.Run("delete with if exists", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#201", Timestamp: 42}
+		q := query.New(item, metadata, exec)
+
+		err := q.Where("id", "=", item.ID).
+			Where("timestamp", "=", item.Timestamp).
+			IfExists().
+			Delete()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, "attribute_exists")
+	})
 }
 
 func TestQuery_Pagination(t *testing.T) {

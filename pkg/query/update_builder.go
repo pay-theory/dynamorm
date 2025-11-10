@@ -272,20 +272,50 @@ func (ub *UpdateBuilder) Execute() error {
 
 	// Build the expression components
 	components := ub.expr.Build()
+	conditionExpr := components.ConditionExpression
+	exprAttrNames := components.ExpressionAttributeNames
+	if exprAttrNames == nil {
+		exprAttrNames = make(map[string]string)
+	}
+	exprAttrValues := components.ExpressionAttributeValues
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
+	}
+
+	queryCondExpr, queryCondNames, queryCondValues, err := ub.query.buildConditionExpression(false, false, false)
+	if err != nil {
+		return fmt.Errorf("failed to build query conditions: %w", err)
+	}
+	if queryCondExpr != "" {
+		if conditionExpr != "" {
+			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
+		} else {
+			conditionExpr = queryCondExpr
+		}
+	}
+	for k, v := range queryCondNames {
+		exprAttrNames[k] = v
+	}
+	for k, v := range queryCondValues {
+		if _, exists := exprAttrValues[k]; exists {
+			return fmt.Errorf("duplicate condition value placeholder: %s", k)
+		}
+		exprAttrValues[k] = v
+	}
 
 	// Compile the update query
 	compiled := &core.CompiledQuery{
 		Operation:                "UpdateItem",
 		TableName:                ub.query.metadata.TableName(),
 		UpdateExpression:         components.UpdateExpression,
-		ConditionExpression:      components.ConditionExpression,
-		ExpressionAttributeNames: components.ExpressionAttributeNames,
+		ConditionExpression:      conditionExpr,
+		ExpressionAttributeNames: exprAttrNames,
 		ReturnValues:             ub.returnValues,
 	}
 
 	// Only include ExpressionAttributeValues if it's not empty
-	if len(components.ExpressionAttributeValues) > 0 {
-		compiled.ExpressionAttributeValues = components.ExpressionAttributeValues
+	if len(exprAttrValues) > 0 {
+		compiled.ExpressionAttributeValues = exprAttrValues
 	}
 
 	// Convert key to AttributeValues
@@ -359,20 +389,50 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 
 	// Build the expression components
 	components := ub.expr.Build()
+	conditionExpr := components.ConditionExpression
+	exprAttrNames := components.ExpressionAttributeNames
+	if exprAttrNames == nil {
+		exprAttrNames = make(map[string]string)
+	}
+	exprAttrValues := components.ExpressionAttributeValues
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
+	}
+
+	queryCondExpr, queryCondNames, queryCondValues, err := ub.query.buildConditionExpression(false, false, false)
+	if err != nil {
+		return fmt.Errorf("failed to build query conditions: %w", err)
+	}
+	if queryCondExpr != "" {
+		if conditionExpr != "" {
+			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
+		} else {
+			conditionExpr = queryCondExpr
+		}
+	}
+	for k, v := range queryCondNames {
+		exprAttrNames[k] = v
+	}
+	for k, v := range queryCondValues {
+		if _, exists := exprAttrValues[k]; exists {
+			return fmt.Errorf("duplicate condition value placeholder: %s", k)
+		}
+		exprAttrValues[k] = v
+	}
 
 	// Compile the update query
 	compiled := &core.CompiledQuery{
 		Operation:                "UpdateItem",
 		TableName:                ub.query.metadata.TableName(),
 		UpdateExpression:         components.UpdateExpression,
-		ConditionExpression:      components.ConditionExpression,
-		ExpressionAttributeNames: components.ExpressionAttributeNames,
+		ConditionExpression:      conditionExpr,
+		ExpressionAttributeNames: exprAttrNames,
 		ReturnValues:             ub.returnValues,
 	}
 
 	// Only include ExpressionAttributeValues if it's not empty
-	if len(components.ExpressionAttributeValues) > 0 {
-		compiled.ExpressionAttributeValues = components.ExpressionAttributeValues
+	if len(exprAttrValues) > 0 {
+		compiled.ExpressionAttributeValues = exprAttrValues
 	}
 
 	// Convert key to AttributeValues

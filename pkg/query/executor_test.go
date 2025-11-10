@@ -4,9 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,6 +134,24 @@ func TestExecutePutItem(t *testing.T) {
 		assert.Equal(t, "attribute_not_exists(id)", *capturedInput.ConditionExpression)
 		assert.Equal(t, item, capturedInput.Item)
 	})
+
+	t.Run("conditional failure returns sentinel error", func(t *testing.T) {
+		mockClient := &MockDynamoDBClient{
+			PutItemFunc: func(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+				return nil, &types.ConditionalCheckFailedException{
+					Message: aws.String("condition failed"),
+				}
+			},
+		}
+
+		executor := NewExecutor(mockClient, ctx)
+		input := &core.CompiledQuery{TableName: "test-table"}
+		item := map[string]types.AttributeValue{"id": &types.AttributeValueMemberS{Value: "123"}}
+
+		err := executor.ExecutePutItem(input, item)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, customerrors.ErrConditionFailed)
+	})
 }
 
 func TestExecuteUpdateItem(t *testing.T) {
@@ -203,5 +223,21 @@ func TestExecuteDeleteItem(t *testing.T) {
 		assert.Equal(t, "test-table", *capturedInput.TableName)
 		assert.Equal(t, "attribute_exists(id)", *capturedInput.ConditionExpression)
 		assert.Equal(t, key, capturedInput.Key)
+	})
+
+	t.Run("conditional delete failure returns sentinel error", func(t *testing.T) {
+		mockClient := &MockDynamoDBClient{
+			DeleteItemFunc: func(ctx context.Context, params *dynamodb.DeleteItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+				return nil, &types.ConditionalCheckFailedException{Message: aws.String("cond fail")}
+			},
+		}
+
+		executor := NewExecutor(mockClient, ctx)
+		input := &core.CompiledQuery{TableName: "test-table"}
+		key := map[string]types.AttributeValue{"id": &types.AttributeValueMemberS{Value: "123"}}
+
+		err := executor.ExecuteDeleteItem(input, key)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, customerrors.ErrConditionFailed)
 	})
 }

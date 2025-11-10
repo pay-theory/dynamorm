@@ -16,17 +16,19 @@ import (
 
 // Query represents a DynamoDB query builder
 type Query struct {
-	model      any
-	conditions []Condition
-	filters    []Filter
-	rawFilters []RawFilter
-	index      string
-	limit      int
-	offset     *int
-	projection []string
-	orderBy    OrderBy
-	exclusive  map[string]types.AttributeValue
-	ctx        context.Context
+	model                   any
+	conditions              []Condition
+	writeConditions         []Condition
+	rawConditionExpressions []conditionExpression
+	filters                 []Filter
+	rawFilters              []RawFilter
+	index                   string
+	limit                   int
+	offset                  *int
+	projection              []string
+	orderBy                 OrderBy
+	exclusive               map[string]types.AttributeValue
+	ctx                     context.Context
 
 	// Internal state
 	metadata core.ModelMetadata
@@ -53,6 +55,11 @@ type Condition struct {
 	Value    any
 }
 
+type conditionExpression struct {
+	Expression string
+	Values     map[string]any
+}
+
 // normalizeCondition resolves a condition's field to its canonical DynamoDB attribute name
 // and returns the normalized condition along with the Go field name and DynamoDB attribute name.
 func (q *Query) normalizeCondition(cond Condition) (Condition, string, string) {
@@ -73,6 +80,165 @@ func (q *Query) normalizeCondition(cond Condition) (Condition, string, string) {
 	}
 
 	return normalized, goField, attrName
+}
+
+// addPrimaryKeyCondition appends a condition targeting the table primary key
+func (q *Query) addPrimaryKeyCondition(operator string) {
+	if q.metadata == nil {
+		q.recordBuilderError(fmt.Errorf("metadata is required for conditional helpers"))
+		return
+	}
+
+	primaryKey := q.metadata.PrimaryKey()
+	if primaryKey.PartitionKey == "" {
+		q.recordBuilderError(fmt.Errorf("partition key is required for conditional helpers"))
+		return
+	}
+
+	attrName := q.resolveAttributeName(primaryKey.PartitionKey)
+	q.writeConditions = append(q.writeConditions, Condition{
+		Field:    attrName,
+		Operator: operator,
+	})
+
+	if primaryKey.SortKey != "" && operator == "attribute_exists" {
+		// attribute_exists(sortKey) ensures full item presence for composite keys
+		sortAttr := q.resolveAttributeName(primaryKey.SortKey)
+		q.writeConditions = append(q.writeConditions, Condition{
+			Field:    sortAttr,
+			Operator: operator,
+		})
+	}
+}
+
+// resolveAttributeName maps a Go struct field to its DynamoDB attribute name
+func (q *Query) resolveAttributeName(field string) string {
+	if q.metadata == nil || field == "" {
+		return field
+	}
+
+	if meta := q.metadata.AttributeMetadata(field); meta != nil {
+		if meta.DynamoDBName != "" {
+			return meta.DynamoDBName
+		}
+		if meta.Name != "" {
+			return meta.Name
+		}
+	}
+	return field
+}
+
+func cloneConditionValues(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]any, len(values))
+	for k, v := range values {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func (q *Query) buildConditionExpression(includeWhereConditions bool, skipKeyConditions bool, defaultIfEmpty bool) (string, map[string]string, map[string]types.AttributeValue, error) {
+	builder := expr.NewBuilder()
+	hasCondition := false
+
+	addCondition := func(field, operator string, value any) error {
+		if err := builder.AddConditionExpression(field, operator, value); err != nil {
+			return err
+		}
+		hasCondition = true
+		return nil
+	}
+
+	for _, cond := range q.writeConditions {
+		if cond.Field == "" {
+			return "", nil, nil, fmt.Errorf("condition field cannot be empty")
+		}
+		if err := addCondition(cond.Field, cond.Operator, cond.Value); err != nil {
+			return "", nil, nil, fmt.Errorf("failed to add condition for %s: %w", cond.Field, err)
+		}
+	}
+
+	if includeWhereConditions {
+		if q.metadata == nil {
+			return "", nil, nil, fmt.Errorf("model metadata is required for conditional operations")
+		}
+		primaryKey := q.metadata.PrimaryKey()
+
+		for _, original := range q.conditions {
+			normalized, goField, attrName := q.normalizeCondition(original)
+			if skipKeyConditions && q.isKeyField(primaryKey, goField, attrName) {
+				continue
+			}
+			if err := addCondition(normalized.Field, normalized.Operator, normalized.Value); err != nil {
+				return "", nil, nil, fmt.Errorf("failed to add condition for %s: %w", normalized.Field, err)
+			}
+		}
+	}
+
+	if defaultIfEmpty && !hasCondition && len(q.rawConditionExpressions) == 0 {
+		if q.metadata == nil {
+			return "", nil, nil, fmt.Errorf("model metadata is required for conditional operations")
+		}
+		pk := q.metadata.PrimaryKey()
+		if pk.PartitionKey == "" {
+			return "", nil, nil, fmt.Errorf("partition key is required for default condition")
+		}
+		if err := addCondition(q.resolveAttributeName(pk.PartitionKey), "attribute_not_exists", nil); err != nil {
+			return "", nil, nil, fmt.Errorf("failed to add default condition: %w", err)
+		}
+	}
+
+	components := builder.Build()
+	conditionExpr := components.ConditionExpression
+	names := components.ExpressionAttributeNames
+	values := components.ExpressionAttributeValues
+
+	mergedExpr := conditionExpr
+	mergedValues := values
+
+	for _, raw := range q.rawConditionExpressions {
+		if raw.Expression == "" {
+			continue
+		}
+		if mergedExpr == "" {
+			mergedExpr = raw.Expression
+		} else {
+			mergedExpr = fmt.Sprintf("(%s) AND (%s)", mergedExpr, raw.Expression)
+		}
+		if len(raw.Values) > 0 {
+			if mergedValues == nil {
+				mergedValues = make(map[string]types.AttributeValue)
+			}
+			for key, val := range raw.Values {
+				if _, exists := mergedValues[key]; exists {
+					return "", nil, nil, fmt.Errorf("duplicate placeholder %s in condition expression", key)
+				}
+				av, err := expr.ConvertToAttributeValue(val)
+				if err != nil {
+					return "", nil, nil, fmt.Errorf("failed to convert condition value %s: %w", key, err)
+				}
+				mergedValues[key] = av
+			}
+		}
+	}
+
+	return mergedExpr, names, mergedValues, nil
+}
+
+func (q *Query) isKeyField(schema core.KeySchema, goField, attrName string) bool {
+	if schema.PartitionKey != "" {
+		if strings.EqualFold(goField, schema.PartitionKey) || strings.EqualFold(attrName, q.resolveAttributeName(schema.PartitionKey)) {
+			return true
+		}
+	}
+	if schema.SortKey != "" {
+		if strings.EqualFold(goField, schema.SortKey) || strings.EqualFold(attrName, q.resolveAttributeName(schema.SortKey)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Filter represents a filter expression
@@ -145,10 +311,12 @@ type BatchWriteItemExecutor interface {
 // New creates a new Query instance
 func New(model any, metadata core.ModelMetadata, executor QueryExecutor) *Query {
 	return &Query{
-		model:    model,
-		metadata: metadata,
-		executor: executor,
-		filters:  make([]Filter, 0),
+		model:                   model,
+		metadata:                metadata,
+		executor:                executor,
+		filters:                 make([]Filter, 0),
+		writeConditions:         make([]Condition, 0),
+		rawConditionExpressions: make([]conditionExpression, 0),
 	}
 }
 
@@ -302,32 +470,18 @@ func (q *Query) Create() error {
 		TableName: q.metadata.TableName(),
 	}
 
-	// Add conditional expression to prevent overwriting existing items
-	if len(q.conditions) > 0 {
-		// If conditions are specified, use them as conditional expressions
-		builder := expr.NewBuilder()
-		for _, cond := range q.conditions {
-			err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value)
-			if err != nil {
-				return fmt.Errorf("failed to build condition: %w", err)
-			}
-		}
-		components := builder.Build()
-		compiled.ConditionExpression = components.FilterExpression
-		compiled.ExpressionAttributeNames = components.ExpressionAttributeNames
-		compiled.ExpressionAttributeValues = components.ExpressionAttributeValues
-	} else {
-		// Default: ensure item doesn't already exist (using partition key)
-		primaryKey := q.metadata.PrimaryKey()
-		if primaryKey.PartitionKey != "" {
-			builder := expr.NewBuilder()
-			if err := builder.AddFilterCondition("AND", primaryKey.PartitionKey, "attribute_not_exists", nil); err != nil {
-				return fmt.Errorf("failed to build default condition: %w", err)
-			}
-			components := builder.Build()
-			compiled.ConditionExpression = components.FilterExpression
-			compiled.ExpressionAttributeNames = components.ExpressionAttributeNames
-		}
+	conditionExpr, names, values, err := q.buildConditionExpression(false, false, false)
+	if err != nil {
+		return err
+	}
+	if conditionExpr != "" {
+		compiled.ConditionExpression = conditionExpr
+	}
+	if len(names) > 0 {
+		compiled.ExpressionAttributeNames = names
+	}
+	if len(values) > 0 {
+		compiled.ExpressionAttributeValues = values
 	}
 
 	// Execute through a specialized PutItem executor
@@ -552,27 +706,16 @@ func (q *Query) Update(fields ...string) error {
 		}
 	}
 
-	// Build expressions
-	builder := expr.NewBuilder()
-
-	// Add filter conditions as condition expressions
-	for _, cond := range q.conditions {
-		// Skip key conditions
-		if cond.Field == primaryKey.PartitionKey ||
-			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
-			continue
-		}
-		if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
-			return fmt.Errorf("failed to add filter condition for %s: %w", cond.Field, err)
-		}
-	}
-
-	filterComponents := builder.Build()
-
 	// Build update expression manually
 	updateExpression := ""
 	if len(updateParts) > 0 {
 		updateExpression = "SET " + strings.Join(updateParts, ", ")
+	}
+
+	// Build expression attribute names
+	expressionAttributeNames := make(map[string]string)
+	for _, field := range fields {
+		expressionAttributeNames["#"+field] = field
 	}
 
 	// Convert update values to AttributeValues
@@ -585,20 +728,24 @@ func (q *Query) Update(fields ...string) error {
 		expressionAttributeValues[k] = av
 	}
 
-	// Merge with filter expression values
-	for k, v := range filterComponents.ExpressionAttributeValues {
-		expressionAttributeValues[k] = v
+	conditionExpr, condNames, condValues, err := q.buildConditionExpression(true, true, false)
+	if err != nil {
+		return err
 	}
 
-	// Build expression attribute names
-	expressionAttributeNames := make(map[string]string)
-	for _, field := range fields {
-		expressionAttributeNames["#"+field] = field
+	if len(condNames) > 0 {
+		for k, v := range condNames {
+			expressionAttributeNames[k] = v
+		}
 	}
 
-	// Merge with filter expression names
-	for k, v := range filterComponents.ExpressionAttributeNames {
-		expressionAttributeNames[k] = v
+	if len(condValues) > 0 {
+		for k, v := range condValues {
+			if _, exists := expressionAttributeValues[k]; exists {
+				return fmt.Errorf("duplicate expression attribute value placeholder: %s", k)
+			}
+			expressionAttributeValues[k] = v
+		}
 	}
 
 	// Compile the update query
@@ -606,7 +753,7 @@ func (q *Query) Update(fields ...string) error {
 		Operation:                 "UpdateItem",
 		TableName:                 q.metadata.TableName(),
 		UpdateExpression:          updateExpression,
-		ConditionExpression:       filterComponents.FilterExpression,
+		ConditionExpression:       conditionExpr,
 		ExpressionAttributeNames:  expressionAttributeNames,
 		ExpressionAttributeValues: expressionAttributeValues,
 	}
@@ -659,28 +806,18 @@ func (q *Query) Delete() error {
 		}
 	}
 
-	// Build condition expression from non-key conditions
-	builder := expr.NewBuilder()
-	for _, cond := range q.conditions {
-		// Skip key conditions
-		if cond.Field == primaryKey.PartitionKey ||
-			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
-			continue
-		}
-		if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
-			return fmt.Errorf("failed to add filter condition for %s: %w", cond.Field, err)
-		}
+	conditionExpr, condNames, condValues, err := q.buildConditionExpression(true, true, false)
+	if err != nil {
+		return err
 	}
-
-	components := builder.Build()
 
 	// Compile the delete query
 	compiled := &core.CompiledQuery{
 		Operation:                 "DeleteItem",
 		TableName:                 q.metadata.TableName(),
-		ConditionExpression:       components.FilterExpression,
-		ExpressionAttributeNames:  components.ExpressionAttributeNames,
-		ExpressionAttributeValues: components.ExpressionAttributeValues,
+		ConditionExpression:       conditionExpr,
+		ExpressionAttributeNames:  condNames,
+		ExpressionAttributeValues: condValues,
 	}
 
 	// Convert key to AttributeValues
@@ -1572,6 +1709,44 @@ func (q *Query) OrFilterGroup(fn func(core.Query)) core.Query {
 	return q
 }
 
+// IfNotExists ensures the primary key does not exist prior to write
+func (q *Query) IfNotExists() core.Query {
+	q.addPrimaryKeyCondition("attribute_not_exists")
+	return q
+}
+
+// IfExists ensures the primary key exists prior to write
+func (q *Query) IfExists() core.Query {
+	q.addPrimaryKeyCondition("attribute_exists")
+	return q
+}
+
+// WithCondition appends an additional write condition
+func (q *Query) WithCondition(field, operator string, value any) core.Query {
+	attrName := q.resolveAttributeName(field)
+	q.writeConditions = append(q.writeConditions, Condition{
+		Field:    attrName,
+		Operator: operator,
+		Value:    value,
+	})
+	return q
+}
+
+// WithConditionExpression appends a raw condition expression for advanced cases
+func (q *Query) WithConditionExpression(exprStr string, values map[string]any) core.Query {
+	exprStr = strings.TrimSpace(exprStr)
+	if exprStr == "" {
+		q.recordBuilderError(fmt.Errorf("condition expression cannot be empty"))
+		return q
+	}
+
+	q.rawConditionExpressions = append(q.rawConditionExpressions, conditionExpression{
+		Expression: exprStr,
+		Values:     cloneConditionValues(values),
+	})
+	return q
+}
+
 // recordBuilderError memoizes the first builder error encountered
 func (q *Query) recordBuilderError(err error) {
 	if err != nil && q.builderErr == nil {
@@ -1592,12 +1767,14 @@ func (q *Query) UpdateBuilder() core.UpdateBuilder {
 // NewWithConditions creates a new Query instance with all necessary fields
 func NewWithConditions(model any, metadata core.ModelMetadata, executor QueryExecutor, conditions []Condition, ctx context.Context) *Query {
 	return &Query{
-		model:      model,
-		metadata:   metadata,
-		executor:   executor,
-		conditions: conditions,
-		ctx:        ctx,
-		filters:    make([]Filter, 0),
-		builder:    expr.NewBuilder(),
+		model:                   model,
+		metadata:                metadata,
+		executor:                executor,
+		conditions:              conditions,
+		ctx:                     ctx,
+		filters:                 make([]Filter, 0),
+		builder:                 expr.NewBuilder(),
+		writeConditions:         make([]Condition, 0),
+		rawConditionExpressions: make([]conditionExpression, 0),
 	}
 }

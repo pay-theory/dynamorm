@@ -81,6 +81,26 @@ func (m *MockQuery) OrFilterGroup(fn func(Query)) Query {
 	return args.Get(0).(Query)
 }
 
+func (m *MockQuery) IfNotExists() Query {
+	args := m.Called()
+	return args.Get(0).(Query)
+}
+
+func (m *MockQuery) IfExists() Query {
+	args := m.Called()
+	return args.Get(0).(Query)
+}
+
+func (m *MockQuery) WithCondition(field, operator string, value any) Query {
+	args := m.Called(field, operator, value)
+	return args.Get(0).(Query)
+}
+
+func (m *MockQuery) WithConditionExpression(expr string, values map[string]any) Query {
+	args := m.Called(expr, values)
+	return args.Get(0).(Query)
+}
+
 func (m *MockQuery) OrderBy(field string, order string) Query {
 	args := m.Called(field, order)
 	return args.Get(0).(Query)
@@ -379,9 +399,9 @@ func TestTx(t *testing.T) {
 		model := struct{ ID string }{ID: "123"}
 
 		mockDB.On("Model", model).Return(mockQuery)
-	mockQuery.On("Update", mock.MatchedBy(func(fields []string) bool {
-		return len(fields) == 0
-	})).Return(nil)
+		mockQuery.On("Update", mock.MatchedBy(func(fields []string) bool {
+			return len(fields) == 0
+		})).Return(nil)
 
 		err := tx.Update(model)
 		assert.NoError(t, err)

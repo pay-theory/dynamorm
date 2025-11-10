@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // DynamoDBAPI defines the interface for all DynamoDB operations
@@ -250,6 +252,9 @@ func (e *MainExecutor) ExecutePutItem(input *core.CompiledQuery, item map[string
 	// Execute the put
 	_, err := e.client.PutItem(e.ctx, putInput)
 	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
+		}
 		return fmt.Errorf("failed to put item: %w", err)
 	}
 
@@ -304,6 +309,9 @@ func (e *MainExecutor) ExecuteDeleteItem(input *core.CompiledQuery, key map[stri
 	// Execute the delete
 	_, err := e.client.DeleteItem(e.ctx, deleteInput)
 	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
+		}
 		return fmt.Errorf("failed to delete item: %w", err)
 	}
 
@@ -389,6 +397,17 @@ func (e *MainExecutor) ExecuteQueryWithPagination(input *core.CompiledQuery, des
 		ScannedCount:     int64(output.ScannedCount),
 		LastEvaluatedKey: output.LastEvaluatedKey,
 	}, nil
+}
+
+func isConditionalCheckFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	var condErr *types.ConditionalCheckFailedException
+	if errors.As(err, &condErr) {
+		return true
+	}
+	return strings.Contains(err.Error(), "ConditionalCheckFailed")
 }
 
 // ExecuteScanWithPagination implements PaginatedQueryExecutor.ExecuteScanWithPagination
@@ -792,11 +811,11 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 			keyType := mapType.Key()
 			elemType := mapType.Elem()
 			newMap := reflect.MakeMap(mapType)
-			
+
 			for k, mapVal := range v.Value {
 				keyValue := reflect.New(keyType).Elem()
 				keyValue.SetString(k)
-				
+
 				// Special handling for map[string]interface{}
 				if elemType.Kind() == reflect.Interface && elemType.NumMethod() == 0 {
 					// Convert AttributeValue to interface{}

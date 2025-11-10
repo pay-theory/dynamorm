@@ -23,6 +23,8 @@ type Marshaler struct {
 	converter *pkgTypes.Converter
 	// Naming convention for nested structs (defaults to CamelCase)
 	namingConvention naming.Convention
+	// Protects namingConvention assignment for concurrent marshaling
+	mu sync.Mutex
 }
 
 // structMarshaler contains cached information for marshaling a specific struct type
@@ -71,6 +73,9 @@ func (m *Marshaler) ClearCache() {
 
 // MarshalItem marshals a model to DynamoDB AttributeValues using cached reflection
 func (m *Marshaler) MarshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	v := reflect.ValueOf(model)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {

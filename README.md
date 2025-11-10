@@ -615,6 +615,40 @@ db.Model(&Payment{}).
     All(&payments)
 ```
 
+### Conditional Write Helpers
+
+**Purpose:** Guard create/update/delete operations with DynamoDB conditions without dropping to the raw SDK  
+**Methods:** `IfNotExists()`, `IfExists()`, `WithCondition(field, op, value)`, `WithConditionExpression(expr, values)`
+
+```go
+// Prevent overwriting existing users
+err := db.Model(&User{
+    ID:    "user123",
+    Email: "john@example.com",
+}).IfNotExists().Create()
+if errors.Is(err, customerrors.ErrConditionFailed) {
+    log.Println("user already exists")
+}
+
+// Optimistic update – only run when Status is still active
+err = db.Model(&Session{}).
+    Where("ID", "=", "sess#123").
+    WithCondition("Status", "=", "active").
+    Update("LastSeen")
+
+// Advanced raw expression (placeholders must be provided)
+db.Model(&Order{}).
+    Where("PK", "=", orderPK).
+    WithConditionExpression("attribute_exists(PK) AND Version = :v", map[string]any{
+        ":v": currentVersion,
+    }).
+    Delete()
+```
+
+Import the sentinel error via `customerrors "github.com/pay-theory/dynamorm/pkg/errors"` and check with `errors.Is`.
+
+All conditional failures bubble up as `customerrors.ErrConditionFailed`, so callers can use `errors.Is(err, customerrors.ErrConditionFailed)` for retry or conflict handling.
+
 ### `Transaction(fn func(*Tx) error) error`
 
 **Purpose:** Executes multiple operations atomically within a DynamoDB transaction
