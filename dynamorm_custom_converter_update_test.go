@@ -1,10 +1,14 @@
 package dynamorm
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/stretchr/testify/assert"
@@ -120,6 +124,65 @@ type TestModelWithCustomID struct {
 	_        struct{}     `dynamorm:"naming:snake_case"`
 }
 
+func setupPayloadConverterTestDB(t *testing.T) (*DB, *capturingHTTPClient) {
+	client := newCapturingHTTPClient(nil)
+	stubSessionConfigLoad(t, func(ctx context.Context, opts ...func(*config.LoadOptions) error) (aws.Config, error) {
+		return minimalAWSConfig(client), nil
+	})
+
+	dbAny, err := New(session.Config{Region: "us-east-1"})
+	require.NoError(t, err)
+
+	db := dbAny.(*DB)
+	err = db.RegisterTypeConverter(reflect.TypeOf(TestPayloadJSON{}), TestPayloadJSONConverter{})
+	require.NoError(t, err)
+
+	return db, client
+}
+
+func setupCustomIDConverterTestDB(t *testing.T) (*DB, *capturingHTTPClient) {
+	client := newCapturingHTTPClient(nil)
+	stubSessionConfigLoad(t, func(ctx context.Context, opts ...func(*config.LoadOptions) error) (aws.Config, error) {
+		return minimalAWSConfig(client), nil
+	})
+
+	dbAny, err := New(session.Config{Region: "us-east-1"})
+	require.NoError(t, err)
+
+	db := dbAny.(*DB)
+	err = db.RegisterTypeConverter(reflect.TypeOf(TestCustomID("")), TestCustomIDConverter{})
+	require.NoError(t, err)
+
+	return db, client
+}
+
+func attrString(value string) map[string]any {
+	return map[string]any{"S": value}
+}
+
+func buildGetItemBody(attrs map[string]map[string]any) string {
+	body := map[string]any{"Item": attrs}
+	data, _ := json.Marshal(body)
+	return string(data)
+}
+
+func buildScanBody(items []map[string]map[string]any) string {
+	body := map[string]any{
+		"Items":        items,
+		"Count":        len(items),
+		"ScannedCount": len(items),
+	}
+	data, _ := json.Marshal(body)
+	return string(data)
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	data, err := json.Marshal(v)
+	require.NoError(t, err)
+	return string(data)
+}
+
 // TestCustomConverterWithUpdate tests the bug fix for custom converters being ignored during Update()
 // This test ensures that custom type converters registered via RegisterTypeConverter() are properly
 // invoked during Update() operations, not just Create() operations.
@@ -130,34 +193,9 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Initialize DynamORM with custom converter
-	db, err := New(session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	// Register the custom converter - this is the key step
-	err = db.RegisterTypeConverter(
-		reflect.TypeOf(TestPayloadJSON{}),
-		TestPayloadJSONConverter{},
-	)
-	require.NoError(t, err)
-
-	// Create table
-	err = db.CreateTable(&TestAsyncRequest{})
-	if err != nil {
-		// Ignore if table already exists
-		t.Logf("CreateTable warning (may be expected): %v", err)
-	}
-
-	// Cleanup
-	defer func() {
-		_ = db.DeleteTable(&TestAsyncRequest{})
-	}()
-
 	t.Run("Create uses custom converter", func(t *testing.T) {
-		// This test verifies the existing behavior - Create() should use custom converter
+		db, client := setupPayloadConverterTestDB(t)
+
 		request := &TestAsyncRequest{
 			ID:   "test-create-1",
 			Name: "Create Test",
@@ -175,6 +213,16 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		err := db.Model(request).Create()
 		require.NoError(t, err)
 
+		client.SetResponseSequence("DynamoDB_20120810.GetItem", []stubbedResponse{
+			{
+				body: buildGetItemBody(map[string]map[string]any{
+					"id":      attrString(request.ID),
+					"name":    attrString(request.Name),
+					"payload": attrString(mustJSON(t, request.Payload.Data)),
+				}),
+			},
+		})
+
 		// Retrieve and verify it was stored as JSON string
 		var retrieved TestAsyncRequest
 		err = db.Model(&TestAsyncRequest{}).Where("ID", "=", "test-create-1").First(&retrieved)
@@ -185,12 +233,20 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		assert.NotNil(t, retrieved.Payload.Data)
 		assert.Equal(t, "process", retrieved.Payload.Data["action"])
 		assert.Equal(t, float64(5), retrieved.Payload.Data["priority"]) // JSON unmarshals numbers as float64
+
+		req := findRequestByTarget(client.Requests(), "DynamoDB_20120810.PutItem")
+		require.NotNil(t, req)
+		item, ok := req.Payload["Item"].(map[string]any)
+		require.True(t, ok)
+		payloadAttr, ok := item["payload"].(map[string]any)
+		require.True(t, ok)
+		payloadValue, ok := payloadAttr["S"].(string)
+		require.True(t, ok)
+		assert.True(t, json.Valid([]byte(payloadValue)), "payload should be stored as JSON string")
 	})
 
 	t.Run("Update uses custom converter - bug fix test", func(t *testing.T) {
-		// THIS IS THE BUG FIX TEST
-		// Before the fix, Update() would NOT call the custom converter,
-		// resulting in incorrect storage (NULL or nested struct)
+		db, client := setupPayloadConverterTestDB(t)
 
 		// First, create an item
 		request := &TestAsyncRequest{
@@ -220,6 +276,16 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		err = db.Model(request).Update()
 		require.NoError(t, err, "Update() should succeed with custom converter")
 
+		client.SetResponseSequence("DynamoDB_20120810.GetItem", []stubbedResponse{
+			{
+				body: buildGetItemBody(map[string]map[string]any{
+					"id":      attrString(request.ID),
+					"name":    attrString(request.Name),
+					"payload": attrString(mustJSON(t, request.Payload.Data)),
+				}),
+			},
+		})
+
 		// Retrieve and verify the payload was correctly stored as JSON string
 		var retrieved TestAsyncRequest
 		err = db.Model(&TestAsyncRequest{}).Where("ID", "=", "test-update-1").First(&retrieved)
@@ -239,9 +305,25 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		complex, ok := retrieved.Payload.Data["complex"].(map[string]interface{})
 		require.True(t, ok, "complex field should be a map")
 		assert.Equal(t, "data", complex["nested"])
+
+		updateReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.UpdateItem")
+		require.NotNil(t, updateReq)
+		values, ok := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
+		require.True(t, ok)
+		var payloadJSON string
+		for _, v := range values {
+			if attr, ok := v.(map[string]any); ok {
+				if s, ok := attr["S"].(string); ok && json.Valid([]byte(s)) {
+					payloadJSON = s
+				}
+			}
+		}
+		assert.NotEmpty(t, payloadJSON, "update should include payload JSON string")
 	})
 
 	t.Run("Update with specific fields uses custom converter", func(t *testing.T) {
+		db, client := setupPayloadConverterTestDB(t)
+
 		// Test Update() with specific fields parameter
 
 		request := &TestAsyncRequest{
@@ -266,6 +348,16 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		err = db.Model(request).Update("Payload")
 		require.NoError(t, err)
 
+		client.SetResponseSequence("DynamoDB_20120810.GetItem", []stubbedResponse{
+			{
+				body: buildGetItemBody(map[string]map[string]any{
+					"id":      attrString(request.ID),
+					"name":    attrString(request.Name),
+					"payload": attrString(mustJSON(t, request.Payload.Data)),
+				}),
+			},
+		})
+
 		// Verify
 		var retrieved TestAsyncRequest
 		err = db.Model(&TestAsyncRequest{}).Where("ID", "=", "test-update-fields-1").First(&retrieved)
@@ -274,9 +366,20 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		assert.Equal(t, "Field Update Test", retrieved.Name) // Should be unchanged
 		assert.Equal(t, "payload", retrieved.Payload.Data["updated"])
 		assert.Equal(t, "specific_field_update", retrieved.Payload.Data["type"])
+
+		updateReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.UpdateItem")
+		require.NotNil(t, updateReq)
+		names := updateReq.Payload["ExpressionAttributeNames"].(map[string]any)
+		assert.Contains(t, names, "#n1")
+		assert.Equal(t, "payload", names["#n1"])
+		values := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
+		valAttr := values[":v1"].(map[string]any)
+		assert.True(t, json.Valid([]byte(valAttr["S"].(string))))
 	})
 
 	t.Run("CreateOrUpdate uses custom converter", func(t *testing.T) {
+		db, client := setupPayloadConverterTestDB(t)
+
 		// Verify CreateOrUpdate also works with custom converters
 
 		request := &TestAsyncRequest{
@@ -300,6 +403,16 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 		err = db.Model(request).CreateOrUpdate()
 		require.NoError(t, err)
 
+		client.SetResponseSequence("DynamoDB_20120810.GetItem", []stubbedResponse{
+			{
+				body: buildGetItemBody(map[string]map[string]any{
+					"id":      attrString(request.ID),
+					"name":    attrString(request.Name),
+					"payload": attrString(mustJSON(t, request.Payload.Data)),
+				}),
+			},
+		})
+
 		// Verify
 		var retrieved TestAsyncRequest
 		err = db.Model(&TestAsyncRequest{}).Where("ID", "=", "test-upsert-1").First(&retrieved)
@@ -307,9 +420,17 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 
 		assert.Equal(t, "updated", retrieved.Payload.Data["mode"])
 		assert.Equal(t, float64(2), retrieved.Payload.Data["iteration"])
+
+		putReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.PutItem")
+		require.NotNil(t, putReq)
+		item := putReq.Payload["Item"].(map[string]any)
+		payloadAttr := item["payload"].(map[string]any)
+		assert.True(t, json.Valid([]byte(payloadAttr["S"].(string))))
 	})
 
 	t.Run("Filter with custom type uses converter", func(t *testing.T) {
+		db, client := setupPayloadConverterTestDB(t)
+
 		// Test that Filter() conditions also work with custom types
 
 		// Create test data
@@ -327,11 +448,33 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 			require.NoError(t, err)
 		}
 
+		scanItems := []map[string]map[string]any{
+			{
+				"id":      attrString("test-filter-1"),
+				"name":    attrString("Filter Test"),
+				"payload": attrString(mustJSON(t, map[string]any{"index": 1})),
+			},
+			{
+				"id":      attrString("test-filter-2"),
+				"name":    attrString("Filter Test"),
+				"payload": attrString(mustJSON(t, map[string]any{"index": 2})),
+			},
+			{
+				"id":      attrString("test-filter-3"),
+				"name":    attrString("Filter Test"),
+				"payload": attrString(mustJSON(t, map[string]any{"index": 3})),
+			},
+		}
+		client.SetResponseSequence("DynamoDB_20120810.Scan", []stubbedResponse{
+			{body: buildScanBody(scanItems)},
+		})
+
 		// Query with filter should work
 		var results []TestAsyncRequest
-		err = db.Model(&TestAsyncRequest{}).Scan(&results)
+		err := db.Model(&TestAsyncRequest{}).Scan(&results)
 		require.NoError(t, err)
-		assert.GreaterOrEqual(t, len(results), 3)
+		assert.Equal(t, 3, len(results))
+		assert.Equal(t, float64(3), results[2].Payload.Data["index"])
 	})
 }
 
@@ -341,26 +484,10 @@ func TestCustomConverterRegressionGuard(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	db, err := New(session.Config{
-		Region:   "us-east-1",
-		Endpoint: "http://localhost:8000",
-	})
-	require.NoError(t, err)
-
-	err = db.RegisterTypeConverter(
-		reflect.TypeOf(TestCustomID("")),
-		TestCustomIDConverter{},
-	)
-	require.NoError(t, err)
-
-	err = db.CreateTable(&TestModelWithCustomID{})
-	if err != nil {
-		t.Logf("CreateTable warning: %v", err)
-	}
-	defer func() { _ = db.DeleteTable(&TestModelWithCustomID{}) }()
-
 	// Test all CRUD operations
 	t.Run("All operations use converter", func(t *testing.T) {
+		db, client := setupCustomIDConverterTestDB(t)
+
 		model := &TestModelWithCustomID{
 			ID:       "test-1",
 			CustomID: "ABC123",
@@ -372,6 +499,16 @@ func TestCustomConverterRegressionGuard(t *testing.T) {
 
 		// Read
 		var retrieved TestModelWithCustomID
+		client.SetResponseSequence("DynamoDB_20120810.GetItem", []stubbedResponse{
+			{body: buildGetItemBody(map[string]map[string]any{
+				"id":        attrString(model.ID),
+				"custom_id": attrString("CUSTOM-ABC123"),
+			})},
+			{body: buildGetItemBody(map[string]map[string]any{
+				"id":        attrString(model.ID),
+				"custom_id": attrString("CUSTOM-XYZ789"),
+			})},
+		})
 		err = db.Model(&TestModelWithCustomID{}).Where("ID", "=", "test-1").First(&retrieved)
 		require.NoError(t, err)
 		assert.Equal(t, TestCustomID("ABC123"), retrieved.CustomID, "CustomID should round-trip through converter")
@@ -386,5 +523,24 @@ func TestCustomConverterRegressionGuard(t *testing.T) {
 		err = db.Model(&TestModelWithCustomID{}).Where("ID", "=", "test-1").First(&updated)
 		require.NoError(t, err)
 		assert.Equal(t, TestCustomID("XYZ789"), updated.CustomID, "Updated CustomID should use converter")
+
+		putReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.PutItem")
+		require.NotNil(t, putReq)
+		item := putReq.Payload["Item"].(map[string]any)
+		customAttr := item["custom_id"].(map[string]any)
+		assert.True(t, strings.HasPrefix(customAttr["S"].(string), "CUSTOM-"))
+
+		updateReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.UpdateItem")
+		require.NotNil(t, updateReq)
+		values := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
+		found := false
+		for _, v := range values {
+			if attr, ok := v.(map[string]any); ok {
+				if s, ok := attr["S"].(string); ok && strings.HasPrefix(s, "CUSTOM-") {
+					found = true
+				}
+			}
+		}
+		assert.True(t, found, "Update should marshal custom_id via converter")
 	})
 }

@@ -1,13 +1,22 @@
 # Phase 0 Completion Summary
 
 **Date Completed:** November 9, 2025  
-**Status:** ✅ Complete - Ready for Phase 1
+**Status:** ✅ Complete – Phase 1–3 designs implemented in v1.0.36
 
 ---
 
 ## Overview
 
 Phase 0 (Discovery & API Alignment) has been successfully completed. All discovery tasks, API designs, and acceptance criteria have been documented in the comprehensive design brief.
+
+Phases 1–3 have since shipped the planned capabilities (conditional helpers, fluent transaction builder, and the retry-aware BatchGet API), so this document now acts as the historical record for how those implementations trace back to the original design.
+
+## Downstream Execution Snapshot
+
+- **Phase 1 – Conditional helpers:** `IfNotExists`, `IfExists`, `WithCondition`, and `WithConditionExpression` landed exactly as proposed, and `customerrors.ErrConditionFailed` is now the single sentinel surface for every conditional failure (see `README.md` “Pattern: Conditional Writes”).
+- **Phase 2 – Transaction builder:** `db.Transact()` plus `TransactWrite(ctx, fn)` expose the DSL described here, and `customerrors.TransactionError` provides the per-operation context envisioned in §2.2 of the design brief.
+- **Phase 3 – BatchGet:** `BatchGetWithOptions`, `BatchGetBuilder`, `core.RetryPolicy`, progress callbacks, and `dynamorm.NewKeyPair` all match the acceptance criteria, including ordering guarantees and bounded parallelism.
+- **Docs & examples:** README sections, troubleshooting guidance, and new examples under `examples/` now reference every capability so Phase 4 release prep stays grounded in the delivered behavior.
 
 ---
 

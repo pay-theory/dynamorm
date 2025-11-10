@@ -204,9 +204,7 @@ func (ub *UpdateBuilder) ReturnValues(option string) core.UpdateBuilder {
 	return ub
 }
 
-// Execute performs the update operation
-func (ub *UpdateBuilder) Execute() error {
-	// Check if query or metadata is nil
+func (ub *UpdateBuilder) populateKeyValues() error {
 	if ub.query == nil {
 		return fmt.Errorf("query is nil")
 	}
@@ -214,46 +212,49 @@ func (ub *UpdateBuilder) Execute() error {
 		return fmt.Errorf("query metadata is nil")
 	}
 
-	// Validate we have key conditions
+	ub.keyValues = make(map[string]any)
 	primaryKey := ub.query.metadata.PrimaryKey()
 
-	// Extract key values from query conditions
 	for _, cond := range ub.query.conditions {
 		if cond.Field == primaryKey.PartitionKey ||
 			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
 			if cond.Operator != "=" {
 				return fmt.Errorf("key condition must use '=' operator")
 			}
-			// Get the DynamoDB attribute name for this field
-			attrMeta := ub.query.metadata.AttributeMetadata(cond.Field)
-			if attrMeta != nil {
-				ub.keyValues[attrMeta.DynamoDBName] = cond.Value
-			} else {
-				ub.keyValues[cond.Field] = cond.Value
+
+			keyName := cond.Field
+			if attrMeta := ub.query.metadata.AttributeMetadata(cond.Field); attrMeta != nil && attrMeta.DynamoDBName != "" {
+				keyName = attrMeta.DynamoDBName
 			}
+			ub.keyValues[keyName] = cond.Value
 		}
 	}
 
-	// Validate we have complete key using DynamoDB attribute names
-	pkAttrMeta := ub.query.metadata.AttributeMetadata(primaryKey.PartitionKey)
 	pkName := primaryKey.PartitionKey
-	if pkAttrMeta != nil {
-		pkName = pkAttrMeta.DynamoDBName
+	if attrMeta := ub.query.metadata.AttributeMetadata(primaryKey.PartitionKey); attrMeta != nil && attrMeta.DynamoDBName != "" {
+		pkName = attrMeta.DynamoDBName
 	}
-
 	if _, ok := ub.keyValues[pkName]; !ok {
 		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
 	}
 
 	if primaryKey.SortKey != "" {
-		skAttrMeta := ub.query.metadata.AttributeMetadata(primaryKey.SortKey)
 		skName := primaryKey.SortKey
-		if skAttrMeta != nil {
-			skName = skAttrMeta.DynamoDBName
+		if attrMeta := ub.query.metadata.AttributeMetadata(primaryKey.SortKey); attrMeta != nil && attrMeta.DynamoDBName != "" {
+			skName = attrMeta.DynamoDBName
 		}
 		if _, ok := ub.keyValues[skName]; !ok {
 			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
 		}
+	}
+
+	return nil
+}
+
+// Execute performs the update operation
+func (ub *UpdateBuilder) Execute() error {
+	if err := ub.populateKeyValues(); err != nil {
+		return err
 	}
 
 	// Add conditions to expression builder
@@ -349,28 +350,8 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 		ub.returnValues = "ALL_NEW"
 	}
 
-	// Validate we have key conditions
-	primaryKey := ub.query.metadata.PrimaryKey()
-
-	// Extract key values from query conditions
-	for _, cond := range ub.query.conditions {
-		if cond.Field == primaryKey.PartitionKey ||
-			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
-			if cond.Operator != "=" {
-				return fmt.Errorf("key condition must use '=' operator")
-			}
-			ub.keyValues[cond.Field] = cond.Value
-		}
-	}
-
-	// Validate we have complete key
-	if _, ok := ub.keyValues[primaryKey.PartitionKey]; !ok {
-		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
-	}
-	if primaryKey.SortKey != "" {
-		if _, ok := ub.keyValues[primaryKey.SortKey]; !ok {
-			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
-		}
+	if err := ub.populateKeyValues(); err != nil {
+		return err
 	}
 
 	// Add conditions to expression builder
@@ -454,8 +435,14 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 
 		// Unmarshal the returned attributes to the result
 		if updateResult != nil && len(updateResult.Attributes) > 0 {
-			// Convert the map to a M type AttributeValue and then unmarshal
-			mapAV := &types.AttributeValueMemberM{Value: updateResult.Attributes}
+			normalized := make(map[string]types.AttributeValue, len(updateResult.Attributes)*2)
+			for attrName, attrValue := range updateResult.Attributes {
+				normalized[attrName] = attrValue
+				if attrMeta := ub.query.metadata.AttributeMetadata(attrName); attrMeta != nil && attrMeta.Name != "" {
+					normalized[attrMeta.Name] = attrValue
+				}
+			}
+			mapAV := &types.AttributeValueMemberM{Value: normalized}
 			return expr.ConvertFromAttributeValue(mapAV, result)
 		}
 		return nil

@@ -382,6 +382,164 @@ func TestPaymentService(t *testing.T) {
 // }
 ```
 
+### Pattern: Conditional Writes
+**When to use:** Protect critical writes from accidental overwrites or coordinate optimistic concurrency.  
+**Why:** DynamoDB only enforces conditions you explicitly provide—these helpers turn noisy expression plumbing into one-liners.
+
+> `Create()` overwrites existing items by design. Add `.IfNotExists()` when you need insert-only semantics or idempotent provisioning.
+
+```go
+import (
+    "context"
+    "errors"
+    "fmt"
+    "time"
+
+    "github.com/pay-theory/dynamorm"
+    core "github.com/pay-theory/dynamorm/pkg/core"
+    customerrors "github.com/pay-theory/dynamorm/pkg/errors"
+)
+
+type Profile struct {
+    ID        string `dynamorm:"pk"`
+    Email     string `dynamorm:"sk"`
+    Status    string
+    Version   int64  `json:"version"`
+    UpdatedAt time.Time `dynamorm:"updated_at"`
+}
+
+func upsertProfile(ctx context.Context, db core.DB, profile *Profile) error {
+    // Insert-only guard
+    if err := db.WithContext(ctx).Model(profile).IfNotExists().Create(); err != nil {
+        if errors.Is(err, customerrors.ErrConditionFailed) {
+            return fmt.Errorf("profile already exists: %w", err)
+        }
+        return err
+    }
+
+    // Optimistic update guarded by a status check
+    profile.Status = "active"
+    profile.UpdatedAt = time.Now()
+    profile.Version++
+    err := db.Model(&Profile{}).
+        Where("ID", "=", profile.ID).
+        WithCondition("Status", "=", "pending_review").
+        Update("Status", "UpdatedAt")
+    if errors.Is(err, customerrors.ErrConditionFailed) {
+        return fmt.Errorf("profile changed while updating: %w", err)
+    }
+    return err
+}
+
+// Raw conditions stay available for advanced use cases (e.g., version tokens).
+err := db.Model(&Profile{}).
+    Where("ID", "=", profile.ID).
+    WithConditionExpression("attribute_exists(PK) AND Version = :v", map[string]any{
+        ":v": profile.Version,
+    }).
+    Delete()
+```
+
+`ErrConditionFailed` is raised for any `ConditionalCheckFailedException`. Use `errors.Is(err, customerrors.ErrConditionFailed)` to trigger retries, conflict resolution, or troubleshooting guidance.
+
+### Pattern: Batch Get
+**When to use:** Fetching large sets of items by key without writing manual loops  
+**Why:** Automatically chunks requests (≤100 keys), retries `UnprocessedKeys`, and can fan out work in parallel.
+
+```go
+// CORRECT: Use KeyPair helpers for composite keys
+var invoices []Invoice
+keys := []any{
+    dynamorm.NewKeyPair("ACCOUNT#123", "INVOICE#2024-01"),
+    dynamorm.NewKeyPair("ACCOUNT#123", "INVOICE#2024-02"),
+}
+
+if err := db.Model(&Invoice{}).BatchGet(keys, &invoices); err != nil {
+    return fmt.Errorf("batch get failed: %w", err)
+}
+```
+
+#### Advanced control with options
+```go
+opts := dynamorm.DefaultBatchGetOptions()
+opts.ChunkSize = 50
+opts.Parallel = true
+opts.MaxConcurrency = 4
+opts.RetryPolicy = &core.RetryPolicy{ // import core "github.com/pay-theory/dynamorm/pkg/core"
+    MaxRetries:    5,
+    InitialDelay:  50 * time.Millisecond,
+    MaxDelay:      2 * time.Second,
+    BackoffFactor: 1.5,
+    Jitter:        0.4,
+}
+opts.ProgressCallback = func(done, total int) {
+    logger.Infof("retrieved %d/%d invoices", done, total)
+}
+opts.OnChunkError = func(chunk []any, err error) error {
+    metrics.Count("batch_get_chunk_failure")
+    return err // or return nil to keep going
+}
+
+var invoices []Invoice
+if err := db.Model(&Invoice{}).BatchGetWithOptions(keys, &invoices, opts); err != nil {
+    return fmt.Errorf("batch get failed: %w", err)
+}
+```
+
+#### Fluent builder for complex cases
+```go
+var invoices []Invoice
+err := db.Model(&Invoice{}).
+    BatchGetBuilder().
+    Keys(keys).
+    Select("InvoiceID", "Status", "Total").
+    ConsistentRead().
+    Parallel(3).
+    OnProgress(func(done, total int) {
+        trace.Logf("chunk complete: %d/%d", done, total)
+    }).
+    Execute(&invoices)
+if err != nil {
+    return fmt.Errorf("builder batch get failed: %w", err)
+}
+```
+
+> Results are returned in the same order as the key list. Missing keys are skipped; you can inspect the original key slice to identify which entries were absent.
+
+#### Custom retry policy with builder
+```go
+policy := &core.RetryPolicy{
+    MaxRetries:    4,
+    InitialDelay:  75 * time.Millisecond,
+    MaxDelay:      3 * time.Second,
+    BackoffFactor: 1.8,
+    Jitter:        0.35,
+}
+
+var invoices []Invoice
+err := db.Model(&Invoice{}).
+    BatchGetBuilder().
+    Keys(keys).
+    Select("InvoiceID", "Status").
+    Parallel(8). // automatically caps to 8 in-flight chunks
+    WithRetry(policy).
+    OnProgress(func(done, total int) {
+        metrics.AddGauge("batch_get.progress", done, map[string]string{"total": fmt.Sprintf("%d", total)})
+    }).
+    OnError(func(chunk []any, err error) error {
+        alert.Send("batch_get_chunk_failed", err)
+        return err // surface the failure; return nil to keep going
+    }).
+    Execute(&invoices)
+if err != nil {
+    return fmt.Errorf("batch get builder failed: %w", err)
+}
+```
+
+Set `WithRetry(nil)` (or `opts.RetryPolicy = nil`) if you need the operation to fail fast for debugging. Use `OnError` for selective retries or dead-letter queues, and rely on `ProgressCallback` to power logging or metrics dashboards.
+
+> Tip: Import `core "github.com/pay-theory/dynamorm/pkg/core"` anywhere you need direct access to `RetryPolicy` or other advanced batch settings.
+
 ### Pattern: Transaction Operations
 **When to use:** Multiple operations that must succeed or fail together
 **Why:** Ensures data consistency and ACID compliance
@@ -422,6 +580,46 @@ if err != nil {
 // db.Model(account).Update()  // Might succeed
 // db.Model(payment).Create()  // Might fail - inconsistent state!
 ```
+
+### Pattern: Fluent Transaction Builder
+**When to use:** Complex workflows that mix creates, updates, deletes, and condition checks  
+**Why:** Compose all 25 DynamoDB `TransactWriteItems` operations with a single fluent DSL that understands DynamORM metadata.
+
+```go
+bookmark := &Bookmark{ID: "bm#123", UserID: user.ID}
+err := db.Transact().
+    Create(bookmark, dynamorm.IfNotExists()).
+    UpdateWithBuilder(user, func(ub core.UpdateBuilder) error {
+        ub.Increment("BookmarkCount")
+        return nil
+    }, dynamorm.Condition("BookmarkCount", ">=", 0)).
+    ConditionCheck(&Quota{UserID: user.ID}, dynamorm.Condition("Remaining", ">", 0)).
+    Execute()
+
+if errors.Is(err, customerrors.ErrConditionFailed) {
+    log.Println("bookmark already exists or quota exhausted")
+}
+
+// Prefer context-aware helper when you already have a request-scoped context:
+err = db.TransactWrite(ctx, func(tx core.TransactionBuilder) error {
+    tx.Put(&AuditLog{ID: uuid.NewString()})
+    tx.Delete(bookmark, dynamorm.IfExists())
+    return nil // tx.Execute() is invoked automatically
+})
+if err != nil {
+    var txErr *customerrors.TransactionError
+    if errors.As(err, &txErr) {
+        log.Printf("transaction failed at op %d (%s): %s", txErr.OperationIndex, txErr.Operation, txErr.Reason)
+    }
+    if errors.Is(err, customerrors.ErrConditionFailed) {
+        metrics.Incr("transactions.condition_conflict", nil)
+        return fmt.Errorf("transaction conflict: %w", err)
+    }
+    return fmt.Errorf("transact write failed: %w", err)
+}
+```
+
+`TransactionError` keeps the DynamoDB cancellation reason plus the zero-based operation index, so you know exactly which mutation tripped a condition. Prefer `TransactWrite(ctx, fn)` when you already have a request-scoped context; it automatically wires the context into the builder and executes `Execute()` for you.
 
 ## Performance Benchmarks
 
@@ -619,6 +817,8 @@ db.Model(&Payment{}).
 
 **Purpose:** Guard create/update/delete operations with DynamoDB conditions without dropping to the raw SDK  
 **Methods:** `IfNotExists()`, `IfExists()`, `WithCondition(field, op, value)`, `WithConditionExpression(expr, values)`
+
+`Create()` overwrites matching primary keys by default. Chain `.IfNotExists()` (or `.WithCondition(...)`) when you need insert-only semantics or optimistic concurrency to match production safety expectations.
 
 ```go
 // Prevent overwriting existing users

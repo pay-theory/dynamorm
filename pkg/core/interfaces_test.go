@@ -199,6 +199,16 @@ func (m *MockQuery) BatchGet(keys []any, dest any) error {
 	return args.Error(0)
 }
 
+func (m *MockQuery) BatchGetWithOptions(keys []any, dest any, opts *BatchGetOptions) error {
+	args := m.Called(keys, dest, opts)
+	return args.Error(0)
+}
+
+func (m *MockQuery) BatchGetBuilder() BatchGetBuilder {
+	args := m.Called()
+	return args.Get(0).(BatchGetBuilder)
+}
+
 func (m *MockQuery) BatchCreate(items any) error {
 	args := m.Called(items)
 	return args.Error(0)

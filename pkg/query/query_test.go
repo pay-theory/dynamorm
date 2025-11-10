@@ -1,8 +1,12 @@
 package query_test
 
 import (
+	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
@@ -534,6 +538,170 @@ func TestQuery_BatchCreate(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestQuery_BatchGetWithOptions_ChunksAndOrder(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &stubBatchExecutor{}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{
+		core.NewKeyPair("id-0", int64(0)),
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+		core.NewKeyPair("id-3", int64(3)),
+		core.NewKeyPair("id-4", int64(4)),
+	}
+
+	progress := make([]int, 0, 3)
+	opts := &core.BatchGetOptions{
+		ChunkSize:      2,
+		ConsistentRead: true,
+		RetryPolicy:    core.DefaultRetryPolicy(),
+		ProgressCallback: func(retrieved, total int) {
+			require.Equal(t, len(keys), total)
+			progress = append(progress, retrieved)
+		},
+	}
+
+	q.Select("Status")
+
+	var dest []TestItem
+	err := q.BatchGetWithOptions(keys, &dest, opts)
+	require.NoError(t, err)
+	require.Len(t, dest, len(keys))
+
+	for i, item := range dest {
+		assert.Equal(t, fmt.Sprintf("id-%d", i), item.ID)
+		assert.Equal(t, int64(i), item.Timestamp)
+	}
+
+	require.Len(t, executor.calls, 3)
+	assert.True(t, executor.calls[0].ConsistentRead)
+	assert.NotEmpty(t, executor.calls[0].ProjectionExpression)
+	assert.Equal(t, []int{2, 4, 5}, progress)
+}
+
+func TestQuery_BatchGetWithOptions_OnChunkError(t *testing.T) {
+	metadata := &mockMetadata{}
+	keys := []any{
+		core.NewKeyPair("id-0", int64(0)),
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+	}
+
+	t.Run("handler swallows error", func(t *testing.T) {
+		executor := &stubBatchExecutor{failOnCall: 2}
+		q := query.New(&TestItem{}, metadata, executor)
+
+		var handlerCalls int
+		opts := &core.BatchGetOptions{
+			ChunkSize:   1,
+			RetryPolicy: core.DefaultRetryPolicy(),
+			OnChunkError: func(chunk []any, err error) error {
+				handlerCalls++
+				assert.Len(t, chunk, 1)
+				return nil
+			},
+		}
+
+		var dest []TestItem
+		err := q.BatchGetWithOptions(keys, &dest, opts)
+		require.NoError(t, err)
+		assert.Equal(t, 1, handlerCalls)
+		assert.Len(t, dest, len(keys)-1)
+	})
+
+	t.Run("handler returns error", func(t *testing.T) {
+		executor := &stubBatchExecutor{failOnCall: 1}
+		q := query.New(&TestItem{}, metadata, executor)
+
+		opts := &core.BatchGetOptions{
+			ChunkSize:   1,
+			RetryPolicy: core.DefaultRetryPolicy(),
+			OnChunkError: func(chunk []any, err error) error {
+				return errors.New("stop")
+			},
+		}
+
+		var dest []TestItem
+		err := q.BatchGetWithOptions(keys, &dest, opts)
+		require.EqualError(t, err, "stop")
+	})
+}
+
+func TestQuery_BatchGetWithOptions_ParallelRespectsConcurrency(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &stubBatchExecutor{sleep: 5 * time.Millisecond}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{
+		core.NewKeyPair("id-0", int64(0)),
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+		core.NewKeyPair("id-3", int64(3)),
+	}
+
+	opts := &core.BatchGetOptions{
+		ChunkSize:      1,
+		Parallel:       true,
+		MaxConcurrency: 2,
+		RetryPolicy:    core.DefaultRetryPolicy(),
+	}
+
+	var dest []TestItem
+	err := q.BatchGetWithOptions(keys, &dest, opts)
+	require.NoError(t, err)
+	assert.Len(t, dest, len(keys))
+	assert.Equal(t, 2, executor.maxInFlight)
+}
+
+func TestQuery_BatchGetBuilder(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &stubBatchExecutor{sleep: 2 * time.Millisecond}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+		core.NewKeyPair("id-3", int64(3)),
+	}
+
+	var dest []TestItem
+	err := q.BatchGetBuilder().
+		Keys(keys).
+		ChunkSize(1).
+		ConsistentRead().
+		Parallel(3).
+		OnProgress(func(retrieved, total int) {
+			require.LessOrEqual(t, retrieved, total)
+		}).
+		Execute(&dest)
+
+	require.NoError(t, err)
+	assert.Len(t, dest, len(keys))
+	assert.Equal(t, 3, executor.maxInFlight)
+	for _, call := range executor.calls {
+		assert.True(t, call.ConsistentRead)
+	}
+}
+
+func TestQuery_BatchGetBuilder_DisableRetry(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &capturingBatchExecutor{}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{core.NewKeyPair("id-1", int64(1))}
+	var dest []TestItem
+
+	err := q.BatchGetBuilder().
+		Keys(keys).
+		WithRetry(nil).
+		Execute(&dest)
+
+	require.NoError(t, err)
+	require.Len(t, executor.seenOpts, 1)
+	assert.Nil(t, executor.seenOpts[0].RetryPolicy)
+}
+
 func TestQuery_ReservedWords(t *testing.T) {
 	metadata := &mockMetadata{}
 	executor := &mockExecutor{}
@@ -626,10 +794,74 @@ type mockBatchExecutor struct {
 	mockExecutor
 }
 
-func (m *mockBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, dest any) error {
-	return nil
+func (m *mockBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
+	return nil, nil
 }
 
 func (m *mockBatchExecutor) ExecuteBatchWrite(input *query.CompiledBatchWrite) error {
 	return nil
 }
+
+type stubBatchExecutor struct {
+	calls       []*query.CompiledBatchGet
+	failOnCall  int
+	sleep       time.Duration
+	mu          sync.Mutex
+	inFlight    int
+	maxInFlight int
+}
+
+func (s *stubBatchExecutor) ExecuteQuery(*core.CompiledQuery, any) error { return nil }
+func (s *stubBatchExecutor) ExecuteScan(*core.CompiledQuery, any) error  { return nil }
+
+func (s *stubBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, input)
+	callIndex := len(s.calls)
+	if s.sleep > 0 {
+		s.inFlight++
+		if s.inFlight > s.maxInFlight {
+			s.maxInFlight = s.inFlight
+		}
+	}
+	s.mu.Unlock()
+
+	if s.sleep > 0 {
+		time.Sleep(s.sleep)
+		s.mu.Lock()
+		s.inFlight--
+		s.mu.Unlock()
+	}
+
+	if s.failOnCall > 0 && callIndex == s.failOnCall {
+		return nil, fmt.Errorf("chunk %d failed", callIndex)
+	}
+
+	items := make([]map[string]types.AttributeValue, len(input.Keys))
+	for i, key := range input.Keys {
+		item := make(map[string]types.AttributeValue, len(key)+1)
+		for attr, val := range key {
+			item[attr] = val
+		}
+		item["status"] = &types.AttributeValueMemberS{Value: fmt.Sprintf("chunk-%d-item-%d", callIndex, i)}
+		items[i] = item
+	}
+	return items, nil
+}
+
+func (s *stubBatchExecutor) ExecuteBatchWrite(input *query.CompiledBatchWrite) error { return nil }
+
+type capturingBatchExecutor struct {
+	seenOpts []*core.BatchGetOptions
+}
+
+func (c *capturingBatchExecutor) ExecuteQuery(*core.CompiledQuery, any) error { return nil }
+func (c *capturingBatchExecutor) ExecuteScan(*core.CompiledQuery, any) error  { return nil }
+
+func (c *capturingBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
+	c.seenOpts = append(c.seenOpts, opts)
+	items := make([]map[string]types.AttributeValue, len(input.Keys))
+	return items, nil
+}
+
+func (c *capturingBatchExecutor) ExecuteBatchWrite(input *query.CompiledBatchWrite) error { return nil }

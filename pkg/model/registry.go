@@ -354,6 +354,17 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int, convention n
 		IndexInfo: make(map[string]IndexRole),
 	}
 
+	// Implicit timestamp detection for conventional field names
+	isTimeField := field.Type.Kind() == reflect.Struct &&
+		field.Type.PkgPath() == "time" &&
+		field.Type.Name() == "Time"
+	if isTimeField && strings.EqualFold(field.Name, "CreatedAt") {
+		meta.IsCreatedAt = true
+	}
+	if isTimeField && strings.EqualFold(field.Name, "UpdatedAt") {
+		meta.IsUpdatedAt = true
+	}
+
 	// Parse dynamorm tag
 	tag := field.Tag.Get("dynamorm")
 	if tag == "" {

@@ -1,10 +1,17 @@
 package transaction
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
@@ -410,4 +417,169 @@ func TestMarshalItem(t *testing.T) {
 		// Balance should still be included (0 is valid)
 		assert.Contains(t, item, "balance")
 	})
+}
+
+func TestTransactionBuilderHappyPath(t *testing.T) {
+	registry := model.NewRegistry()
+	require.NoError(t, registry.Register(&User{}))
+	require.NoError(t, registry.Register(&Order{}))
+
+	converter := pkgTypes.NewConverter()
+	builder := NewBuilder(nil, registry, converter)
+	mockClient := newMockTransactClient(t, nil)
+	builder.client = mockClient
+
+	user := &User{ID: "user-xyz", Email: "demo@example.com", Name: "Demo"}
+	update := &User{ID: "user-xyz", Balance: 42}
+	order := &Order{OrderID: "order-99", Status: "pending"}
+
+	err := builder.
+		Create(user, core.TransactCondition{Field: "Email", Operator: "<>", Value: ""}).
+		Update(update, []string{"Balance"}, core.TransactCondition{Field: "Balance", Operator: ">=", Value: 0}).
+		Delete(order).
+		ConditionCheck(order, core.TransactCondition{Field: "Status", Operator: "=", Value: "pending"}).
+		Execute()
+
+	require.NoError(t, err)
+	require.Equal(t, 1, mockClient.callCount)
+	require.Len(t, mockClient.inputs[0].TransactItems, 4)
+
+	put := mockClient.inputs[0].TransactItems[0].Put
+	require.NotNil(t, put)
+	assert.Contains(t, aws.ToString(put.ConditionExpression), "attribute_not_exists")
+}
+
+func TestTransactionBuilderConditionFailure(t *testing.T) {
+	registry := model.NewRegistry()
+	require.NoError(t, registry.Register(&User{}))
+	converter := pkgTypes.NewConverter()
+	builder := NewBuilder(nil, registry, converter)
+
+	cancel := &types.TransactionCanceledException{
+		CancellationReasons: []types.CancellationReason{
+			{
+				Code:    aws.String("ConditionalCheckFailed"),
+				Message: aws.String("duplicate user"),
+			},
+		},
+	}
+
+	builder.client = newMockTransactClient(t, cancel)
+
+	err := builder.Create(&User{ID: "dupe"}).Execute()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, customerrors.ErrConditionFailed))
+
+	var txErr *customerrors.TransactionError
+	require.ErrorAs(t, err, &txErr)
+	assert.Equal(t, "Create", txErr.Operation)
+}
+
+func TestTransactionBuilderRetriesOnConflict(t *testing.T) {
+	registry := model.NewRegistry()
+	require.NoError(t, registry.Register(&User{}))
+	converter := pkgTypes.NewConverter()
+
+	conflict := &types.TransactionCanceledException{
+		CancellationReasons: []types.CancellationReason{
+			{Code: aws.String("TransactionConflict")},
+		},
+	}
+
+	builder := NewBuilder(nil, registry, converter)
+	builder.client = newMockTransactClient(t, conflict, nil)
+
+	err := builder.Put(&User{ID: "retry-user"}).Execute()
+	require.NoError(t, err)
+	assert.Equal(t, 2, builder.client.(*mockTransactClient).callCount)
+}
+
+func TestTransactionBuilderOperationLimit(t *testing.T) {
+	registry := model.NewRegistry()
+	require.NoError(t, registry.Register(&User{}))
+	converter := pkgTypes.NewConverter()
+
+	builder := NewBuilder(nil, registry, converter)
+	for i := 0; i < maxTransactOperations; i++ {
+		id := fmt.Sprintf("user-%d", i)
+		builder.Put(&User{ID: id})
+	}
+	builder.Put(&User{ID: "overflow"})
+
+	err := builder.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "25")
+}
+
+func TestTransactionBuilderMissingKey(t *testing.T) {
+	registry := model.NewRegistry()
+	require.NoError(t, registry.Register(&User{}))
+	converter := pkgTypes.NewConverter()
+
+	builder := NewBuilder(nil, registry, converter)
+	builder.client = newMockTransactClient(t, nil)
+
+	builder.Delete(&User{})
+	err := builder.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "partition key")
+}
+
+func TestTransactionBuilderUpdateWithBuilder(t *testing.T) {
+	registry := model.NewRegistry()
+	require.NoError(t, registry.Register(&User{}))
+	converter := pkgTypes.NewConverter()
+
+	builder := NewBuilder(nil, registry, converter)
+	mockClient := newMockTransactClient(t, nil)
+	builder.client = mockClient
+
+	user := &User{ID: "builder-user", Balance: 10}
+	err := builder.UpdateWithBuilder(user, func(ub core.UpdateBuilder) error {
+		ub.Increment("Balance")
+		return nil
+	}, core.TransactCondition{Field: "Balance", Operator: ">=", Value: 0}).Execute()
+
+	require.NoError(t, err)
+	require.Equal(t, 1, mockClient.callCount)
+	update := mockClient.inputs[0].TransactItems[0].Update
+	require.NotNil(t, update)
+	assert.Contains(t, aws.ToString(update.UpdateExpression), "ADD")
+	assert.NotEmpty(t, aws.ToString(update.ConditionExpression))
+
+	foundBalance := false
+	for _, attr := range update.ExpressionAttributeNames {
+		if attr == "balance" {
+			foundBalance = true
+			break
+		}
+	}
+	assert.True(t, foundBalance, "condition should reference balance attribute")
+}
+
+type mockTransactClient struct {
+	t         *testing.T
+	responses []error
+	callCount int
+	inputs    []*dynamodb.TransactWriteItemsInput
+}
+
+func newMockTransactClient(t *testing.T, responses ...error) *mockTransactClient {
+	return &mockTransactClient{
+		t:         t,
+		responses: responses,
+	}
+}
+
+func (m *mockTransactClient) TransactWriteItems(ctx context.Context, params *dynamodb.TransactWriteItemsInput, optFns ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error) {
+	m.callCount++
+	m.inputs = append(m.inputs, params)
+
+	if len(m.responses) >= m.callCount {
+		if err := m.responses[m.callCount-1]; err != nil {
+			return nil, err
+		}
+	}
+
+	return &dynamodb.TransactWriteItemsOutput{}, nil
 }

@@ -516,6 +516,33 @@ func TestQueryCreatePopulatesTimestampsAndCondition(t *testing.T) {
 	require.True(t, ok)
 	_, err = time.Parse(time.RFC3339Nano, updatedStr)
 	require.NoError(t, err)
+
+	// IfNotExists should add the guard when explicitly requested
+	guarded := &auditOrderModel{
+		TenantID: "tenant#guard",
+		OrderID:  "order#guard",
+		Status:   "PENDING",
+	}
+	err = db.Model(guarded).IfNotExists().Create()
+	require.NoError(t, err)
+
+	req = findRequestByTarget(client.Requests(), "DynamoDB_20120810.PutItem")
+	require.NotNil(t, req)
+	payload = req.Payload
+
+	condExpr, hasCond := payload["ConditionExpression"].(string)
+	require.True(t, hasCond, "IfNotExists should add a conditional guard")
+	require.Contains(t, condExpr, "attribute_not_exists")
+
+	namesMap, hasNames := payload["ExpressionAttributeNames"].(map[string]any)
+	require.True(t, hasNames)
+	foundTenant := false
+	for _, rawName := range namesMap {
+		if name, ok := rawName.(string); ok && name == "tenantId" {
+			foundTenant = true
+		}
+	}
+	require.True(t, foundTenant, "guard should reference the partition key attribute")
 }
 
 func TestQueryCreateConditionalFailure(t *testing.T) {

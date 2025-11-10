@@ -241,3 +241,133 @@ func TestExecuteDeleteItem(t *testing.T) {
 		assert.ErrorIs(t, err, customerrors.ErrConditionFailed)
 	})
 }
+
+func TestExecuteBatchGetRetriesUnprocessedKeys(t *testing.T) {
+	ctx := context.Background()
+	callCount := 0
+
+	mockClient := &MockDynamoDBClient{
+		BatchGetItemFunc: func(ctx context.Context, params *dynamodb.BatchGetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+			callCount++
+			if callCount == 1 {
+				return &dynamodb.BatchGetItemOutput{
+					Responses: map[string][]map[string]types.AttributeValue{
+						"tbl": {
+							{"id": &types.AttributeValueMemberS{Value: "1"}},
+						},
+					},
+					UnprocessedKeys: map[string]types.KeysAndAttributes{
+						"tbl": {
+							Keys: []map[string]types.AttributeValue{
+								{"id": &types.AttributeValueMemberS{Value: "2"}},
+							},
+						},
+					},
+				}, nil
+			}
+			return &dynamodb.BatchGetItemOutput{
+				Responses: map[string][]map[string]types.AttributeValue{
+					"tbl": {
+						{"id": &types.AttributeValueMemberS{Value: "2"}},
+					},
+				},
+			}, nil
+		},
+	}
+
+	executor := NewExecutor(mockClient, ctx)
+	input := &CompiledBatchGet{
+		TableName: "tbl",
+		Keys: []map[string]types.AttributeValue{
+			{"id": &types.AttributeValueMemberS{Value: "1"}},
+			{"id": &types.AttributeValueMemberS{Value: "2"}},
+		},
+	}
+
+	items, err := executor.ExecuteBatchGet(input, core.DefaultBatchGetOptions())
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	assert.Equal(t, 2, callCount)
+}
+
+func TestExecuteBatchGetExhaustsRetries(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockDynamoDBClient{
+		BatchGetItemFunc: func(ctx context.Context, params *dynamodb.BatchGetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+			return &dynamodb.BatchGetItemOutput{
+				Responses: map[string][]map[string]types.AttributeValue{
+					"tbl": {
+						{"id": &types.AttributeValueMemberS{Value: "1"}},
+					},
+				},
+				UnprocessedKeys: map[string]types.KeysAndAttributes{
+					"tbl": {
+						Keys: []map[string]types.AttributeValue{
+							{"id": &types.AttributeValueMemberS{Value: "2"}},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	executor := NewExecutor(mockClient, ctx)
+	input := &CompiledBatchGet{
+		TableName: "tbl",
+		Keys: []map[string]types.AttributeValue{
+			{"id": &types.AttributeValueMemberS{Value: "1"}},
+			{"id": &types.AttributeValueMemberS{Value: "2"}},
+		},
+	}
+
+	opts := core.DefaultBatchGetOptions()
+	opts.RetryPolicy.MaxRetries = 0
+
+	items, err := executor.ExecuteBatchGet(input, opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	require.Len(t, items, 1)
+}
+
+func TestExecuteBatchGetHonorsNilRetryPolicy(t *testing.T) {
+	ctx := context.Background()
+	callCount := 0
+	mockClient := &MockDynamoDBClient{
+		BatchGetItemFunc: func(ctx context.Context, params *dynamodb.BatchGetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+			callCount++
+			return &dynamodb.BatchGetItemOutput{
+				Responses: map[string][]map[string]types.AttributeValue{
+					"tbl": {
+						{"id": &types.AttributeValueMemberS{Value: "1"}},
+					},
+				},
+				UnprocessedKeys: map[string]types.KeysAndAttributes{
+					"tbl": {
+						Keys: []map[string]types.AttributeValue{
+							{"id": &types.AttributeValueMemberS{Value: "2"}},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	executor := NewExecutor(mockClient, ctx)
+	input := &CompiledBatchGet{
+		TableName: "tbl",
+		Keys: []map[string]types.AttributeValue{
+			{"id": &types.AttributeValueMemberS{Value: "1"}},
+			{"id": &types.AttributeValueMemberS{Value: "2"}},
+		},
+	}
+
+	opts := &core.BatchGetOptions{
+		RetryPolicy: nil,
+	}
+
+	items, err := executor.ExecuteBatchGet(input, opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	require.Len(t, items, 1)
+	assert.Equal(t, 1, callCount, "should not retry when retry policy is nil")
+}

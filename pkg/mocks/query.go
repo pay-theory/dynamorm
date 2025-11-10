@@ -188,6 +188,21 @@ func (m *MockQuery) BatchGet(keys []any, dest any) error {
 	return args.Error(0)
 }
 
+// BatchGetWithOptions retrieves multiple items with custom options
+func (m *MockQuery) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOptions) error {
+	args := m.Called(keys, dest, opts)
+	return args.Error(0)
+}
+
+// BatchGetBuilder returns a fluent builder for BatchGet
+func (m *MockQuery) BatchGetBuilder() core.BatchGetBuilder {
+	args := m.Called()
+	if builder, ok := args.Get(0).(core.BatchGetBuilder); ok {
+		return builder
+	}
+	return nil
+}
+
 // BatchCreate creates multiple items
 func (m *MockQuery) BatchCreate(items any) error {
 	args := m.Called(items)

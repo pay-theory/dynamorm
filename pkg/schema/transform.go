@@ -123,7 +123,8 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 		if inputType == expectedInputType && outputType == expectedOutputType && errorType == expectedErrorType {
 			// Create a wrapper to ensure proper type
 			return func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
-				results := transformValue.Call([]reflect.Value{reflect.ValueOf(source)})
+				augmented := augmentAttributeMapForTransform(source, sourceMetadata)
+				results := transformValue.Call([]reflect.Value{reflect.ValueOf(augmented)})
 				if results[1].IsNil() {
 					return results[0].Interface().(map[string]types.AttributeValue), nil
 				}
@@ -183,6 +184,27 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 
 		return targetMap, nil
 	}, nil
+}
+
+func augmentAttributeMapForTransform(item map[string]types.AttributeValue, metadata *model.Metadata) map[string]types.AttributeValue {
+	if metadata == nil || len(metadata.FieldsByDBName) == 0 {
+		cloned := make(map[string]types.AttributeValue, len(item))
+		for k, v := range item {
+			cloned[k] = v
+		}
+		return cloned
+	}
+
+	augmented := make(map[string]types.AttributeValue, len(item)*2)
+	for k, v := range item {
+		augmented[k] = v
+		if fieldMeta, exists := metadata.FieldsByDBName[k]; exists {
+			if _, ok := augmented[fieldMeta.Name]; !ok {
+				augmented[fieldMeta.Name] = v
+			}
+		}
+	}
+	return augmented
 }
 
 // TransformWithValidation applies a transform with validation and error handling

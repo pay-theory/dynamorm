@@ -128,6 +128,16 @@ func (q *Query) resolveAttributeName(field string) string {
 	return field
 }
 
+func (q *Query) resolveGoFieldName(field string) string {
+	if q.metadata == nil || field == "" {
+		return field
+	}
+	if meta := q.metadata.AttributeMetadata(field); meta != nil && meta.Name != "" {
+		return meta.Name
+	}
+	return field
+}
+
 func cloneConditionValues(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -942,81 +952,6 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 
 	destSlice.Set(newSlice)
 	return nil
-}
-
-// BatchGet retrieves multiple items by their primary keys
-func (q *Query) BatchGet(keys []any, dest any) error {
-	if err := q.checkBuilderError(); err != nil {
-		return err
-	}
-	// Validate dest is a pointer to slice
-	destValue := reflect.ValueOf(dest)
-	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
-		return errors.New("dest must be a pointer to slice")
-	}
-
-	// Validate keys
-	if len(keys) == 0 {
-		return errors.New("no keys provided")
-	}
-
-	if len(keys) > 100 {
-		return errors.New("BatchGet supports maximum 100 keys per request")
-	}
-
-	// Build batch get request
-	batchGet := &CompiledBatchGet{
-		TableName: q.metadata.TableName(),
-		Keys:      make([]map[string]types.AttributeValue, 0, len(keys)),
-	}
-
-	// Add projection if specified
-	if len(q.projection) > 0 {
-		builder := expr.NewBuilder()
-		builder.AddProjection(q.projection...)
-		components := builder.Build()
-		batchGet.ProjectionExpression = components.ProjectionExpression
-		batchGet.ExpressionAttributeNames = components.ExpressionAttributeNames
-	}
-
-	// Convert keys to AttributeValues
-	primaryKey := q.metadata.PrimaryKey()
-	for _, key := range keys {
-		keyMap := make(map[string]types.AttributeValue)
-
-		// Handle composite keys
-		keyValue := reflect.ValueOf(key)
-		if keyValue.Kind() == reflect.Struct {
-			// Extract partition and sort key from struct
-			for i := 0; i < keyValue.NumField(); i++ {
-				field := keyValue.Type().Field(i)
-				if field.Name == primaryKey.PartitionKey ||
-					(primaryKey.SortKey != "" && field.Name == primaryKey.SortKey) {
-					av, err := expr.ConvertToAttributeValue(keyValue.Field(i).Interface())
-					if err != nil {
-						return fmt.Errorf("failed to convert key field %s: %w", field.Name, err)
-					}
-					keyMap[field.Name] = av
-				}
-			}
-		} else {
-			// Simple primary key
-			av, err := expr.ConvertToAttributeValue(key)
-			if err != nil {
-				return fmt.Errorf("failed to convert key: %w", err)
-			}
-			keyMap[primaryKey.PartitionKey] = av
-		}
-
-		batchGet.Keys = append(batchGet.Keys, keyMap)
-	}
-
-	// Execute batch get through executor
-	if executor, ok := q.executor.(BatchExecutor); ok {
-		return executor.ExecuteBatchGet(batchGet, dest)
-	}
-
-	return errors.New("executor does not support batch operations")
 }
 
 // BatchCreate creates multiple items

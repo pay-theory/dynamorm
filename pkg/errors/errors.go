@@ -109,3 +109,39 @@ func IsInvalidModel(err error) bool {
 func IsConditionFailed(err error) bool {
 	return errors.Is(err, ErrConditionFailed)
 }
+
+// TransactionError provides context for transactional failures.
+type TransactionError struct {
+	OperationIndex int
+	Operation      string
+	Model          string
+	Reason         string
+	Err            error
+}
+
+// Error implements the error interface.
+func (e *TransactionError) Error() string {
+	if e == nil {
+		return "dynamorm: transaction failed"
+	}
+
+	op := "transaction"
+	if e.Operation != "" {
+		op = fmt.Sprintf("%s operation %s", op, e.Operation)
+	}
+	if e.OperationIndex >= 0 {
+		op = fmt.Sprintf("%s (index %d)", op, e.OperationIndex)
+	}
+	if e.Reason != "" {
+		return fmt.Sprintf("dynamorm: %s failed: %s", op, e.Reason)
+	}
+	return fmt.Sprintf("dynamorm: %s failed", op)
+}
+
+// Unwrap returns the underlying error.
+func (e *TransactionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}

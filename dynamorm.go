@@ -236,6 +236,35 @@ func (db *DB) Transaction(fn func(tx *core.Tx) error) error {
 	return fn(tx)
 }
 
+// Transact returns a fluent transaction builder for composing TransactWriteItems requests.
+func (db *DB) Transact() core.TransactionBuilder {
+	builder := transaction.NewBuilder(db.session, db.registry, db.converter)
+	if db.ctx != nil {
+		builder.WithContext(db.ctx)
+	}
+	return builder
+}
+
+// TransactWrite executes the supplied function with a transaction builder and automatically commits it.
+func (db *DB) TransactWrite(ctx context.Context, fn func(core.TransactionBuilder) error) error {
+	if fn == nil {
+		return fmt.Errorf("transaction function cannot be nil")
+	}
+
+	builder := db.Transact()
+	if ctx != nil {
+		builder = builder.WithContext(ctx)
+	} else if db.ctx != nil {
+		builder = builder.WithContext(db.ctx)
+	}
+
+	if err := fn(builder); err != nil {
+		return err
+	}
+
+	return builder.Execute()
+}
+
 // AutoMigrate creates or updates tables based on the given models
 func (db *DB) AutoMigrate(models ...any) error {
 	manager := schema.NewManager(db.session, db.registry)
@@ -553,18 +582,33 @@ func (q *query) Index(indexName string) core.Query {
 
 // Filter adds an AND filter condition
 func (q *query) Filter(field string, op string, value any) core.Query {
-	if err := q.builder.AddFilterCondition("AND", field, op, value); err != nil {
-		q.recordBuilderError(err)
-	}
+	q.addFilterCondition("AND", field, op, value)
 	return q
 }
 
 // OrFilter adds an OR filter condition
 func (q *query) OrFilter(field string, op string, value any) core.Query {
-	if err := q.builder.AddFilterCondition("OR", field, op, value); err != nil {
+	q.addFilterCondition("OR", field, op, value)
+	return q
+}
+
+func (q *query) addFilterCondition(logicalOp, field, op string, value any) {
+	normalizedOp := normalizeOperator(op)
+	if normalizedOp == "" {
+		q.recordBuilderError(fmt.Errorf("operator cannot be empty"))
+		return
+	}
+
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return
+	}
+
+	attrName := mapToAttributeName(metadata, field)
+	if err := q.builder.AddFilterCondition(logicalOp, attrName, normalizedOp, value); err != nil {
 		q.recordBuilderError(err)
 	}
-	return q
 }
 
 // FilterGroup adds a grouped AND filter condition
@@ -692,7 +736,23 @@ func (q *query) Offset(offset int) core.Query {
 
 // Select specifies which fields to retrieve
 func (q *query) Select(fields ...string) core.Query {
-	q.fields = fields
+	if len(fields) == 0 {
+		q.fields = fields
+		return q
+	}
+
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
+
+	resolved := make([]string, 0, len(fields))
+	for _, field := range fields {
+		resolved = append(resolved, mapToAttributeName(metadata, field))
+	}
+
+	q.fields = resolved
 	return q
 }
 
@@ -1149,144 +1209,79 @@ func (q *query) Scan(dest any) error {
 	return q.unmarshalItems(items, dest, metadata)
 }
 
-// BatchGet retrieves multiple items by their primary keys
+// BatchGet retrieves multiple items by their primary keys.
 func (q *query) BatchGet(keys []any, dest any) error {
+	return q.BatchGetWithOptions(keys, dest, nil)
+}
+
+// BatchGetWithOptions retrieves multiple items with advanced options.
+func (q *query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOptions) error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	// Get model metadata
-	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
+	internal, metadata, err := q.buildBatchGetQuery()
 	if err != nil {
 		return err
 	}
 
-	// Validate destination is a slice pointer
-	destValue := reflect.ValueOf(dest)
-	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("destination must be a pointer to slice")
+	var rawItems []map[string]types.AttributeValue
+	if err := internal.BatchGetWithOptions(keys, &rawItems, opts); err != nil {
+		return err
 	}
 
-	// Build batch get request
-	keysAndAttributes := &types.KeysAndAttributes{
-		Keys: make([]map[string]types.AttributeValue, 0, len(keys)),
+	return q.unmarshalItems(rawItems, dest, metadata)
+}
+
+// BatchGetBuilder returns a fluent builder for composing batch get operations.
+func (q *query) BatchGetBuilder() core.BatchGetBuilder {
+	if err := q.checkBuilderError(); err != nil {
+		return &errorBatchGetBuilder{err: err}
+	}
+	if err := q.checkLambdaTimeout(); err != nil {
+		return &errorBatchGetBuilder{err: err}
 	}
 
-	// Add projection if specified
-	if len(q.fields) > 0 {
-		builder := expr.NewBuilderWithConverter(q.db.converter)
-		builder.AddProjection(q.fields...)
-		components := builder.Build()
-
-		if components.ProjectionExpression != "" {
-			keysAndAttributes.ProjectionExpression = aws.String(components.ProjectionExpression)
-			keysAndAttributes.ExpressionAttributeNames = components.ExpressionAttributeNames
-		}
+	internal, _, err := q.buildBatchGetQuery()
+	if err != nil {
+		return &errorBatchGetBuilder{err: err}
 	}
 
-	// Convert keys to DynamoDB format
-	for _, key := range keys {
-		keyMap := make(map[string]types.AttributeValue)
+	return internal.BatchGetBuilder()
+}
 
-		// Handle different key formats
-		switch k := key.(type) {
-		case map[string]any:
-			// Key is a map with pk and optional sk
-			if pk, hasPK := k["pk"]; hasPK {
-				av, err := q.db.converter.ToAttributeValue(pk)
-				if err != nil {
-					return fmt.Errorf("failed to convert partition key: %w", err)
-				}
-				keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-			}
-			if sk, hasSK := k["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-				av, err := q.db.converter.ToAttributeValue(sk)
-				if err != nil {
-					return fmt.Errorf("failed to convert sort key: %w", err)
-				}
-				keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-			}
-		default:
-			// Check if key is a struct with the same type as our model
-			keyValue := reflect.ValueOf(key)
-			if keyValue.Kind() == reflect.Ptr {
-				keyValue = keyValue.Elem()
-			}
-
-			if keyValue.Kind() == reflect.Struct {
-				// Extract primary key fields from struct
-				for _, field := range metadata.Fields {
-					if field.IsPK {
-						fieldValue := keyValue.FieldByIndex(field.IndexPath)
-						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
-						if err != nil {
-							return fmt.Errorf("failed to convert partition key: %w", err)
-						}
-						keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-					} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
-						fieldValue := keyValue.FieldByIndex(field.IndexPath)
-						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
-						if err != nil {
-							return fmt.Errorf("failed to convert sort key: %w", err)
-						}
-						keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-					}
-				}
-			} else {
-				// Key is just the partition key value
-				av, err := q.db.converter.ToAttributeValue(key)
-				if err != nil {
-					return fmt.Errorf("failed to convert partition key: %w", err)
-				}
-				keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-			}
-		}
-
-		// Validate that we have at least a partition key
-		if len(keyMap) == 0 {
-			return fmt.Errorf("invalid key: missing partition key")
-		}
-
-		keysAndAttributes.Keys = append(keysAndAttributes.Keys, keyMap)
+func (q *query) buildBatchGetQuery() (*queryPkg.Query, *model.Metadata, error) {
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// Build BatchGetItem input
-	input := &dynamodb.BatchGetItemInput{
-		RequestItems: map[string]types.KeysAndAttributes{
-			metadata.TableName: *keysAndAttributes,
-		},
-	}
-
-	// Execute batch get
-	var allItems []map[string]types.AttributeValue
-
-	// Get client once for the entire batch operation
 	client, err := q.db.session.Client()
 	if err != nil {
-		return fmt.Errorf("failed to get client for batch get: %w", err)
+		return nil, nil, fmt.Errorf("failed to get client for batch get: %w", err)
 	}
 
-	for {
-		output, err := client.BatchGetItem(q.ctx, input)
-		if err != nil {
-			return fmt.Errorf("failed to batch get items: %w", err)
-		}
-
-		// Collect items
-		if items, exists := output.Responses[metadata.TableName]; exists {
-			allItems = append(allItems, items...)
-		}
-
-		// Check for unprocessed keys
-		if len(output.UnprocessedKeys) == 0 {
-			break
-		}
-
-		// Retry unprocessed keys
-		input.RequestItems = output.UnprocessedKeys
+	ctx := q.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	// Unmarshal items to destination slice
-	return q.unmarshalItems(allItems, dest, metadata)
+	adapter := &metadataAdapter{metadata: metadata}
+	executor := queryPkg.NewExecutor(client, ctx)
+	internal := queryPkg.New(q.model, adapter, executor)
+	internal.WithContext(ctx)
+
+	if len(q.fields) > 0 {
+		internal.Select(q.fields...)
+	}
+	if q.consistentRead {
+		internal.ConsistentRead()
+	}
+
+	return internal, metadata, nil
 }
 
 // BatchCreate creates multiple items
@@ -1537,6 +1532,16 @@ func lookupField(metadata *model.Metadata, fieldName string) (*model.FieldMetada
 	}
 
 	return nil, false
+}
+
+func mapToAttributeName(metadata *model.Metadata, field string) string {
+	if metadata == nil {
+		return field
+	}
+	if fieldMeta, exists := lookupField(metadata, field); exists {
+		return fieldMeta.DBName
+	}
+	return field
 }
 
 func cloneRawConditionValues(values map[string]any) map[string]any {
@@ -2755,9 +2760,13 @@ func (e *errorQuery) Update(fields ...string) error                             
 func (e *errorQuery) Delete() error                                                   { return e.err }
 func (e *errorQuery) Scan(dest any) error                                             { return e.err }
 func (e *errorQuery) BatchGet(keys []any, dest any) error                             { return e.err }
-func (e *errorQuery) BatchCreate(items any) error                                     { return e.err }
-func (e *errorQuery) BatchDelete(keys []any) error                                    { return e.err }
-func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error               { return e.err }
+func (e *errorQuery) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOptions) error {
+	return e.err
+}
+func (e *errorQuery) BatchGetBuilder() core.BatchGetBuilder             { return &errorBatchGetBuilder{err: e.err} }
+func (e *errorQuery) BatchCreate(items any) error                       { return e.err }
+func (e *errorQuery) BatchDelete(keys []any) error                      { return e.err }
+func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error { return e.err }
 func (e *errorQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
 	return e.err
 }
@@ -2773,6 +2782,8 @@ func (e *errorQuery) SetCursor(cursor string) error                             
 type (
 	Config            = session.Config
 	AutoMigrateOption = schema.AutoMigrateOption
+	BatchGetOptions   = core.BatchGetOptions
+	KeyPair           = core.KeyPair
 )
 
 // Re-export AutoMigrate options for convenience
@@ -2783,6 +2794,16 @@ var (
 	WithTransform   = schema.WithTransform
 	WithBatchSize   = schema.WithBatchSize
 )
+
+// NewKeyPair constructs a composite key helper for BatchGet operations.
+func NewKeyPair(partitionKey any, sortKey ...any) core.KeyPair {
+	return core.NewKeyPair(partitionKey, sortKey...)
+}
+
+// DefaultBatchGetOptions returns the library defaults for BatchGet operations.
+func DefaultBatchGetOptions() *core.BatchGetOptions {
+	return core.DefaultBatchGetOptions()
+}
 
 // TransactionFunc executes a function within a database transaction
 // This is the actual implementation that uses our sophisticated transaction support
@@ -3094,6 +3115,25 @@ func (e *errorUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateB
 func (e *errorUpdateBuilder) ReturnValues(option string) core.UpdateBuilder            { return e }
 func (e *errorUpdateBuilder) Execute() error                                           { return e.err }
 func (e *errorUpdateBuilder) ExecuteWithResult(result any) error                       { return e.err }
+
+// errorBatchGetBuilder is returned when BatchGet builder construction fails.
+type errorBatchGetBuilder struct {
+	err error
+}
+
+func (b *errorBatchGetBuilder) Keys(keys []any) core.BatchGetBuilder                    { return b }
+func (b *errorBatchGetBuilder) ChunkSize(size int) core.BatchGetBuilder                 { return b }
+func (b *errorBatchGetBuilder) ConsistentRead() core.BatchGetBuilder                    { return b }
+func (b *errorBatchGetBuilder) Parallel(maxConcurrency int) core.BatchGetBuilder        { return b }
+func (b *errorBatchGetBuilder) WithRetry(policy *core.RetryPolicy) core.BatchGetBuilder { return b }
+func (b *errorBatchGetBuilder) Select(fields ...string) core.BatchGetBuilder            { return b }
+func (b *errorBatchGetBuilder) OnProgress(callback core.BatchProgressCallback) core.BatchGetBuilder {
+	return b
+}
+func (b *errorBatchGetBuilder) OnError(handler core.BatchChunkErrorHandler) core.BatchGetBuilder {
+	return b
+}
+func (b *errorBatchGetBuilder) Execute(dest any) error { return b.err }
 
 // ParallelScan configures parallel scanning with segment and total segments
 func (q *query) ParallelScan(segment int32, totalSegments int32) core.Query {

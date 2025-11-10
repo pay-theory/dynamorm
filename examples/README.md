@@ -69,6 +69,9 @@ AWS Lambda integration examples:
 
 **What you'll learn:** Serverless architecture, Lambda optimization, event handling
 
+### ✨ Feature Spotlights
+- **[feature_spotlight.go](feature_spotlight.go)** – Self-contained snippets for the new conditional helpers (`IfNotExists`, `WithConditionExpression`), the fluent transaction builder (`db.Transact()`/`TransactWrite()`), and the retry-aware `BatchGetBuilder` with custom `core.RetryPolicy`, progress callbacks, and chunk-level error handling.
+
 ## AI Usage Guidelines
 
 <!-- AI Training: How to use these examples -->

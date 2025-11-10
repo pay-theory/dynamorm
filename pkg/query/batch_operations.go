@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,13 +30,8 @@ type BatchUpdateOptions struct {
 	RetryPolicy *RetryPolicy
 }
 
-// RetryPolicy defines retry behavior for batch operations
-type RetryPolicy struct {
-	MaxRetries    int
-	InitialDelay  time.Duration
-	MaxDelay      time.Duration
-	BackoffFactor float64
-}
+// RetryPolicy is an alias to core.RetryPolicy for backwards compatibility.
+type RetryPolicy = core.RetryPolicy
 
 // DefaultBatchOptions returns default batch options
 func DefaultBatchOptions() *BatchUpdateOptions {
@@ -344,16 +340,16 @@ func (q *Query) extractKey(item any) (map[string]any, error) {
 	}
 
 	// Extract partition key
-	pkField := itemValue.FieldByName(primaryKey.PartitionKey)
-	if !pkField.IsValid() {
+	pkField, ok := q.findKeyField(itemValue, primaryKey.PartitionKey)
+	if !ok {
 		return nil, fmt.Errorf("partition key field %s not found", primaryKey.PartitionKey)
 	}
 	key[primaryKey.PartitionKey] = pkField.Interface()
 
 	// Extract sort key if present
 	if primaryKey.SortKey != "" {
-		skField := itemValue.FieldByName(primaryKey.SortKey)
-		if !skField.IsValid() {
+		skField, ok := q.findKeyField(itemValue, primaryKey.SortKey)
+		if !ok {
 			return nil, fmt.Errorf("sort key field %s not found", primaryKey.SortKey)
 		}
 		key[primaryKey.SortKey] = skField.Interface()
@@ -375,10 +371,55 @@ func (q *Query) extractKeyAttributeValues(key any) (map[string]types.AttributeVa
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert key value: %w", err)
 		}
-		keyAV[k] = av
+		attrName := q.resolveAttributeName(k)
+		keyAV[attrName] = av
 	}
 
 	return keyAV, nil
+}
+
+func (q *Query) findKeyField(itemValue reflect.Value, keyName string) (reflect.Value, bool) {
+	goName := q.resolveGoFieldName(keyName)
+	if field := itemValue.FieldByName(goName); field.IsValid() {
+		return field, true
+	}
+	if field, ok := findFieldByTag(itemValue, keyName); ok {
+		return field, true
+	}
+	if keyName != goName {
+		if field, ok := findFieldByTag(itemValue, goName); ok {
+			return field, true
+		}
+	}
+	return reflect.Value{}, false
+}
+
+func findFieldByTag(itemValue reflect.Value, attrName string) (reflect.Value, bool) {
+	if attrName == "" {
+		return reflect.Value{}, false
+	}
+	typ := itemValue.Type()
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		tag := field.Tag.Get("dynamodb")
+		if tag == "" {
+			tag = field.Tag.Get("dynamorm")
+		}
+		if tag == "" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name == "" {
+			continue
+		}
+		if name == attrName {
+			return itemValue.Field(i), true
+		}
+	}
+	return reflect.Value{}, false
 }
 
 // executeWithRetry executes a function with retry logic

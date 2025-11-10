@@ -2,6 +2,7 @@ package query
 
 import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // CompiledBatchGet represents a compiled batch get operation
@@ -22,7 +23,7 @@ type CompiledBatchWrite struct {
 // BatchExecutor extends QueryExecutor with batch operations
 type BatchExecutor interface {
 	QueryExecutor
-	ExecuteBatchGet(input *CompiledBatchGet, dest any) error
+	ExecuteBatchGet(input *CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error)
 	ExecuteBatchWrite(input *CompiledBatchWrite) error
 }
 

@@ -49,6 +49,12 @@ type InvalidModel struct {
 	Name string // No primary key
 }
 
+type ImplicitTimestampModel struct {
+	ID        string `dynamorm:"pk"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 func TestNewRegistry(t *testing.T) {
 	registry := model.NewRegistry()
 	assert.NotNil(t, registry)
@@ -209,6 +215,24 @@ func TestRegisterInvalidModel(t *testing.T) {
 	err := registry.Register(&InvalidModel{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing primary key")
+}
+
+func TestRegisterImplicitTimestampModel(t *testing.T) {
+	registry := model.NewRegistry()
+
+	err := registry.Register(&ImplicitTimestampModel{})
+	require.NoError(t, err)
+
+	metadata, err := registry.GetMetadata(&ImplicitTimestampModel{})
+	require.NoError(t, err)
+
+	require.NotNil(t, metadata.CreatedAtField)
+	assert.Equal(t, "CreatedAt", metadata.CreatedAtField.Name)
+	assert.True(t, metadata.CreatedAtField.IsCreatedAt)
+
+	require.NotNil(t, metadata.UpdatedAtField)
+	assert.Equal(t, "UpdatedAt", metadata.UpdatedAtField.Name)
+	assert.True(t, metadata.UpdatedAtField.IsUpdatedAt)
 }
 
 func TestRegisterDuplicatePrimaryKey(t *testing.T) {

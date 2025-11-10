@@ -5,6 +5,9 @@
 
 ## Quick Navigation
 
+### 🆕 What's New
+- **[Phase 4 spotlight](../whats-new.md)** - Summary of conditional helpers, transaction builder, and BatchGet updates
+
 ### 🚀 Getting Started
 - **[Quick Start](getting-started.md)** - Get DynamORM running in 5 minutes
 - **[Installation Guide](installation.md)** - Installation for different environments

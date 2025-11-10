@@ -39,6 +39,7 @@ Each phase builds on the previous one so we can ship incremental value while pro
 ## Phase 1 – Conditional Create/Update/Delete Helpers
 **Duration:** 1 sprint  
 **Goal:** allow repositories to express DynamoDB conditions without dropping to the SDK.
+**Status:** ✅ Delivered in v1.0.36 (see README “Pattern: Conditional Writes” and troubleshooting guide updates).
 
 Work items:
 - Extend `core.Query` interface (and implementations) with fluent helpers such as `IfNotExists()`, `Condition(field, op, value)`, `ConditionExists`, mirroring the existing `UpdateBuilder` condition set.
@@ -58,6 +59,7 @@ Work items:
 ## Phase 2 – TransactWriteItems Utility
 **Duration:** 1 sprint  
 **Goal:** expose a high-level API for composing conditioned puts/updates/deletes atomically.
+**Status:** ✅ Delivered in v1.0.36 (`db.Transact()`, `TransactWrite`, and `customerrors.TransactionError`).
 
 Work items:
 - Build a `transaction.Builder` (or similar) that reuses `pkg/transaction/transaction.go` marshaling but exposes a fluent DSL (e.g., `tx.Put(model, dynamorm.IfNotExists())`).
@@ -76,6 +78,7 @@ Work items:
 ## Phase 3 – BatchGetItem Wrapper
 **Duration:** < 1 sprint  
 **Goal:** provide an ergonomic, retry-aware batch read surface.
+**Status:** ✅ Delivered in v1.0.36 (`BatchGetWithOptions`, `BatchGetBuilder`, `core.RetryPolicy`, `dynamorm.NewKeyPair`).
 
 Work items:
 - Introduce a `KeyPair` helper (PK/SK) plus `BatchGet(keys []KeyPair, dest any)` on `core.Query` or `core.DB`.
@@ -116,4 +119,3 @@ Weekly checkpoints should confirm:
 1. Phase milestones met.
 2. Interface stability (no breaking changes without notice).
 3. Tests/documentation updated alongside code.
-

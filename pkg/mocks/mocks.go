@@ -104,6 +104,9 @@ type (
 	// UpdateBuilder is an alias for MockUpdateBuilder to allow shorter declarations
 	UpdateBuilder = MockUpdateBuilder
 
+	// BatchGetBuilder is an alias for MockBatchGetBuilder to simplify usage in tests.
+	BatchGetBuilder = MockBatchGetBuilder
+
 	// ExtendedDB is an alias for MockExtendedDB to allow shorter declarations
 	ExtendedDB = MockExtendedDB
 )

@@ -263,6 +263,48 @@ func UpdateUserWithRetry(db *dynamorm.DB, userID string, newName string) error {
     }
     return errors.New("max retries exceeded")
 }
+
+### Modern handling with `ErrConditionFailed`
+
+Every conditional helper (`IfNotExists`, `IfExists`, `WithCondition`, transaction conditions, etc.) normalizes DynamoDB's `ConditionalCheckFailedException` into `customerrors.ErrConditionFailed`. Prefer `errors.Is` instead of string matching so your code stays resilient to localized error messages.
+
+```go
+import (
+    "errors"
+    "fmt"
+    "log"
+
+    "github.com/pay-theory/dynamorm"
+    core "github.com/pay-theory/dynamorm/pkg/core"
+    customerrors "github.com/pay-theory/dynamorm/pkg/errors"
+)
+
+func createBookmark(db core.ExtendedDB, bookmark *Bookmark) error {
+    if err := db.Model(bookmark).IfNotExists().Create(); err != nil {
+        if errors.Is(err, customerrors.ErrConditionFailed) {
+            log.Printf("bookmark %s already exists", bookmark.ID)
+            return nil
+        }
+        return fmt.Errorf("create bookmark failed: %w", err)
+    }
+    return nil
+}
+```
+
+Transactions surface the same sentinel error plus a structured `TransactionError` that includes the operation index and DynamoDB cancellation reason:
+
+```go
+var txErr *customerrors.TransactionError
+if err := db.Transact().Create(bookmark, dynamorm.IfNotExists()).Execute(); err != nil {
+    if errors.As(err, &txErr) {
+        log.Printf("operation %d (%s) failed: %s", txErr.OperationIndex, txErr.Operation, txErr.Reason)
+    }
+    if errors.Is(err, customerrors.ErrConditionFailed) {
+        return fmt.Errorf("conflict: %w", err)
+    }
+    return fmt.Errorf("transaction failed: %w", err)
+}
+```
 ```
 
 ### AccessDeniedException or CredentialsError
