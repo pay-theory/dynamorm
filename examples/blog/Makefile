@@ -13,7 +13,7 @@ help:
 # Install dependencies
 setup:
 	@echo "Installing dependencies..."
-	go mod init github.com/example/dynamorm/examples/blog || true
+go mod init github.com/pay-theory/dynamorm/examples/blog || true
 	go mod tidy
 	@echo "Setting up local DynamoDB..."
 	cd deployment && docker-compose up -d

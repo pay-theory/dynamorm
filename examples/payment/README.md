@@ -840,8 +840,8 @@ func (s *PaymentService) checkCompliance(payment *models.Payment) {
 
 After mastering payment processing:
 
-1. **[E-commerce Platform](../ecommerce/)** - Complex inventory and orders
-2. **[Multi-tenant SaaS](../multi-tenant/)** - Enterprise patterns
+1. **[Multi-tenant SaaS](../multi-tenant/)** - Enterprise patterns
+2. **[Feature Spotlights](../feature_spotlight.go)** - Advanced transactions/BatchGet flows
 3. **[Lambda Deployment](../lambda/)** - Serverless payment processing
 
 ---

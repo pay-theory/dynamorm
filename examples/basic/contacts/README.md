@@ -324,7 +324,7 @@ You've now mastered:
 
 Ready for:
 - 🚀 **Blog Example**: Content management
-- 🚀 **E-commerce**: Transactions and inventory
+- 🚀 **Blog Platform**: Rich content relationships
 - 🚀 **Payment**: Financial data patterns
 - 🚀 **Multi-tenant**: SaaS architectures
 

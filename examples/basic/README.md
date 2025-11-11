@@ -400,7 +400,7 @@ You'll additionally understand:
 After completing these basic examples:
 
 1. **[Payment Processing](../payment/)** - Learn transactions and consistency
-2. **[E-commerce Platform](../ecommerce/)** - Complex business logic
+2. **[Blog Platform](../blog/)** - Rich content relationships
 3. **[Multi-tenant SaaS](../multi-tenant/)** - Enterprise patterns
 4. **[Lambda Deployment](../lambda/)** - Serverless architecture
 

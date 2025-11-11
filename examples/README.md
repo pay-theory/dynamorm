@@ -25,17 +25,6 @@ Complete payment processing application with:
 
 **What you'll learn:** Transactions, consistency patterns, production error handling
 
-### 🛍️ [E-commerce Platform](ecommerce/)
-**Scalable e-commerce backend**
-
-Full e-commerce system demonstrating:
-- Product catalog with categories
-- Shopping cart and order processing
-- Inventory management
-- Customer relationship management
-
-**What you'll learn:** Complex relationships, batch operations, performance optimization
-
 ### 📝 [Blog Platform](blog/)
 **Content management system**
 
@@ -159,8 +148,8 @@ EOF
 6. **[Lambda Integration](lambda/)** - Deploy to serverless
 
 ### Advanced Path
-7. **[E-commerce Platform](ecommerce/)** - Scale to complex systems
-8. **[Multi-Tenant SaaS](multi-tenant/)** - Enterprise architecture patterns
+7. **[Multi-Tenant SaaS](multi-tenant/)** - Enterprise architecture patterns
+8. **[Feature Spotlights](feature_spotlight.go)** - Deep dives on transactions, conditionals, and BatchGet builder
 
 ## Common Patterns Demonstrated
 
