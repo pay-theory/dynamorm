@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- First-class conditional write helpers on `core.Query`: `IfNotExists()`, `IfExists()`, `WithCondition()`, and `WithConditionExpression()` make it trivial to express DynamoDB condition checks without dropping to the raw SDK.
+- Documentation now includes canonical examples for conditional creates, updates, and deletes along with guidance on handling `ErrConditionFailed`.
+- `docs/whats-new.md` plus new `examples/feature_spotlight.go` snippets illustrate conditional helpers, the fluent transaction builder, and the BatchGet builder with custom retry policies.
+- Fluent transaction builder via `db.Transact()` plus the `core.TransactionBuilder` interface, including a context-aware `TransactWrite` helper, per-operation condition helpers (`dynamorm.Condition`, `dynamorm.IfNotExists`, etc.), and detailed `TransactionError` reporting with automatic retries for transient cancellation reasons.
+- Retry-aware batch read API: `BatchGetWithOptions`, `BatchGetBuilder`, and the new `dynamorm.NewKeyPair` helper support automatic chunking, exponential backoff with jitter, progress callbacks, and bounded parallelism.
+
+### Changed
+- Create/Update/Delete paths in both the high-level `dynamorm` package and the modular `pkg/query` builder now share a common expression compiler, allowing query-level conditions and advanced expressions to flow through every write operation.
+- `pkg/query` executors translate DynamoDB `ConditionalCheckFailedException` responses into `customerrors.ErrConditionFailed`, enabling consistent conflict handling via `errors.Is`.
+- `BatchExecutor.ExecuteBatchGet` now returns the raw DynamoDB items after retrying `UnprocessedKeys`, and top-level `BatchGet` delegates to the shared chunking engine to preserve ordering guarantees.
+
+### Fixed
+- `db.Model(...).Create()` no longer injects an implicit `attribute_not_exists` guard; callers opt in via `IfNotExists()` just like `pkg/query`, preserving the documented overwrite semantics.
+- Passing `WithRetry(nil)` (or a `BatchGetOptions` with `RetryPolicy: nil`) now disables BatchGet retries as intended, instead of silently substituting the default retry policy.
+
 ## [1.0.36] - 2025-11-09
 
 ### Fixed

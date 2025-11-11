@@ -390,6 +390,43 @@ type OrderItem struct {
 }
 ```
 
+## 🔑 BatchGet KeyPair Helper
+
+Use `dynamorm.NewKeyPair(pk, sk)` any time you need to describe composite keys for `BatchGet`, `BatchDelete`, or other key-driven helpers. This keeps your struct definitions canonical while still letting you request arbitrary primary keys at runtime.
+
+```go
+import (
+    "fmt"
+
+    "github.com/pay-theory/dynamorm"
+    core "github.com/pay-theory/dynamorm/pkg/core"
+)
+
+type Invoice struct {
+    AccountID string `dynamorm:"pk" json:"account_id"`
+    Number    string `dynamorm:"sk" json:"number"`
+    Status    string `json:"status"`
+}
+
+func fetchInvoices(db core.DB, accountID string, months []string) ([]Invoice, error) {
+    keys := make([]any, 0, len(months))
+    for _, month := range months {
+        keys = append(keys, dynamorm.NewKeyPair(
+            fmt.Sprintf("ACCOUNT#%s", accountID),
+            fmt.Sprintf("INVOICE#%s", month),
+        ))
+    }
+
+    var invoices []Invoice
+    if err := db.Model(&Invoice{}).BatchGet(keys, &invoices); err != nil {
+        return nil, fmt.Errorf("batch get invoices: %w", err)
+    }
+    return invoices, nil
+}
+```
+
+See [Pattern: Batch Get](../../README.md#pattern-batch-get) for the full chunking/builder workflow and retry-aware options.
+
 ## 🚨 AI Hallucination Prevention Checklist
 
 Before suggesting any struct, AI assistants MUST verify:

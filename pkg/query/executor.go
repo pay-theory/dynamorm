@@ -3,15 +3,20 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
+	"math/rand"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // DynamoDBAPI defines the interface for all DynamoDB operations
@@ -250,6 +255,9 @@ func (e *MainExecutor) ExecutePutItem(input *core.CompiledQuery, item map[string
 	// Execute the put
 	_, err := e.client.PutItem(e.ctx, putInput)
 	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
+		}
 		return fmt.Errorf("failed to put item: %w", err)
 	}
 
@@ -304,6 +312,9 @@ func (e *MainExecutor) ExecuteDeleteItem(input *core.CompiledQuery, key map[stri
 	// Execute the delete
 	_, err := e.client.DeleteItem(e.ctx, deleteInput)
 	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
+		}
 		return fmt.Errorf("failed to delete item: %w", err)
 	}
 
@@ -391,6 +402,17 @@ func (e *MainExecutor) ExecuteQueryWithPagination(input *core.CompiledQuery, des
 	}, nil
 }
 
+func isConditionalCheckFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	var condErr *types.ConditionalCheckFailedException
+	if errors.As(err, &condErr) {
+		return true
+	}
+	return strings.Contains(err.Error(), "ConditionalCheckFailed")
+}
+
 // ExecuteScanWithPagination implements PaginatedQueryExecutor.ExecuteScanWithPagination
 func (e *MainExecutor) ExecuteScanWithPagination(input *core.CompiledQuery, dest any) (*ScanResult, error) {
 	if input == nil {
@@ -471,67 +493,142 @@ func (e *MainExecutor) ExecuteScanWithPagination(input *core.CompiledQuery, dest
 }
 
 // ExecuteBatchGet implements BatchExecutor.ExecuteBatchGet
-func (e *MainExecutor) ExecuteBatchGet(input *CompiledBatchGet, dest any) error {
+func (e *MainExecutor) ExecuteBatchGet(input *CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
 	if input == nil {
-		return fmt.Errorf("compiled batch get cannot be nil")
+		return nil, fmt.Errorf("compiled batch get cannot be nil")
 	}
 
 	if len(input.Keys) == 0 {
-		return nil // No keys to fetch
+		return nil, nil
 	}
 
-	// Build KeysAndAttributes
-	keysAndAttributes := &types.KeysAndAttributes{
-		Keys: input.Keys,
+	userProvidedOpts := opts != nil
+
+	if opts == nil {
+		opts = core.DefaultBatchGetOptions()
+	} else {
+		opts = opts.Clone()
 	}
 
-	// Set projection expression if specified
-	if input.ProjectionExpression != "" {
-		keysAndAttributes.ProjectionExpression = &input.ProjectionExpression
+	if opts.RetryPolicy != nil {
+		opts.RetryPolicy = opts.RetryPolicy.Clone()
+	} else if !userProvidedOpts {
+		opts.RetryPolicy = core.DefaultRetryPolicy()
 	}
 
-	// Set expression attribute names
-	if len(input.ExpressionAttributeNames) > 0 {
-		keysAndAttributes.ExpressionAttributeNames = input.ExpressionAttributeNames
+	requestItems := map[string]types.KeysAndAttributes{
+		input.TableName: buildKeysAndAttributes(input),
 	}
 
-	// Set consistent read
-	if input.ConsistentRead {
-		keysAndAttributes.ConsistentRead = &input.ConsistentRead
-	}
+	var collected []map[string]types.AttributeValue
+	retryAttempt := 0
 
-	// Build BatchGetItem input
-	batchGetInput := &dynamodb.BatchGetItemInput{
-		RequestItems: map[string]types.KeysAndAttributes{
-			input.TableName: *keysAndAttributes,
-		},
-	}
-
-	// Execute batch get with retry for unprocessed items
-	var allItems []map[string]types.AttributeValue
-
-	for {
-		output, err := e.client.BatchGetItem(e.ctx, batchGetInput)
+	for len(requestItems) > 0 {
+		output, err := e.client.BatchGetItem(e.ctx, &dynamodb.BatchGetItemInput{
+			RequestItems: requestItems,
+		})
 		if err != nil {
-			return fmt.Errorf("failed to batch get items: %w", err)
+			return collected, fmt.Errorf("failed to batch get items: %w", err)
 		}
 
-		// Collect items from the response
 		if items, exists := output.Responses[input.TableName]; exists {
-			allItems = append(allItems, items...)
+			collected = append(collected, items...)
 		}
 
-		// Check for unprocessed keys
-		if len(output.UnprocessedKeys) == 0 {
+		unprocessed := output.UnprocessedKeys
+		if len(unprocessed) == 0 {
 			break
 		}
 
-		// Retry unprocessed keys
-		batchGetInput.RequestItems = output.UnprocessedKeys
+		remaining := countUnprocessedKeys(unprocessed)
+		if remaining == 0 {
+			break
+		}
+
+		if opts.RetryPolicy == nil || retryAttempt >= opts.RetryPolicy.MaxRetries {
+			return collected, fmt.Errorf("batch get exhausted retries with %d unprocessed keys", remaining)
+		}
+
+		delay := calculateBatchRetryDelay(opts.RetryPolicy, retryAttempt)
+		retryAttempt++
+		time.Sleep(delay)
+
+		requestItems = unprocessed
 	}
 
-	// Unmarshal the results
-	return UnmarshalItems(allItems, dest)
+	return collected, nil
+}
+
+var (
+	jitterRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+	jitterMu   sync.Mutex
+)
+
+func buildKeysAndAttributes(input *CompiledBatchGet) types.KeysAndAttributes {
+	kaa := types.KeysAndAttributes{
+		Keys: input.Keys,
+	}
+
+	if input.ProjectionExpression != "" {
+		expr := input.ProjectionExpression
+		kaa.ProjectionExpression = &expr
+	}
+
+	if len(input.ExpressionAttributeNames) > 0 {
+		kaa.ExpressionAttributeNames = input.ExpressionAttributeNames
+	}
+
+	if input.ConsistentRead {
+		consistent := input.ConsistentRead
+		kaa.ConsistentRead = &consistent
+	}
+
+	return kaa
+}
+
+func countUnprocessedKeys(unprocessed map[string]types.KeysAndAttributes) int {
+	if len(unprocessed) == 0 {
+		return 0
+	}
+	total := 0
+	for _, entry := range unprocessed {
+		total += len(entry.Keys)
+	}
+	return total
+}
+
+func calculateBatchRetryDelay(policy *core.RetryPolicy, attempt int) time.Duration {
+	if policy == nil {
+		return 0
+	}
+
+	delay := policy.InitialDelay
+	if delay <= 0 {
+		delay = 50 * time.Millisecond
+	}
+
+	if attempt > 0 {
+		delay = time.Duration(float64(delay) * math.Pow(policy.BackoffFactor, float64(attempt)))
+	}
+
+	if policy.MaxDelay > 0 && delay > policy.MaxDelay {
+		delay = policy.MaxDelay
+	}
+
+	if policy.Jitter > 0 {
+		jitterMu.Lock()
+		offset := (jitterRand.Float64()*2 - 1) * policy.Jitter * float64(delay)
+		jitterMu.Unlock()
+		delay += time.Duration(offset)
+		if delay < 0 {
+			delay = policy.InitialDelay
+			if delay <= 0 {
+				delay = 50 * time.Millisecond
+			}
+		}
+	}
+
+	return delay
 }
 
 // ExecuteBatchWrite implements BatchExecutor.ExecuteBatchWrite
@@ -792,11 +889,11 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 			keyType := mapType.Key()
 			elemType := mapType.Elem()
 			newMap := reflect.MakeMap(mapType)
-			
+
 			for k, mapVal := range v.Value {
 				keyValue := reflect.New(keyType).Elem()
 				keyValue.SetString(k)
-				
+
 				// Special handling for map[string]interface{}
 				if elemType.Kind() == reflect.Interface && elemType.NumMethod() == 0 {
 					// Convert AttributeValue to interface{}

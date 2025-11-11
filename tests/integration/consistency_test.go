@@ -32,6 +32,7 @@ func TestConsistentRead(t *testing.T) {
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
+	ctx.CreateTableIfNotExists(t, &ConsistencyTestModel{})
 
 	// Create test item with unique ID
 	testID := uuid.New().String()
@@ -90,6 +91,7 @@ func TestWithRetry(t *testing.T) {
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
+	ctx.CreateTableIfNotExists(t, &ConsistencyTestModel{})
 
 	t.Run("Retry on GSI query", func(t *testing.T) {
 		testID := uuid.New().String()
@@ -167,6 +169,7 @@ func TestReadAfterWritePatterns(t *testing.T) {
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
+	ctx.CreateTableIfNotExists(t, &ConsistencyTestModel{})
 
 	helper := consistency.NewReadAfterWriteHelper(db)
 
@@ -300,6 +303,7 @@ func TestWriteAndReadPattern(t *testing.T) {
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
+	ctx.CreateTableIfNotExists(t, &ConsistencyTestModel{})
 
 	pattern := consistency.NewWriteAndReadPattern(db)
 
@@ -382,6 +386,7 @@ func TestConsistencyEdgeCases(t *testing.T) {
 
 	// Register model
 	db.Model(&ConsistencyTestModel{})
+	ctx.CreateTableIfNotExists(t, &ConsistencyTestModel{})
 
 	t.Run("Retry timeout with context", func(t *testing.T) {
 		// Use a short timeout and reasonable retry settings

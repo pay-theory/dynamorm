@@ -84,6 +84,21 @@ func (m *MockExtendedDB) TransactionFunc(fn func(tx any) error) error {
 	return args.Error(0)
 }
 
+// Transact returns a transaction builder mock
+func (m *MockExtendedDB) Transact() core.TransactionBuilder {
+	args := m.Called()
+	if builder, ok := args.Get(0).(core.TransactionBuilder); ok {
+		return builder
+	}
+	return nil
+}
+
+// TransactWrite executes a function with a transaction builder
+func (m *MockExtendedDB) TransactWrite(ctx context.Context, fn func(core.TransactionBuilder) error) error {
+	args := m.Called(ctx, fn)
+	return args.Error(0)
+}
+
 // NewMockExtendedDB creates a new MockExtendedDB with sensible defaults
 // for methods that are rarely used in unit tests. This reduces boilerplate
 // in tests that only need to mock core functionality.
@@ -113,6 +128,9 @@ func NewMockExtendedDB() *MockExtendedDB {
 
 	// TransactionFunc default
 	mockDB.On("TransactionFunc", mock.AnythingOfType("func(interface {}) error")).
+		Return(nil).Maybe()
+	mockDB.On("Transact").Return(nil).Maybe()
+	mockDB.On("TransactWrite", mock.Anything, mock.Anything).
 		Return(nil).Maybe()
 
 	// Set up common base DB method defaults

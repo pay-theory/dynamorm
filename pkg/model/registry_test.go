@@ -49,6 +49,12 @@ type InvalidModel struct {
 	Name string // No primary key
 }
 
+type ImplicitTimestampModel struct {
+	ID        string `dynamorm:"pk"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 func TestNewRegistry(t *testing.T) {
 	registry := model.NewRegistry()
 	assert.NotNil(t, registry)
@@ -211,6 +217,24 @@ func TestRegisterInvalidModel(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing primary key")
 }
 
+func TestRegisterImplicitTimestampModel(t *testing.T) {
+	registry := model.NewRegistry()
+
+	err := registry.Register(&ImplicitTimestampModel{})
+	require.NoError(t, err)
+
+	metadata, err := registry.GetMetadata(&ImplicitTimestampModel{})
+	require.NoError(t, err)
+
+	require.NotNil(t, metadata.CreatedAtField)
+	assert.Equal(t, "CreatedAt", metadata.CreatedAtField.Name)
+	assert.True(t, metadata.CreatedAtField.IsCreatedAt)
+
+	require.NotNil(t, metadata.UpdatedAtField)
+	assert.Equal(t, "UpdatedAt", metadata.UpdatedAtField.Name)
+	assert.True(t, metadata.UpdatedAtField.IsUpdatedAt)
+}
+
 func TestRegisterDuplicatePrimaryKey(t *testing.T) {
 	type DuplicatePKModel struct {
 		ID1 string `dynamorm:"pk"`
@@ -222,6 +246,51 @@ func TestRegisterDuplicatePrimaryKey(t *testing.T) {
 	err := registry.Register(&DuplicatePKModel{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate primary key")
+}
+
+func TestRegisterModelWithIndexModifiers(t *testing.T) {
+	type IndexModifierModel struct {
+		PK     string `dynamorm:"pk,attr:PK"`
+		SK     string `dynamorm:"sk,attr:SK"`
+		GSI1PK string `dynamorm:"index:user-list-index,pk,attr:gsi1PK"`
+		GSI1SK string `dynamorm:"index:user-list-index,sk,attr:gsi1SK"`
+		GSI2PK string `dynamorm:"index:role-index,pk"`
+		GSI2SK string `dynamorm:"index:role-index,sk"`
+	}
+
+	registry := model.NewRegistry()
+
+	err := registry.Register(&IndexModifierModel{})
+	require.NoError(t, err)
+
+	metadata, err := registry.GetMetadata(&IndexModifierModel{})
+	require.NoError(t, err)
+
+	require.NotNil(t, metadata.PrimaryKey)
+	assert.Equal(t, "PK", metadata.PrimaryKey.PartitionKey.Name)
+	assert.Equal(t, "SK", metadata.PrimaryKey.SortKey.Name)
+
+	// Expect both GSIs with their respective keys
+	require.Len(t, metadata.Indexes, 2)
+
+	findIndex := func(name string) *model.IndexSchema {
+		for i := range metadata.Indexes {
+			if metadata.Indexes[i].Name == name {
+				return &metadata.Indexes[i]
+			}
+		}
+		return nil
+	}
+
+	userIndex := findIndex("user-list-index")
+	require.NotNil(t, userIndex)
+	assert.Equal(t, "GSI1PK", userIndex.PartitionKey.Name)
+	assert.Equal(t, "GSI1SK", userIndex.SortKey.Name)
+
+	roleIndex := findIndex("role-index")
+	require.NotNil(t, roleIndex)
+	assert.Equal(t, "GSI2PK", roleIndex.PartitionKey.Name)
+	assert.Equal(t, "GSI2SK", roleIndex.SortKey.Name)
 }
 
 func TestRegisterInvalidTagTypes(t *testing.T) {

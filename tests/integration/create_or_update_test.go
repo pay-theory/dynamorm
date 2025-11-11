@@ -48,7 +48,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "First Item",
 			Value: 100,
 		}
-		err := testCtx.DB.Model(item1).Create()
+		err := testCtx.DB.Model(item1).IfNotExists().Create()
 		require.NoError(t, err)
 
 		// Try to create duplicate - should fail with helpful error
@@ -58,7 +58,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "Second Item",
 			Value: 200,
 		}
-		err = testCtx.DB.Model(item2).Create()
+		err = testCtx.DB.Model(item2).IfNotExists().Create()
 		require.Error(t, err)
 		// The error should wrap ErrConditionFailed
 		assert.True(t, errors.Is(err, customerrors.ErrConditionFailed))
@@ -140,7 +140,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name: "Version Test",
 		}
 		// Don't set version explicitly
-		err := testCtx.DB.Model(item).Create()
+		err := testCtx.DB.Model(item).IfNotExists().Create()
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), item.Version)
 
@@ -172,7 +172,7 @@ func TestCreateOrUpdate(t *testing.T) {
 			Name:  "Updated Name",
 			Value: 700,
 		}
-		err = testCtx.DB.Model(item2).Create()
+		err = testCtx.DB.Model(item2).IfNotExists().Create()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "already exists")
 

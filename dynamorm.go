@@ -216,11 +216,13 @@ func (db *DB) Model(model any) core.Query {
 	}
 
 	return &query{
-		db:         db,
-		model:      model,
-		ctx:        ctx,
-		builder:    expr.NewBuilderWithConverter(db.converter),
-		conditions: make([]condition, 0, 4), // Pre-allocate for typical use case
+		db:              db,
+		model:           model,
+		ctx:             ctx,
+		builder:         expr.NewBuilderWithConverter(db.converter),
+		conditions:      make([]condition, 0, 4), // Pre-allocate for typical use case
+		writeConditions: make([]condition, 0),
+		rawConditions:   make([]rawConditionExpression, 0),
 	}
 }
 
@@ -232,6 +234,35 @@ func (db *DB) Transaction(fn func(tx *core.Tx) error) error {
 	// Set the db field to avoid nil pointer panic
 	tx.SetDB(db)
 	return fn(tx)
+}
+
+// Transact returns a fluent transaction builder for composing TransactWriteItems requests.
+func (db *DB) Transact() core.TransactionBuilder {
+	builder := transaction.NewBuilder(db.session, db.registry, db.converter)
+	if db.ctx != nil {
+		builder.WithContext(db.ctx)
+	}
+	return builder
+}
+
+// TransactWrite executes the supplied function with a transaction builder and automatically commits it.
+func (db *DB) TransactWrite(ctx context.Context, fn func(core.TransactionBuilder) error) error {
+	if fn == nil {
+		return fmt.Errorf("transaction function cannot be nil")
+	}
+
+	builder := db.Transact()
+	if ctx != nil {
+		builder = builder.WithContext(ctx)
+	} else if db.ctx != nil {
+		builder = builder.WithContext(db.ctx)
+	}
+
+	if err := fn(builder); err != nil {
+		return err
+	}
+
+	return builder.Execute()
 }
 
 // AutoMigrate creates or updates tables based on the given models
@@ -457,11 +488,14 @@ type query struct {
 
 	// Query conditions
 	conditions []condition
-	indexName  string
-	orderBy    *orderBy
-	limit      *int
-	offset     *int
-	fields     []string
+	// Conditional expressions for write operations
+	writeConditions []condition
+	rawConditions   []rawConditionExpression
+	indexName       string
+	orderBy         *orderBy
+	limit           *int
+	offset          *int
+	fields          []string
 
 	// Parallel scan fields
 	segment       *int32
@@ -481,6 +515,11 @@ type condition struct {
 	field string
 	op    string
 	value any
+}
+
+type rawConditionExpression struct {
+	expression string
+	values     map[string]any
 }
 
 func normalizeOperator(op string) string {
@@ -543,18 +582,33 @@ func (q *query) Index(indexName string) core.Query {
 
 // Filter adds an AND filter condition
 func (q *query) Filter(field string, op string, value any) core.Query {
-	if err := q.builder.AddFilterCondition("AND", field, op, value); err != nil {
-		q.recordBuilderError(err)
-	}
+	q.addFilterCondition("AND", field, op, value)
 	return q
 }
 
 // OrFilter adds an OR filter condition
 func (q *query) OrFilter(field string, op string, value any) core.Query {
-	if err := q.builder.AddFilterCondition("OR", field, op, value); err != nil {
+	q.addFilterCondition("OR", field, op, value)
+	return q
+}
+
+func (q *query) addFilterCondition(logicalOp, field, op string, value any) {
+	normalizedOp := normalizeOperator(op)
+	if normalizedOp == "" {
+		q.recordBuilderError(fmt.Errorf("operator cannot be empty"))
+		return
+	}
+
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return
+	}
+
+	attrName := mapToAttributeName(metadata, field)
+	if err := q.builder.AddFilterCondition(logicalOp, attrName, normalizedOp, value); err != nil {
 		q.recordBuilderError(err)
 	}
-	return q
 }
 
 // FilterGroup adds a grouped AND filter condition
@@ -566,6 +620,64 @@ func (q *query) FilterGroup(fn func(q core.Query)) core.Query {
 // OrFilterGroup adds a grouped OR filter condition
 func (q *query) OrFilterGroup(fn func(q core.Query)) core.Query {
 	q.addGroup("OR", fn)
+	return q
+}
+
+// IfNotExists adds an attribute_not_exists guard for the primary key
+func (q *query) IfNotExists() core.Query {
+	q.addPrimaryKeyCondition("attribute_not_exists")
+	return q
+}
+
+// IfExists adds an attribute_exists guard for the primary key
+func (q *query) IfExists() core.Query {
+	q.addPrimaryKeyCondition("attribute_exists")
+	return q
+}
+
+// WithCondition appends an additional conditional expression for writes
+func (q *query) WithCondition(field, operator string, value any) core.Query {
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
+
+	op := normalizeOperator(operator)
+	if op == "" {
+		q.recordBuilderError(fmt.Errorf("operator cannot be empty"))
+		return q
+	}
+
+	if fieldMeta, exists := lookupField(metadata, field); exists {
+		q.writeConditions = append(q.writeConditions, condition{
+			field: fieldMeta.DBName,
+			op:    op,
+			value: value,
+		})
+		return q
+	}
+
+	q.writeConditions = append(q.writeConditions, condition{
+		field: field,
+		op:    op,
+		value: value,
+	})
+	return q
+}
+
+// WithConditionExpression adds a raw condition expression
+func (q *query) WithConditionExpression(exprStr string, values map[string]any) core.Query {
+	exprStr = strings.TrimSpace(exprStr)
+	if exprStr == "" {
+		q.recordBuilderError(fmt.Errorf("condition expression cannot be empty"))
+		return q
+	}
+
+	q.rawConditions = append(q.rawConditions, rawConditionExpression{
+		expression: exprStr,
+		values:     cloneRawConditionValues(values),
+	})
 	return q
 }
 
@@ -624,7 +736,23 @@ func (q *query) Offset(offset int) core.Query {
 
 // Select specifies which fields to retrieve
 func (q *query) Select(fields ...string) core.Query {
-	q.fields = fields
+	if len(fields) == 0 {
+		q.fields = fields
+		return q
+	}
+
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
+
+	resolved := make([]string, 0, len(fields))
+	for _, field := range fields {
+		resolved = append(resolved, mapToAttributeName(metadata, field))
+	}
+
+	q.fields = resolved
 	return q
 }
 
@@ -1081,144 +1209,79 @@ func (q *query) Scan(dest any) error {
 	return q.unmarshalItems(items, dest, metadata)
 }
 
-// BatchGet retrieves multiple items by their primary keys
+// BatchGet retrieves multiple items by their primary keys.
 func (q *query) BatchGet(keys []any, dest any) error {
+	return q.BatchGetWithOptions(keys, dest, nil)
+}
+
+// BatchGetWithOptions retrieves multiple items with advanced options.
+func (q *query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOptions) error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	// Get model metadata
-	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err := q.checkLambdaTimeout(); err != nil {
+		return err
+	}
+
+	internal, metadata, err := q.buildBatchGetQuery()
 	if err != nil {
 		return err
 	}
 
-	// Validate destination is a slice pointer
-	destValue := reflect.ValueOf(dest)
-	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("destination must be a pointer to slice")
+	var rawItems []map[string]types.AttributeValue
+	if err := internal.BatchGetWithOptions(keys, &rawItems, opts); err != nil {
+		return err
 	}
 
-	// Build batch get request
-	keysAndAttributes := &types.KeysAndAttributes{
-		Keys: make([]map[string]types.AttributeValue, 0, len(keys)),
+	return q.unmarshalItems(rawItems, dest, metadata)
+}
+
+// BatchGetBuilder returns a fluent builder for composing batch get operations.
+func (q *query) BatchGetBuilder() core.BatchGetBuilder {
+	if err := q.checkBuilderError(); err != nil {
+		return &errorBatchGetBuilder{err: err}
+	}
+	if err := q.checkLambdaTimeout(); err != nil {
+		return &errorBatchGetBuilder{err: err}
 	}
 
-	// Add projection if specified
-	if len(q.fields) > 0 {
-		builder := expr.NewBuilderWithConverter(q.db.converter)
-		builder.AddProjection(q.fields...)
-		components := builder.Build()
-
-		if components.ProjectionExpression != "" {
-			keysAndAttributes.ProjectionExpression = aws.String(components.ProjectionExpression)
-			keysAndAttributes.ExpressionAttributeNames = components.ExpressionAttributeNames
-		}
+	internal, _, err := q.buildBatchGetQuery()
+	if err != nil {
+		return &errorBatchGetBuilder{err: err}
 	}
 
-	// Convert keys to DynamoDB format
-	for _, key := range keys {
-		keyMap := make(map[string]types.AttributeValue)
+	return internal.BatchGetBuilder()
+}
 
-		// Handle different key formats
-		switch k := key.(type) {
-		case map[string]any:
-			// Key is a map with pk and optional sk
-			if pk, hasPK := k["pk"]; hasPK {
-				av, err := q.db.converter.ToAttributeValue(pk)
-				if err != nil {
-					return fmt.Errorf("failed to convert partition key: %w", err)
-				}
-				keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-			}
-			if sk, hasSK := k["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-				av, err := q.db.converter.ToAttributeValue(sk)
-				if err != nil {
-					return fmt.Errorf("failed to convert sort key: %w", err)
-				}
-				keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-			}
-		default:
-			// Check if key is a struct with the same type as our model
-			keyValue := reflect.ValueOf(key)
-			if keyValue.Kind() == reflect.Ptr {
-				keyValue = keyValue.Elem()
-			}
-
-			if keyValue.Kind() == reflect.Struct {
-				// Extract primary key fields from struct
-				for _, field := range metadata.Fields {
-					if field.IsPK {
-						fieldValue := keyValue.FieldByIndex(field.IndexPath)
-						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
-						if err != nil {
-							return fmt.Errorf("failed to convert partition key: %w", err)
-						}
-						keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-					} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
-						fieldValue := keyValue.FieldByIndex(field.IndexPath)
-						av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
-						if err != nil {
-							return fmt.Errorf("failed to convert sort key: %w", err)
-						}
-						keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-					}
-				}
-			} else {
-				// Key is just the partition key value
-				av, err := q.db.converter.ToAttributeValue(key)
-				if err != nil {
-					return fmt.Errorf("failed to convert partition key: %w", err)
-				}
-				keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-			}
-		}
-
-		// Validate that we have at least a partition key
-		if len(keyMap) == 0 {
-			return fmt.Errorf("invalid key: missing partition key")
-		}
-
-		keysAndAttributes.Keys = append(keysAndAttributes.Keys, keyMap)
+func (q *query) buildBatchGetQuery() (*queryPkg.Query, *model.Metadata, error) {
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// Build BatchGetItem input
-	input := &dynamodb.BatchGetItemInput{
-		RequestItems: map[string]types.KeysAndAttributes{
-			metadata.TableName: *keysAndAttributes,
-		},
-	}
-
-	// Execute batch get
-	var allItems []map[string]types.AttributeValue
-
-	// Get client once for the entire batch operation
 	client, err := q.db.session.Client()
 	if err != nil {
-		return fmt.Errorf("failed to get client for batch get: %w", err)
+		return nil, nil, fmt.Errorf("failed to get client for batch get: %w", err)
 	}
 
-	for {
-		output, err := client.BatchGetItem(q.ctx, input)
-		if err != nil {
-			return fmt.Errorf("failed to batch get items: %w", err)
-		}
-
-		// Collect items
-		if items, exists := output.Responses[metadata.TableName]; exists {
-			allItems = append(allItems, items...)
-		}
-
-		// Check for unprocessed keys
-		if len(output.UnprocessedKeys) == 0 {
-			break
-		}
-
-		// Retry unprocessed keys
-		input.RequestItems = output.UnprocessedKeys
+	ctx := q.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	// Unmarshal items to destination slice
-	return q.unmarshalItems(allItems, dest, metadata)
+	adapter := &metadataAdapter{metadata: metadata}
+	executor := queryPkg.NewExecutor(client, ctx)
+	internal := queryPkg.New(q.model, adapter, executor)
+	internal.WithContext(ctx)
+
+	if len(q.fields) > 0 {
+		internal.Select(q.fields...)
+	}
+	if q.consistentRead {
+		internal.ConsistentRead()
+	}
+
+	return internal, metadata, nil
 }
 
 // BatchCreate creates multiple items
@@ -1471,6 +1534,136 @@ func lookupField(metadata *model.Metadata, fieldName string) (*model.FieldMetada
 	return nil, false
 }
 
+func mapToAttributeName(metadata *model.Metadata, field string) string {
+	if metadata == nil {
+		return field
+	}
+	if fieldMeta, exists := lookupField(metadata, field); exists {
+		return fieldMeta.DBName
+	}
+	return field
+}
+
+func cloneRawConditionValues(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]any, len(values))
+	for k, v := range values {
+		cloned[k] = v
+	}
+	return cloned
+}
+
+func (q *query) addPrimaryKeyCondition(operator string) {
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return
+	}
+	if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
+		q.recordBuilderError(fmt.Errorf("primary key metadata missing"))
+		return
+	}
+
+	op := strings.ToUpper(operator)
+	q.writeConditions = append(q.writeConditions, condition{
+		field: metadata.PrimaryKey.PartitionKey.DBName,
+		op:    op,
+	})
+
+	if metadata.PrimaryKey.SortKey != nil && op == "ATTRIBUTE_EXISTS" {
+		q.writeConditions = append(q.writeConditions, condition{
+			field: metadata.PrimaryKey.SortKey.DBName,
+			op:    op,
+		})
+	}
+}
+
+func (q *query) buildConditionExpression(metadata *model.Metadata, includeWhereConditions bool, skipKeyConditions bool, defaultIfEmpty bool) (string, map[string]string, map[string]types.AttributeValue, error) {
+	builder := expr.NewBuilderWithConverter(q.db.converter)
+	hasCondition := false
+
+	addCondition := func(field, operator string, value any) error {
+		if err := builder.AddConditionExpression(field, operator, value); err != nil {
+			return err
+		}
+		hasCondition = true
+		return nil
+	}
+
+	for _, cond := range q.writeConditions {
+		if err := addCondition(cond.field, cond.op, cond.value); err != nil {
+			return "", nil, nil, fmt.Errorf("failed to add condition for %s: %w", cond.field, err)
+		}
+	}
+
+	if includeWhereConditions {
+		for _, cond := range q.conditions {
+			fieldMeta, exists := lookupField(metadata, cond.field)
+			if !exists {
+				continue
+			}
+			if skipKeyConditions && (fieldMeta.IsPK || fieldMeta.IsSK) {
+				continue
+			}
+			if err := addCondition(fieldMeta.DBName, normalizeOperator(cond.op), cond.value); err != nil {
+				return "", nil, nil, fmt.Errorf("failed to add condition for %s: %w", cond.field, err)
+			}
+		}
+	}
+
+	if defaultIfEmpty && !hasCondition && len(q.rawConditions) == 0 {
+		if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
+			return "", nil, nil, fmt.Errorf("partition key metadata missing")
+		}
+		if err := addCondition(metadata.PrimaryKey.PartitionKey.DBName, "attribute_not_exists", nil); err != nil {
+			return "", nil, nil, fmt.Errorf("failed to add default partition key condition: %w", err)
+		}
+		if metadata.PrimaryKey.SortKey != nil {
+			if err := addCondition(metadata.PrimaryKey.SortKey.DBName, "attribute_not_exists", nil); err != nil {
+				return "", nil, nil, fmt.Errorf("failed to add default sort key condition: %w", err)
+			}
+		}
+	}
+
+	components := builder.Build()
+	conditionExpr := components.ConditionExpression
+	names := components.ExpressionAttributeNames
+	values := components.ExpressionAttributeValues
+
+	mergedExpr := conditionExpr
+	mergedValues := values
+
+	for _, raw := range q.rawConditions {
+		if raw.expression == "" {
+			continue
+		}
+		if mergedExpr == "" {
+			mergedExpr = raw.expression
+		} else {
+			mergedExpr = fmt.Sprintf("(%s) AND (%s)", mergedExpr, raw.expression)
+		}
+		if len(raw.values) > 0 {
+			if mergedValues == nil {
+				mergedValues = make(map[string]types.AttributeValue)
+			}
+			for key, val := range raw.values {
+				if _, exists := mergedValues[key]; exists {
+					return "", nil, nil, fmt.Errorf("duplicate placeholder %s in condition expression", key)
+				}
+				av, err := q.db.converter.ToAttributeValue(val)
+				if err != nil {
+					return "", nil, nil, fmt.Errorf("failed to convert condition value for %s: %w", key, err)
+				}
+				mergedValues[key] = av
+			}
+		}
+	}
+
+	return mergedExpr, names, mergedValues, nil
+}
+
 func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
 	pk := make(map[string]any)
 
@@ -1711,24 +1904,18 @@ func (q *query) putItem(metadata *model.Metadata) error {
 		Item:      item,
 	}
 
-	// Add condition to ensure item doesn't already exist
-	pkField := metadata.PrimaryKey.PartitionKey
-	builder := expr.NewBuilderWithConverter(q.db.converter)
-	if err := builder.AddConditionExpression(pkField.DBName, "NOT_EXISTS", nil); err != nil {
-		return fmt.Errorf("failed to add partition key condition: %w", err)
+	conditionExpr, names, values, err := q.buildConditionExpression(metadata, false, false, false)
+	if err != nil {
+		return err
 	}
-
-	if metadata.PrimaryKey.SortKey != nil {
-		skField := metadata.PrimaryKey.SortKey
-		if err := builder.AddConditionExpression(skField.DBName, "NOT_EXISTS", nil); err != nil {
-			return fmt.Errorf("failed to add sort key condition: %w", err)
-		}
+	if conditionExpr != "" {
+		input.ConditionExpression = aws.String(conditionExpr)
 	}
-
-	components := builder.Build()
-	if components.ConditionExpression != "" {
-		input.ConditionExpression = aws.String(components.ConditionExpression)
-		input.ExpressionAttributeNames = components.ExpressionAttributeNames
+	if len(names) > 0 {
+		input.ExpressionAttributeNames = names
+	}
+	if len(values) > 0 {
+		input.ExpressionAttributeValues = values
 	}
 
 	// Execute PutItem
@@ -2370,17 +2557,48 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	// Build the update expression
 	components := builder.Build()
 
+	conditionExpr := components.ConditionExpression
+	exprAttrNames := components.ExpressionAttributeNames
+	if exprAttrNames == nil {
+		exprAttrNames = make(map[string]string)
+	}
+	exprAttrValues := components.ExpressionAttributeValues
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
+	}
+
+	queryCondExpr, queryCondNames, queryCondValues, err := q.buildConditionExpression(metadata, true, true, false)
+	if err != nil {
+		return err
+	}
+	if queryCondExpr != "" {
+		if conditionExpr != "" {
+			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
+		} else {
+			conditionExpr = queryCondExpr
+		}
+	}
+	for k, v := range queryCondNames {
+		exprAttrNames[k] = v
+	}
+	for k, v := range queryCondValues {
+		if _, exists := exprAttrValues[k]; exists {
+			return fmt.Errorf("duplicate condition value placeholder: %s", k)
+		}
+		exprAttrValues[k] = v
+	}
+
 	// Build UpdateItem input
 	input := &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(metadata.TableName),
 		Key:                       keyMap,
 		UpdateExpression:          aws.String(components.UpdateExpression),
-		ExpressionAttributeNames:  components.ExpressionAttributeNames,
-		ExpressionAttributeValues: components.ExpressionAttributeValues,
+		ExpressionAttributeNames:  exprAttrNames,
+		ExpressionAttributeValues: exprAttrValues,
 	}
 
-	if components.ConditionExpression != "" {
-		input.ConditionExpression = aws.String(components.ConditionExpression)
+	if conditionExpr != "" {
+		input.ConditionExpression = aws.String(conditionExpr)
 	}
 
 	// Execute UpdateItem
@@ -2434,11 +2652,8 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 		Key:       keyMap,
 	}
 
-	// Add condition expression if we have additional conditions
 	builder := expr.NewBuilderWithConverter(q.db.converter)
-	hasConditions := false
 
-	// Check for version field condition
 	if metadata.VersionField != nil && q.model != nil {
 		modelValue := reflect.ValueOf(q.model)
 		if modelValue.Kind() == reflect.Ptr {
@@ -2449,31 +2664,45 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 			if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", versionValue.Int()); err != nil {
 				return fmt.Errorf("failed to add version condition: %w", err)
 			}
-			hasConditions = true
 		}
 	}
 
-	// Add any other conditions from the query
-	for _, cond := range q.conditions {
-		// Skip primary key conditions as they're already in the key
-		if fieldMeta, exists := lookupField(metadata, cond.field); exists && (fieldMeta.IsPK || fieldMeta.IsSK) {
-			continue
-		}
-
-		op := normalizeOperator(cond.op)
-		if err := builder.AddConditionExpression(cond.field, op, cond.value); err != nil {
-			return fmt.Errorf("failed to add condition %s: %w", cond.field, err)
-		}
-		hasConditions = true
+	components := builder.Build()
+	conditionExpr := components.ConditionExpression
+	exprAttrNames := components.ExpressionAttributeNames
+	if exprAttrNames == nil {
+		exprAttrNames = make(map[string]string)
+	}
+	exprAttrValues := components.ExpressionAttributeValues
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
 	}
 
-	if hasConditions {
-		components := builder.Build()
-		if components.ConditionExpression != "" {
-			input.ConditionExpression = aws.String(components.ConditionExpression)
-			input.ExpressionAttributeNames = components.ExpressionAttributeNames
-			input.ExpressionAttributeValues = components.ExpressionAttributeValues
+	queryCondExpr, queryCondNames, queryCondValues, err := q.buildConditionExpression(metadata, true, true, false)
+	if err != nil {
+		return err
+	}
+	if queryCondExpr != "" {
+		if conditionExpr != "" {
+			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
+		} else {
+			conditionExpr = queryCondExpr
 		}
+	}
+	for k, v := range queryCondNames {
+		exprAttrNames[k] = v
+	}
+	for k, v := range queryCondValues {
+		if _, exists := exprAttrValues[k]; exists {
+			return fmt.Errorf("duplicate condition value placeholder: %s", k)
+		}
+		exprAttrValues[k] = v
+	}
+
+	if conditionExpr != "" {
+		input.ConditionExpression = aws.String(conditionExpr)
+		input.ExpressionAttributeNames = exprAttrNames
+		input.ExpressionAttributeValues = exprAttrValues
 	}
 
 	// Execute DeleteItem
@@ -2508,6 +2737,14 @@ func (e *errorQuery) FilterGroup(fn func(q core.Query)) core.Query { return e }
 func (e *errorQuery) OrFilterGroup(fn func(core.Query)) core.Query {
 	return e
 }
+func (e *errorQuery) IfNotExists() core.Query { return e }
+func (e *errorQuery) IfExists() core.Query    { return e }
+func (e *errorQuery) WithCondition(field, operator string, value any) core.Query {
+	return e
+}
+func (e *errorQuery) WithConditionExpression(expr string, values map[string]any) core.Query {
+	return e
+}
 func (e *errorQuery) OrderBy(field string, order string) core.Query                   { return e }
 func (e *errorQuery) Limit(limit int) core.Query                                      { return e }
 func (e *errorQuery) Offset(offset int) core.Query                                    { return e }
@@ -2523,9 +2760,13 @@ func (e *errorQuery) Update(fields ...string) error                             
 func (e *errorQuery) Delete() error                                                   { return e.err }
 func (e *errorQuery) Scan(dest any) error                                             { return e.err }
 func (e *errorQuery) BatchGet(keys []any, dest any) error                             { return e.err }
-func (e *errorQuery) BatchCreate(items any) error                                     { return e.err }
-func (e *errorQuery) BatchDelete(keys []any) error                                    { return e.err }
-func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error               { return e.err }
+func (e *errorQuery) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOptions) error {
+	return e.err
+}
+func (e *errorQuery) BatchGetBuilder() core.BatchGetBuilder             { return &errorBatchGetBuilder{err: e.err} }
+func (e *errorQuery) BatchCreate(items any) error                       { return e.err }
+func (e *errorQuery) BatchDelete(keys []any) error                      { return e.err }
+func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error { return e.err }
 func (e *errorQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
 	return e.err
 }
@@ -2541,6 +2782,8 @@ func (e *errorQuery) SetCursor(cursor string) error                             
 type (
 	Config            = session.Config
 	AutoMigrateOption = schema.AutoMigrateOption
+	BatchGetOptions   = core.BatchGetOptions
+	KeyPair           = core.KeyPair
 )
 
 // Re-export AutoMigrate options for convenience
@@ -2551,6 +2794,16 @@ var (
 	WithTransform   = schema.WithTransform
 	WithBatchSize   = schema.WithBatchSize
 )
+
+// NewKeyPair constructs a composite key helper for BatchGet operations.
+func NewKeyPair(partitionKey any, sortKey ...any) core.KeyPair {
+	return core.NewKeyPair(partitionKey, sortKey...)
+}
+
+// DefaultBatchGetOptions returns the library defaults for BatchGet operations.
+func DefaultBatchGetOptions() *core.BatchGetOptions {
+	return core.DefaultBatchGetOptions()
+}
 
 // TransactionFunc executes a function within a database transaction
 // This is the actual implementation that uses our sophisticated transaction support
@@ -2862,6 +3115,25 @@ func (e *errorUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateB
 func (e *errorUpdateBuilder) ReturnValues(option string) core.UpdateBuilder            { return e }
 func (e *errorUpdateBuilder) Execute() error                                           { return e.err }
 func (e *errorUpdateBuilder) ExecuteWithResult(result any) error                       { return e.err }
+
+// errorBatchGetBuilder is returned when BatchGet builder construction fails.
+type errorBatchGetBuilder struct {
+	err error
+}
+
+func (b *errorBatchGetBuilder) Keys(keys []any) core.BatchGetBuilder                    { return b }
+func (b *errorBatchGetBuilder) ChunkSize(size int) core.BatchGetBuilder                 { return b }
+func (b *errorBatchGetBuilder) ConsistentRead() core.BatchGetBuilder                    { return b }
+func (b *errorBatchGetBuilder) Parallel(maxConcurrency int) core.BatchGetBuilder        { return b }
+func (b *errorBatchGetBuilder) WithRetry(policy *core.RetryPolicy) core.BatchGetBuilder { return b }
+func (b *errorBatchGetBuilder) Select(fields ...string) core.BatchGetBuilder            { return b }
+func (b *errorBatchGetBuilder) OnProgress(callback core.BatchProgressCallback) core.BatchGetBuilder {
+	return b
+}
+func (b *errorBatchGetBuilder) OnError(handler core.BatchChunkErrorHandler) core.BatchGetBuilder {
+	return b
+}
+func (b *errorBatchGetBuilder) Execute(dest any) error { return b.err }
 
 // ParallelScan configures parallel scanning with segment and total segments
 func (q *query) ParallelScan(segment int32, totalSegments int32) core.Query {

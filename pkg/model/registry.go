@@ -354,6 +354,17 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int, convention n
 		IndexInfo: make(map[string]IndexRole),
 	}
 
+	// Implicit timestamp detection for conventional field names
+	isTimeField := field.Type.Kind() == reflect.Struct &&
+		field.Type.PkgPath() == "time" &&
+		field.Type.Name() == "Time"
+	if isTimeField && strings.EqualFold(field.Name, "CreatedAt") {
+		meta.IsCreatedAt = true
+	}
+	if isTimeField && strings.EqualFold(field.Name, "UpdatedAt") {
+		meta.IsUpdatedAt = true
+	}
+
 	// Parse dynamorm tag
 	tag := field.Tag.Get("dynamorm")
 	if tag == "" {
@@ -547,53 +558,48 @@ func determineIndexType(indexName string) IndexType {
 	return GlobalSecondaryIndex
 }
 
-// splitTags splits struct tags while preserving index tag values that contain commas
+// splitTags splits struct tags while keeping index/LSI modifiers attached to the index tag
 func splitTags(tag string) []string {
 	var parts []string
+	tokens := strings.Split(tag, ",")
+
 	var current strings.Builder
-	inSpecialTag := false
+	inIndexClause := false
 
-	for i := 0; i < len(tag); i++ {
-		ch := tag[i]
-
-		if ch == ',' && !inSpecialTag {
-			if current.Len() > 0 {
-				parts = append(parts, current.String())
-				current.Reset()
-			}
-		} else {
-			current.WriteByte(ch)
-
-			// Check if we're in a special tag that might contain commas
-			currentStr := current.String()
-			if strings.HasPrefix(currentStr, "index:") || strings.HasPrefix(currentStr, "lsi:") {
-				// We're in an index tag - need to check if we've reached the end
-				if ch == ',' && i+1 < len(tag) {
-					// Look ahead to see what follows the comma
-					remaining := tag[i+1:]
-					remaining = strings.TrimSpace(remaining)
-
-					// Check if the next part is a standalone tag (not an index modifier)
-					if isStandaloneTag(remaining) {
-						// This comma ends the index tag
-						parts = append(parts, current.String())
-						current.Reset()
-						inSpecialTag = false
-					} else {
-						// This comma is part of the index tag value
-						inSpecialTag = true
-					}
-				} else {
-					inSpecialTag = true
-				}
-			}
+	flushCurrent := func() {
+		if current.Len() == 0 {
+			return
 		}
+		parts = append(parts, current.String())
+		current.Reset()
+		inIndexClause = false
 	}
 
-	// Add the last part
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
+	for _, raw := range tokens {
+		part := strings.TrimSpace(raw)
+		if part == "" {
+			continue
+		}
+
+		if inIndexClause {
+			if isIndexModifier(part) {
+				current.WriteString(",")
+				current.WriteString(part)
+				continue
+			}
+			flushCurrent()
+		}
+
+		if strings.HasPrefix(part, "index:") || strings.HasPrefix(part, "lsi:") {
+			inIndexClause = true
+			current.WriteString(part)
+			continue
+		}
+
+		parts = append(parts, part)
 	}
+
+	flushCurrent()
 
 	return parts
 }
@@ -630,36 +636,12 @@ func detectNamingConvention(modelType reflect.Type) naming.Convention {
 	return naming.CamelCase
 }
 
-// isStandaloneTag checks if the string starts with a standalone tag (not an index modifier)
-func isStandaloneTag(s string) bool {
-	// Check for simple tags
-	simpleTags := []string{
-		"pk", "sk", "version", "ttl", "created_at", "updated_at",
-		"set", "omitempty", "binary", "json", "encrypted",
+// isIndexModifier returns true if the token belongs to the current index/LSI clause
+func isIndexModifier(token string) bool {
+	switch token {
+	case "pk", "sk", "sparse":
+		return true
+	default:
+		return false
 	}
-
-	for _, tag := range simpleTags {
-		if s == tag || strings.HasPrefix(s, tag+",") {
-			// But pk/sk after index: are modifiers, not standalone tags
-			if (tag == "pk" || tag == "sk") && !strings.Contains(s, ":") {
-				// This could be a modifier for the previous index tag
-				return false
-			}
-			return true
-		}
-	}
-
-	// Check for key:value tags
-	if strings.Contains(s, ":") {
-		colonIdx := strings.Index(s, ":")
-		key := s[:colonIdx]
-		knownKeys := []string{"attr", "index", "lsi", "project"}
-		for _, k := range knownKeys {
-			if key == k {
-				return true
-			}
-		}
-	}
-
-	return false
 }

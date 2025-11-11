@@ -4,9 +4,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,6 +134,24 @@ func TestExecutePutItem(t *testing.T) {
 		assert.Equal(t, "attribute_not_exists(id)", *capturedInput.ConditionExpression)
 		assert.Equal(t, item, capturedInput.Item)
 	})
+
+	t.Run("conditional failure returns sentinel error", func(t *testing.T) {
+		mockClient := &MockDynamoDBClient{
+			PutItemFunc: func(ctx context.Context, params *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+				return nil, &types.ConditionalCheckFailedException{
+					Message: aws.String("condition failed"),
+				}
+			},
+		}
+
+		executor := NewExecutor(mockClient, ctx)
+		input := &core.CompiledQuery{TableName: "test-table"}
+		item := map[string]types.AttributeValue{"id": &types.AttributeValueMemberS{Value: "123"}}
+
+		err := executor.ExecutePutItem(input, item)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, customerrors.ErrConditionFailed)
+	})
 }
 
 func TestExecuteUpdateItem(t *testing.T) {
@@ -204,4 +224,150 @@ func TestExecuteDeleteItem(t *testing.T) {
 		assert.Equal(t, "attribute_exists(id)", *capturedInput.ConditionExpression)
 		assert.Equal(t, key, capturedInput.Key)
 	})
+
+	t.Run("conditional delete failure returns sentinel error", func(t *testing.T) {
+		mockClient := &MockDynamoDBClient{
+			DeleteItemFunc: func(ctx context.Context, params *dynamodb.DeleteItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+				return nil, &types.ConditionalCheckFailedException{Message: aws.String("cond fail")}
+			},
+		}
+
+		executor := NewExecutor(mockClient, ctx)
+		input := &core.CompiledQuery{TableName: "test-table"}
+		key := map[string]types.AttributeValue{"id": &types.AttributeValueMemberS{Value: "123"}}
+
+		err := executor.ExecuteDeleteItem(input, key)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, customerrors.ErrConditionFailed)
+	})
+}
+
+func TestExecuteBatchGetRetriesUnprocessedKeys(t *testing.T) {
+	ctx := context.Background()
+	callCount := 0
+
+	mockClient := &MockDynamoDBClient{
+		BatchGetItemFunc: func(ctx context.Context, params *dynamodb.BatchGetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+			callCount++
+			if callCount == 1 {
+				return &dynamodb.BatchGetItemOutput{
+					Responses: map[string][]map[string]types.AttributeValue{
+						"tbl": {
+							{"id": &types.AttributeValueMemberS{Value: "1"}},
+						},
+					},
+					UnprocessedKeys: map[string]types.KeysAndAttributes{
+						"tbl": {
+							Keys: []map[string]types.AttributeValue{
+								{"id": &types.AttributeValueMemberS{Value: "2"}},
+							},
+						},
+					},
+				}, nil
+			}
+			return &dynamodb.BatchGetItemOutput{
+				Responses: map[string][]map[string]types.AttributeValue{
+					"tbl": {
+						{"id": &types.AttributeValueMemberS{Value: "2"}},
+					},
+				},
+			}, nil
+		},
+	}
+
+	executor := NewExecutor(mockClient, ctx)
+	input := &CompiledBatchGet{
+		TableName: "tbl",
+		Keys: []map[string]types.AttributeValue{
+			{"id": &types.AttributeValueMemberS{Value: "1"}},
+			{"id": &types.AttributeValueMemberS{Value: "2"}},
+		},
+	}
+
+	items, err := executor.ExecuteBatchGet(input, core.DefaultBatchGetOptions())
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	assert.Equal(t, 2, callCount)
+}
+
+func TestExecuteBatchGetExhaustsRetries(t *testing.T) {
+	ctx := context.Background()
+	mockClient := &MockDynamoDBClient{
+		BatchGetItemFunc: func(ctx context.Context, params *dynamodb.BatchGetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+			return &dynamodb.BatchGetItemOutput{
+				Responses: map[string][]map[string]types.AttributeValue{
+					"tbl": {
+						{"id": &types.AttributeValueMemberS{Value: "1"}},
+					},
+				},
+				UnprocessedKeys: map[string]types.KeysAndAttributes{
+					"tbl": {
+						Keys: []map[string]types.AttributeValue{
+							{"id": &types.AttributeValueMemberS{Value: "2"}},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	executor := NewExecutor(mockClient, ctx)
+	input := &CompiledBatchGet{
+		TableName: "tbl",
+		Keys: []map[string]types.AttributeValue{
+			{"id": &types.AttributeValueMemberS{Value: "1"}},
+			{"id": &types.AttributeValueMemberS{Value: "2"}},
+		},
+	}
+
+	opts := core.DefaultBatchGetOptions()
+	opts.RetryPolicy.MaxRetries = 0
+
+	items, err := executor.ExecuteBatchGet(input, opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	require.Len(t, items, 1)
+}
+
+func TestExecuteBatchGetHonorsNilRetryPolicy(t *testing.T) {
+	ctx := context.Background()
+	callCount := 0
+	mockClient := &MockDynamoDBClient{
+		BatchGetItemFunc: func(ctx context.Context, params *dynamodb.BatchGetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+			callCount++
+			return &dynamodb.BatchGetItemOutput{
+				Responses: map[string][]map[string]types.AttributeValue{
+					"tbl": {
+						{"id": &types.AttributeValueMemberS{Value: "1"}},
+					},
+				},
+				UnprocessedKeys: map[string]types.KeysAndAttributes{
+					"tbl": {
+						Keys: []map[string]types.AttributeValue{
+							{"id": &types.AttributeValueMemberS{Value: "2"}},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	executor := NewExecutor(mockClient, ctx)
+	input := &CompiledBatchGet{
+		TableName: "tbl",
+		Keys: []map[string]types.AttributeValue{
+			{"id": &types.AttributeValueMemberS{Value: "1"}},
+			{"id": &types.AttributeValueMemberS{Value: "2"}},
+		},
+	}
+
+	opts := &core.BatchGetOptions{
+		RetryPolicy: nil,
+	}
+
+	items, err := executor.ExecuteBatchGet(input, opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exhausted retries")
+	require.Len(t, items, 1)
+	assert.Equal(t, 1, callCount, "should not retry when retry policy is nil")
 }

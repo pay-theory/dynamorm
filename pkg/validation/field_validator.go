@@ -2,8 +2,10 @@ package validation
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -542,13 +544,57 @@ func validateTypedMapIntValue(m map[string]int) error {
 
 // validateBasicValue validates basic types (int, float, bool)
 func validateBasicValue(value any) error {
-	// Allow all types - DynamoDB marshaling and custom converters handle type conversion
-	// Security is enforced through:
-	// - String length limits (validateStringValue)
-	// - Slice size limits (validateSliceLength)
-	// - Map size limits (validateMapValue)
-	// Rejecting valid Go types is not a security measure, it's a limitation
+	if value == nil {
+		return nil
+	}
+
+	rv := reflect.ValueOf(value)
+	// Unwrap pointers/interfaces
+	for rv.Kind() == reflect.Pointer || rv.Kind() == reflect.Interface {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = rv.Elem()
+	}
+
+	switch rv.Kind() {
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer, reflect.Uintptr,
+		reflect.Invalid, reflect.Complex64, reflect.Complex128:
+		return &SecurityError{
+			Type:   "InvalidValue",
+			Field:  "",
+			Detail: "unsupported value type",
+		}
+	case reflect.Struct:
+		if isAllowedStructType(rv.Type()) {
+			return nil
+		}
+		return &SecurityError{
+			Type:   "InvalidValue",
+			Field:  "",
+			Detail: "unsupported value type",
+		}
+	case reflect.Map, reflect.Array:
+		return &SecurityError{
+			Type:   "InvalidValue",
+			Field:  "",
+			Detail: "unsupported value type",
+		}
+	}
+
 	return nil
+}
+
+func isAllowedStructType(t reflect.Type) bool {
+	allowed := []reflect.Type{
+		reflect.TypeOf(time.Time{}),
+	}
+	for _, allowedType := range allowed {
+		if t.AssignableTo(allowedType) {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateExpression validates a complete expression for security

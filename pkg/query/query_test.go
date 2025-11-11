@@ -1,8 +1,14 @@
 package query_test
 
 import (
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/query"
@@ -81,6 +87,33 @@ func (m *attrAwareMetadata) AttributeMetadata(field string) *core.AttributeMetad
 
 type mockExecutor struct {
 	mock.Mock
+}
+
+type recordingExecutor struct {
+	lastCompiled *core.CompiledQuery
+	lastItem     map[string]types.AttributeValue
+	lastKey      map[string]types.AttributeValue
+}
+
+func (r *recordingExecutor) ExecuteQuery(*core.CompiledQuery, any) error { return nil }
+func (r *recordingExecutor) ExecuteScan(*core.CompiledQuery, any) error  { return nil }
+
+func (r *recordingExecutor) ExecutePutItem(input *core.CompiledQuery, item map[string]types.AttributeValue) error {
+	r.lastCompiled = input
+	r.lastItem = item
+	return nil
+}
+
+func (r *recordingExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	r.lastCompiled = input
+	r.lastKey = key
+	return nil
+}
+
+func (r *recordingExecutor) ExecuteDeleteItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	r.lastCompiled = input
+	r.lastKey = key
+	return nil
 }
 
 type registryMetadataAdapter struct {
@@ -240,6 +273,131 @@ func TestQuery_Projection(t *testing.T) {
 	assert.Contains(t, compiled.ProjectionExpression, "#n")
 }
 
+func TestQuery_WriteConditions(t *testing.T) {
+	metadata := &mockMetadata{}
+
+	t.Run("create without helpers has no default condition", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#122"}
+		q := query.New(item, metadata, exec)
+
+		err := q.Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Equal(t, "", exec.lastCompiled.ConditionExpression)
+	})
+
+	t.Run("create ignores where clauses", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#122"}
+		q := query.New(item, metadata, exec)
+
+		err := q.Where("id", "=", "user#122").
+			Where("status", "=", "pending").
+			Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Equal(t, "", exec.lastCompiled.ConditionExpression)
+	})
+
+	t.Run("create with helpers", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#123", Status: "pending"}
+		q := query.New(item, metadata, exec)
+
+		err := q.IfNotExists().WithCondition("status", "=", "active").Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, "attribute_not_exists")
+
+		nameFound := false
+		for _, name := range exec.lastCompiled.ExpressionAttributeNames {
+			if name == "status" {
+				nameFound = true
+				break
+			}
+		}
+		assert.True(t, nameFound)
+
+		valueFound := false
+		for _, val := range exec.lastCompiled.ExpressionAttributeValues {
+			if member, ok := val.(*types.AttributeValueMemberS); ok && member.Value == "active" {
+				valueFound = true
+				break
+			}
+		}
+		assert.True(t, valueFound)
+	})
+
+	t.Run("create with raw expression", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#124"}
+		q := query.New(item, metadata, exec)
+
+		err := q.WithConditionExpression("attribute_exists(id) AND Status <> :inactive", map[string]any{
+			":inactive": "inactive",
+		}).Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Equal(t, "attribute_exists(id) AND Status <> :inactive", exec.lastCompiled.ConditionExpression)
+
+		val, ok := exec.lastCompiled.ExpressionAttributeValues[":inactive"].(*types.AttributeValueMemberS)
+		require.True(t, ok)
+		assert.Equal(t, "inactive", val.Value)
+	})
+
+	t.Run("raw expression maintains grouping", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#125"}
+		q := query.New(item, metadata, exec)
+
+		err := q.IfNotExists().
+			WithConditionExpression("attribute_exists(#pk) OR attribute_exists(GSI)", map[string]any{
+				":dummy": "value",
+			}).
+			Create()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, ") AND (")
+	})
+
+	t.Run("update with conditions", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#200", Status: "active", Data: "initial"}
+		q := query.New(item, metadata, exec)
+
+		err := q.Where("id", "=", item.ID).
+			Where("timestamp", "=", int64(1)).
+			WithCondition("status", "=", "active").
+			Update("Data")
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, "#")
+		foundStatusName := false
+		for placeholder, name := range exec.lastCompiled.ExpressionAttributeNames {
+			if strings.EqualFold(name, "status") {
+				assert.Contains(t, exec.lastCompiled.ConditionExpression, placeholder)
+				foundStatusName = true
+			}
+		}
+		assert.True(t, foundStatusName, "status field should be referenced in expression attribute names")
+	})
+
+	t.Run("delete with if exists", func(t *testing.T) {
+		exec := &recordingExecutor{}
+		item := &TestItem{ID: "user#201", Timestamp: 42}
+		q := query.New(item, metadata, exec)
+
+		err := q.Where("id", "=", item.ID).
+			Where("timestamp", "=", item.Timestamp).
+			IfExists().
+			Delete()
+		require.NoError(t, err)
+		require.NotNil(t, exec.lastCompiled)
+		assert.Contains(t, exec.lastCompiled.ConditionExpression, "attribute_exists")
+	})
+}
+
 func TestQuery_Pagination(t *testing.T) {
 	metadata := &mockMetadata{}
 	executor := &mockExecutor{}
@@ -380,6 +538,170 @@ func TestQuery_BatchCreate(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestQuery_BatchGetWithOptions_ChunksAndOrder(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &stubBatchExecutor{}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{
+		core.NewKeyPair("id-0", int64(0)),
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+		core.NewKeyPair("id-3", int64(3)),
+		core.NewKeyPair("id-4", int64(4)),
+	}
+
+	progress := make([]int, 0, 3)
+	opts := &core.BatchGetOptions{
+		ChunkSize:      2,
+		ConsistentRead: true,
+		RetryPolicy:    core.DefaultRetryPolicy(),
+		ProgressCallback: func(retrieved, total int) {
+			require.Equal(t, len(keys), total)
+			progress = append(progress, retrieved)
+		},
+	}
+
+	q.Select("Status")
+
+	var dest []TestItem
+	err := q.BatchGetWithOptions(keys, &dest, opts)
+	require.NoError(t, err)
+	require.Len(t, dest, len(keys))
+
+	for i, item := range dest {
+		assert.Equal(t, fmt.Sprintf("id-%d", i), item.ID)
+		assert.Equal(t, int64(i), item.Timestamp)
+	}
+
+	require.Len(t, executor.calls, 3)
+	assert.True(t, executor.calls[0].ConsistentRead)
+	assert.NotEmpty(t, executor.calls[0].ProjectionExpression)
+	assert.Equal(t, []int{2, 4, 5}, progress)
+}
+
+func TestQuery_BatchGetWithOptions_OnChunkError(t *testing.T) {
+	metadata := &mockMetadata{}
+	keys := []any{
+		core.NewKeyPair("id-0", int64(0)),
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+	}
+
+	t.Run("handler swallows error", func(t *testing.T) {
+		executor := &stubBatchExecutor{failOnCall: 2}
+		q := query.New(&TestItem{}, metadata, executor)
+
+		var handlerCalls int
+		opts := &core.BatchGetOptions{
+			ChunkSize:   1,
+			RetryPolicy: core.DefaultRetryPolicy(),
+			OnChunkError: func(chunk []any, err error) error {
+				handlerCalls++
+				assert.Len(t, chunk, 1)
+				return nil
+			},
+		}
+
+		var dest []TestItem
+		err := q.BatchGetWithOptions(keys, &dest, opts)
+		require.NoError(t, err)
+		assert.Equal(t, 1, handlerCalls)
+		assert.Len(t, dest, len(keys)-1)
+	})
+
+	t.Run("handler returns error", func(t *testing.T) {
+		executor := &stubBatchExecutor{failOnCall: 1}
+		q := query.New(&TestItem{}, metadata, executor)
+
+		opts := &core.BatchGetOptions{
+			ChunkSize:   1,
+			RetryPolicy: core.DefaultRetryPolicy(),
+			OnChunkError: func(chunk []any, err error) error {
+				return errors.New("stop")
+			},
+		}
+
+		var dest []TestItem
+		err := q.BatchGetWithOptions(keys, &dest, opts)
+		require.EqualError(t, err, "stop")
+	})
+}
+
+func TestQuery_BatchGetWithOptions_ParallelRespectsConcurrency(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &stubBatchExecutor{sleep: 5 * time.Millisecond}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{
+		core.NewKeyPair("id-0", int64(0)),
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+		core.NewKeyPair("id-3", int64(3)),
+	}
+
+	opts := &core.BatchGetOptions{
+		ChunkSize:      1,
+		Parallel:       true,
+		MaxConcurrency: 2,
+		RetryPolicy:    core.DefaultRetryPolicy(),
+	}
+
+	var dest []TestItem
+	err := q.BatchGetWithOptions(keys, &dest, opts)
+	require.NoError(t, err)
+	assert.Len(t, dest, len(keys))
+	assert.Equal(t, 2, executor.maxInFlight)
+}
+
+func TestQuery_BatchGetBuilder(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &stubBatchExecutor{sleep: 2 * time.Millisecond}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{
+		core.NewKeyPair("id-1", int64(1)),
+		core.NewKeyPair("id-2", int64(2)),
+		core.NewKeyPair("id-3", int64(3)),
+	}
+
+	var dest []TestItem
+	err := q.BatchGetBuilder().
+		Keys(keys).
+		ChunkSize(1).
+		ConsistentRead().
+		Parallel(3).
+		OnProgress(func(retrieved, total int) {
+			require.LessOrEqual(t, retrieved, total)
+		}).
+		Execute(&dest)
+
+	require.NoError(t, err)
+	assert.Len(t, dest, len(keys))
+	assert.Equal(t, 3, executor.maxInFlight)
+	for _, call := range executor.calls {
+		assert.True(t, call.ConsistentRead)
+	}
+}
+
+func TestQuery_BatchGetBuilder_DisableRetry(t *testing.T) {
+	metadata := &mockMetadata{}
+	executor := &capturingBatchExecutor{}
+	q := query.New(&TestItem{}, metadata, executor)
+
+	keys := []any{core.NewKeyPair("id-1", int64(1))}
+	var dest []TestItem
+
+	err := q.BatchGetBuilder().
+		Keys(keys).
+		WithRetry(nil).
+		Execute(&dest)
+
+	require.NoError(t, err)
+	require.Len(t, executor.seenOpts, 1)
+	assert.Nil(t, executor.seenOpts[0].RetryPolicy)
+}
+
 func TestQuery_ReservedWords(t *testing.T) {
 	metadata := &mockMetadata{}
 	executor := &mockExecutor{}
@@ -472,10 +794,74 @@ type mockBatchExecutor struct {
 	mockExecutor
 }
 
-func (m *mockBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, dest any) error {
-	return nil
+func (m *mockBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
+	return nil, nil
 }
 
 func (m *mockBatchExecutor) ExecuteBatchWrite(input *query.CompiledBatchWrite) error {
 	return nil
 }
+
+type stubBatchExecutor struct {
+	calls       []*query.CompiledBatchGet
+	failOnCall  int
+	sleep       time.Duration
+	mu          sync.Mutex
+	inFlight    int
+	maxInFlight int
+}
+
+func (s *stubBatchExecutor) ExecuteQuery(*core.CompiledQuery, any) error { return nil }
+func (s *stubBatchExecutor) ExecuteScan(*core.CompiledQuery, any) error  { return nil }
+
+func (s *stubBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
+	s.mu.Lock()
+	s.calls = append(s.calls, input)
+	callIndex := len(s.calls)
+	if s.sleep > 0 {
+		s.inFlight++
+		if s.inFlight > s.maxInFlight {
+			s.maxInFlight = s.inFlight
+		}
+	}
+	s.mu.Unlock()
+
+	if s.sleep > 0 {
+		time.Sleep(s.sleep)
+		s.mu.Lock()
+		s.inFlight--
+		s.mu.Unlock()
+	}
+
+	if s.failOnCall > 0 && callIndex == s.failOnCall {
+		return nil, fmt.Errorf("chunk %d failed", callIndex)
+	}
+
+	items := make([]map[string]types.AttributeValue, len(input.Keys))
+	for i, key := range input.Keys {
+		item := make(map[string]types.AttributeValue, len(key)+1)
+		for attr, val := range key {
+			item[attr] = val
+		}
+		item["status"] = &types.AttributeValueMemberS{Value: fmt.Sprintf("chunk-%d-item-%d", callIndex, i)}
+		items[i] = item
+	}
+	return items, nil
+}
+
+func (s *stubBatchExecutor) ExecuteBatchWrite(input *query.CompiledBatchWrite) error { return nil }
+
+type capturingBatchExecutor struct {
+	seenOpts []*core.BatchGetOptions
+}
+
+func (c *capturingBatchExecutor) ExecuteQuery(*core.CompiledQuery, any) error { return nil }
+func (c *capturingBatchExecutor) ExecuteScan(*core.CompiledQuery, any) error  { return nil }
+
+func (c *capturingBatchExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
+	c.seenOpts = append(c.seenOpts, opts)
+	items := make([]map[string]types.AttributeValue, len(input.Keys))
+	return items, nil
+}
+
+func (c *capturingBatchExecutor) ExecuteBatchWrite(input *query.CompiledBatchWrite) error { return nil }

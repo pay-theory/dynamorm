@@ -150,6 +150,47 @@ func TestBatchOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("BatchGetLarge", func(t *testing.T) {
+		baseID := "batch-large"
+		seed := make([]BatchTestItem, 0, 120)
+		for i := 0; i < 120; i++ {
+			seed = append(seed, BatchTestItem{
+				ID:      baseID,
+				SKValue: fmt.Sprintf("item-%03d", i),
+				Name:    fmt.Sprintf("Large Item %d", i),
+				Value:   i,
+			})
+		}
+
+		require.NoError(t, testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(seed))
+
+		totalRequests := 140
+		keys := make([]any, 0, totalRequests)
+		for i := 0; i < totalRequests; i++ {
+			keys = append(keys, dynamorm.NewKeyPair(baseID, fmt.Sprintf("item-%03d", i)))
+		}
+
+		opts := dynamorm.DefaultBatchGetOptions()
+		opts.ChunkSize = 45
+		opts.Parallel = true
+		opts.MaxConcurrency = 3
+
+		var progressCalls int
+		var lastRetrieved int
+		opts.ProgressCallback = func(retrieved, total int) {
+			progressCalls++
+			lastRetrieved = retrieved
+			require.Equal(t, totalRequests, total)
+		}
+
+		var results []BatchTestItem
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchGetWithOptions(keys, &results, opts)
+		require.NoError(t, err)
+		assert.Len(t, results, len(seed))
+		assert.GreaterOrEqual(t, progressCalls, 3)
+		assert.Equal(t, len(seed), lastRetrieved)
+	})
+
 	t.Run("BatchDelete", func(t *testing.T) {
 		// First, clean up any existing items with the same keys
 		cleanupItems := []BatchTestItem{
@@ -316,10 +357,6 @@ func TestBatchOperations(t *testing.T) {
 }
 
 // Helper functions
-
-
-
-
 
 func TestBatchOperationsE2E(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
