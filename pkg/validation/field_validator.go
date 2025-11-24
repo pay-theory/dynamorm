@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -566,36 +565,19 @@ func validateBasicValue(value any) error {
 			Detail: "unsupported value type",
 		}
 	case reflect.Struct:
-		if isAllowedStructType(rv.Type()) {
-			return nil
-		}
-		return &SecurityError{
-			Type:   "InvalidValue",
-			Field:  "",
-			Detail: "unsupported value type",
-		}
+		// Allow all structs - they will be marshaled as DynamoDB maps
+		return nil
+	case reflect.Slice:
+		// Allow slices - they will be marshaled as DynamoDB lists
+		return nil
 	case reflect.Map, reflect.Array:
-		return &SecurityError{
-			Type:   "InvalidValue",
-			Field:  "",
-			Detail: "unsupported value type",
-		}
+		// Allow maps and arrays - they will be marshaled as DynamoDB maps/lists
+		return nil
 	}
 
 	return nil
 }
 
-func isAllowedStructType(t reflect.Type) bool {
-	allowed := []reflect.Type{
-		reflect.TypeOf(time.Time{}),
-	}
-	for _, allowedType := range allowed {
-		if t.AssignableTo(allowedType) {
-			return true
-		}
-	}
-	return false
-}
 
 // ValidateExpression validates a complete expression for security
 func ValidateExpression(expression string) error {
