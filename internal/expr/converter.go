@@ -1,7 +1,6 @@
 package expr
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -96,16 +95,10 @@ func ConvertToAttributeValue(value any) (types.AttributeValue, error) {
 			return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
 		}
 
-		// Handle JSON marshaling for structs with json tag
-		if hasJSONTag(v.Type()) {
-			data, err := json.Marshal(value)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal struct to JSON: %w", err)
-			}
-			return &types.AttributeValueMemberS{Value: string(data)}, nil
-		}
-
 		// General struct marshaling
+		// Note: We no longer automatically JSON-serialize structs just because they have json tags.
+		// JSON serialization should only happen when explicitly requested via dynamorm:"json" tag,
+		// which is handled at the field level during marshaling, not here in the converter.
 		m := make(map[string]types.AttributeValue)
 		t := v.Type()
 
@@ -118,14 +111,17 @@ func ConvertToAttributeValue(value any) (types.AttributeValue, error) {
 				continue
 			}
 
-			// Check for dynamorm tags
+			// Check for dynamorm tags first, then fall back to json tags
 			fieldName := field.Name
 			tag := field.Tag.Get("dynamorm")
-			if tag == "-" {
+			jsonTag := field.Tag.Get("json")
+
+			if tag == "-" || jsonTag == "-" {
 				continue // Skip this field
 			}
+
 			if tag != "" {
-				// Parse the tag
+				// Parse the dynamorm tag
 				parts := strings.Split(tag, ",")
 				if len(parts) > 0 && parts[0] != "" {
 					// First part is the field name unless it contains ":" or is purely a modifier
@@ -138,10 +134,16 @@ func ConvertToAttributeValue(value any) (types.AttributeValue, error) {
 						fieldName = attrName
 					}
 				}
+			} else if jsonTag != "" {
+				// No dynamorm tag, use json tag as fallback for field name
+				parts := strings.Split(jsonTag, ",")
+				if len(parts) > 0 && parts[0] != "" {
+					fieldName = parts[0]
+				}
 			}
 
-			// Skip zero values if omitempty is set
-			if hasOmitEmpty(tag) && isZeroValue(fieldValue) {
+			// Skip zero values if omitempty is set (check both tags)
+			if (hasOmitEmpty(tag) || strings.Contains(jsonTag, "omitempty")) && isZeroValue(fieldValue) {
 				continue
 			}
 
@@ -262,11 +264,6 @@ func unmarshalString(s string, v reflect.Value) error {
 			return nil
 		}
 
-		// Handle JSON unmarshaling for structs
-		if hasJSONTag(v.Type()) {
-			return json.Unmarshal([]byte(s), v.Addr().Interface())
-		}
-
 		return fmt.Errorf("cannot unmarshal string into %v", v.Type())
 
 	default:
@@ -377,11 +374,13 @@ func unmarshalMap(m map[string]types.AttributeValue, v reflect.Value) error {
 				continue
 			}
 
-			// Get field name from tag or use field name
+			// Get field name from dynamorm tag, then json tag, then field name
 			fieldName := field.Name
 			tag := field.Tag.Get("dynamorm")
+			jsonTag := field.Tag.Get("json")
+
 			if tag != "" && tag != "-" {
-				// Parse the tag
+				// Parse the dynamorm tag
 				parts := strings.Split(tag, ",")
 				if len(parts) > 0 && parts[0] != "" {
 					// First part is the field name unless it contains ":" or is purely a modifier
@@ -393,6 +392,12 @@ func unmarshalMap(m map[string]types.AttributeValue, v reflect.Value) error {
 					if attrName := parseAttrTag(tag); attrName != "" {
 						fieldName = attrName
 					}
+				}
+			} else if jsonTag != "" && jsonTag != "-" {
+				// No dynamorm tag, use json tag as fallback
+				parts := strings.Split(jsonTag, ",")
+				if len(parts) > 0 && parts[0] != "" {
+					fieldName = parts[0]
 				}
 			}
 
@@ -459,15 +464,6 @@ func unmarshalBinarySet(bs [][]byte, v reflect.Value) error {
 func isNullAttributeValue(av types.AttributeValue) bool {
 	if nullAV, ok := av.(*types.AttributeValueMemberNULL); ok {
 		return nullAV.Value
-	}
-	return false
-}
-
-func hasJSONTag(t reflect.Type) bool {
-	for i := 0; i < t.NumField(); i++ {
-		if tag := t.Field(i).Tag.Get("json"); tag != "" {
-			return true
-		}
 	}
 	return false
 }
