@@ -55,6 +55,10 @@ func (m *MockMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	return nil
 }
 
+func (m *MockMetadata) VersionFieldName() string {
+	return ""
+}
+
 // MockExecutor implements query.QueryExecutor for testing
 type MockExecutor struct{}
 

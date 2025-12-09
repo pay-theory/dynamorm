@@ -380,6 +380,7 @@ type ModelMetadata interface {
 	PrimaryKey() KeySchema
 	Indexes() []IndexSchema
 	AttributeMetadata(field string) *AttributeMetadata
+	VersionFieldName() string
 }
 
 // KeySchema represents a primary key or index key schema

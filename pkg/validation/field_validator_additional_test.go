@@ -80,14 +80,10 @@ func TestValidateValueCollectionErrors(t *testing.T) {
 }
 
 func TestValidateValueMapEdgeCases(t *testing.T) {
-	t.Run("unsupported map key type", func(t *testing.T) {
+	t.Run("map with int keys is allowed", func(t *testing.T) {
+		// map[int]string is now allowed - DynamoDB marshaler will convert int keys to strings
 		err := ValidateValue(map[int]string{1: "one"})
-		require.Error(t, err)
-
-		var secErr *SecurityError
-		require.ErrorAs(t, err, &secErr)
-		assert.Equal(t, "InvalidValue", secErr.Type)
-		assert.Contains(t, secErr.Detail, "unsupported value type")
+		assert.NoError(t, err)
 	})
 
 	t.Run("typed map propagates key validation", func(t *testing.T) {
@@ -105,11 +101,7 @@ func TestValidateValueMapEdgeCases(t *testing.T) {
 }
 
 func TestValidateValueBasicUnsupportedType(t *testing.T) {
+	// Structs are now allowed - they will be marshaled as DynamoDB maps
 	err := ValidateValue(struct{}{})
-	require.Error(t, err)
-
-	var secErr *SecurityError
-	require.ErrorAs(t, err, &secErr)
-	assert.Equal(t, "InvalidValue", secErr.Type)
-	assert.Contains(t, secErr.Detail, "unsupported value type")
+	assert.NoError(t, err)
 }

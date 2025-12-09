@@ -146,12 +146,13 @@ type ConverterLookup interface {
 // Builder compiles expressions for DynamoDB operations
 type Builder struct {
 	// Expression components
-	keyConditions     []string
-	filterConditions  []string
-	updateExpressions map[string][]string // SET, ADD, REMOVE, DELETE
-	conditions        []string
-	projections       []string
-	filterOperators   []string // "AND", "OR"
+	keyConditions      []string
+	filterConditions   []string
+	updateExpressions  map[string][]string // SET, ADD, REMOVE, DELETE
+	conditions         []string
+	projections        []string
+	filterOperators    []string // "AND", "OR"
+	conditionOperators []string // "AND", "OR"
 
 	// Attribute mappings
 	names  map[string]string
@@ -303,13 +304,21 @@ func (b *Builder) AddUpdateDelete(field string, value any) {
 	b.updateExpressions["DELETE"] = append(b.updateExpressions["DELETE"], expr)
 }
 
-// AddConditionExpression adds a condition for conditional updates
+// AddConditionExpression adds a condition for conditional updates (defaults to AND)
 func (b *Builder) AddConditionExpression(field string, operator string, value any) error {
+	return b.AddConditionExpressionWithOp("AND", field, operator, value)
+}
+
+// AddConditionExpressionWithOp adds a condition with a specific logical operator
+func (b *Builder) AddConditionExpressionWithOp(logicalOp, field, operator string, value any) error {
 	expr, err := b.buildCondition(field, operator, value)
 	if err != nil {
 		return err
 	}
 	b.conditions = append(b.conditions, expr)
+	if len(b.conditions) > 1 {
+		b.conditionOperators = append(b.conditionOperators, logicalOp)
+	}
 	return nil
 }
 
@@ -355,25 +364,45 @@ func (b *Builder) Build() ExpressionComponents {
 
 	// Build condition expression
 	if len(b.conditions) > 0 {
-		components.ConditionExpression = strings.Join(b.conditions, " AND ")
+		var builtExpr strings.Builder
+		builtExpr.WriteString(b.conditions[0])
+		for i := 1; i < len(b.conditions); i++ {
+			// The operator at i-1 links condition i-1 and condition i
+			if i-1 < len(b.conditionOperators) {
+				builtExpr.WriteString(" " + b.conditionOperators[i-1] + " ")
+			} else {
+				builtExpr.WriteString(" AND ") // Fallback
+			}
+			builtExpr.WriteString(b.conditions[i])
+		}
+		components.ConditionExpression = builtExpr.String()
 	}
 
 	return components
 }
 
+// ResetConditions clears the conditions list (used for splitting logic)
+func (b *Builder) ResetConditions() {
+	b.conditions = nil
+	b.conditionOperators = nil
+}
+
 // Clone creates a deep copy of the builder so additional expressions can be
-// composed without mutating the original instance.
 func (b *Builder) Clone() *Builder {
 	if b == nil {
 		return NewBuilder()
 	}
 
 	clone := NewBuilder()
+	clone.nameCounter = b.nameCounter
+	clone.valueCounter = b.valueCounter
+
 	clone.keyConditions = append(clone.keyConditions, b.keyConditions...)
 	clone.filterConditions = append(clone.filterConditions, b.filterConditions...)
 	clone.filterOperators = append(clone.filterOperators, b.filterOperators...)
 	clone.projections = append(clone.projections, b.projections...)
 	clone.conditions = append(clone.conditions, b.conditions...)
+	clone.conditionOperators = append(clone.conditionOperators, b.conditionOperators...)
 
 	clone.names = make(map[string]string, len(b.names))
 	for k, v := range b.names {

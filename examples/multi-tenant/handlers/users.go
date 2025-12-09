@@ -7,20 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dynamorm/dynamorm"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/models"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	derrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // UserHandler handles user-related requests
 type UserHandler struct {
-	db *dynamorm.Client
+	db core.ExtendedDB
 }
 
 // NewUserHandler creates a new user handler
-func NewUserHandler(db *dynamorm.Client) *UserHandler {
+func NewUserHandler(db core.ExtendedDB) *UserHandler {
 	return &UserHandler{db: db}
 }
 
@@ -85,7 +86,7 @@ func (h *UserHandler) InviteUser(w http.ResponseWriter, r *http.Request) {
 		Projects:  req.Projects,
 		InvitedBy: inviterID,
 		Token:     inviteToken,
-		ExpiresAt: time.Now().AddDate(0, 0, 7), // 7 days
+		ExpiresAt: time.Now().AddDate(0, 0, 7).Unix(), // 7 days
 	}
 
 	if err := h.db.Model(invitation).Create(); err != nil {
@@ -165,7 +166,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.User{}).
 		Where("ID", "=", compositeID).
 		First(&user); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
 		}
@@ -210,7 +211,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.User{}).
 		Where("ID", "=", compositeID).
 		First(&user); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
 		}
@@ -278,7 +279,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.User{}).
 		Where("ID", "=", compositeID).
 		First(&user); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
 		}
@@ -327,7 +328,7 @@ func (h *UserHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.Invitation{}).
 		Where("Token", "=", req.Token).
 		First(&invitation); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "invalid invitation token", http.StatusNotFound)
 			return
 		}
@@ -336,7 +337,7 @@ func (h *UserHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if invitation is expired
-	if time.Now().After(invitation.ExpiresAt) {
+	if time.Now().Unix() > invitation.ExpiresAt {
 		http.Error(w, "invitation has expired", http.StatusGone)
 		return
 	}
@@ -472,7 +473,7 @@ func (h *UserHandler) logAuditEvent(orgID, userID, action, resourceType, resourc
 		Changes:      changes,
 		Success:      success,
 		ErrorMessage: errorMsg,
-		TTL:          time.Now().AddDate(0, 3, 0), // 90 days retention
+		TTL:          time.Now().AddDate(0, 3, 0).Unix(), // 90 days retention
 	}
 
 	// Best effort - don't fail the main operation if audit fails

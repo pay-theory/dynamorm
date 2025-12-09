@@ -10,29 +10,26 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/dynamorm/dynamorm"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/handlers"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/models"
 	"github.com/gorilla/mux"
+	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/handlers"
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/rs/cors"
 )
 
 func main() {
-	// Initialize DynamoDB client
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion("us-east-1"),
-	)
-	if err != nil {
-		log.Fatal("Unable to load SDK config:", err)
+	// Initialize DynamORM
+	dbConfig := session.Config{
+		Region:   "us-east-1",
+		Endpoint: os.Getenv("AWS_ENDPOINT_URL"),
 	}
 
-	// Create DynamoDB client
-	svc := dynamodb.NewFromConfig(cfg)
-
-	// Initialize DynamORM
-	db := dynamorm.New(svc)
+	db, err := dynamorm.New(dbConfig)
+	if err != nil {
+		log.Fatal("Failed to initialize DynamORM:", err)
+	}
 
 	// Create tables if running locally
 	if os.Getenv("AWS_ENDPOINT_URL") != "" {
@@ -140,7 +137,7 @@ func main() {
 }
 
 // createTables creates the necessary DynamoDB tables for local development
-func createTables(db *dynamorm.Client) error {
+func createTables(db core.ExtendedDB) error {
 	// Register models
 	models := []any{
 		&models.Organization{},
@@ -154,7 +151,7 @@ func createTables(db *dynamorm.Client) error {
 	}
 
 	for _, model := range models {
-		if err := db.Model(model).CreateTable(); err != nil {
+		if err := db.CreateTable(model); err != nil {
 			// Ignore if table already exists
 			if !isTableExistsError(err) {
 				return fmt.Errorf("failed to create table for %T: %w", model, err)
@@ -198,7 +195,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 }
 
 // authMiddleware handles authentication for the API
-func authMiddleware(db *dynamorm.Client) func(http.Handler) http.Handler {
+func authMiddleware(db core.ExtendedDB) func(http.Handler) http.Handler {
 	apiKeyHandler := handlers.NewAPIKeyHandler(db)
 
 	return func(next http.Handler) http.Handler {

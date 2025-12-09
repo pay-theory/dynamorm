@@ -63,6 +63,10 @@ func (m *MockMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	return nil
 }
 
+func (m *MockMetadata) VersionFieldName() string {
+	return ""
+}
+
 // Test metadata for TestModel
 func testMetadata() core.ModelMetadata {
 	return &MockMetadata{}

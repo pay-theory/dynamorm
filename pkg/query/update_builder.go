@@ -17,12 +17,14 @@ type UpdateBuilder struct {
 	keyValues    map[string]any
 	conditions   []updateCondition
 	returnValues string
+	buildErr     error // Stores first error encountered during building
 }
 
 type updateCondition struct {
 	field    string
 	operator string
 	value    any
+	logicOp  string
 }
 
 // NewUpdateBuilder creates a new UpdateBuilder with the given query
@@ -58,10 +60,8 @@ func (ub *UpdateBuilder) SetIfNotExists(field string, value any, defaultValue an
 	// DynamoDB if_not_exists function syntax: SET field = if_not_exists(field, default_value)
 	// The 'value' parameter is ignored as DynamoDB if_not_exists only checks existence, not value comparison
 	err := ub.expr.AddUpdateFunction(dbFieldName, "if_not_exists", dbFieldName, defaultValue)
-	if err != nil {
-		// Log error in production, for now fall back to regular set
-		// TODO: Add proper error handling
-		ub.expr.AddUpdateSet(dbFieldName, defaultValue)
+	if err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("SetIfNotExists(%s): %w", field, err)
 	}
 	return ub
 }
@@ -129,10 +129,8 @@ func (ub *UpdateBuilder) AppendToList(field string, values any) core.UpdateBuild
 	// Use list_append function to append values
 	// list_append(field, values) appends to the end
 	err := ub.expr.AddUpdateFunction(dbFieldName, "list_append", dbFieldName, values)
-	if err != nil {
-		// Log error in production
-		// Fall back to regular set (not ideal but better than failing)
-		ub.expr.AddUpdateSet(dbFieldName, values)
+	if err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("AppendToList(%s): %w", field, err)
 	}
 	return ub
 }
@@ -143,10 +141,8 @@ func (ub *UpdateBuilder) PrependToList(field string, values any) core.UpdateBuil
 	// Use list_append function to prepend values
 	// list_append(values, field) prepends to the beginning
 	err := ub.expr.AddUpdateFunction(dbFieldName, "list_append", values, dbFieldName)
-	if err != nil {
-		// Log error in production
-		// Fall back to regular set (not ideal but better than failing)
-		ub.expr.AddUpdateSet(dbFieldName, values)
+	if err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("PrependToList(%s): %w", field, err)
 	}
 	return ub
 }
@@ -168,18 +164,23 @@ func (ub *UpdateBuilder) SetListElement(field string, index int, value any) core
 // Condition adds a condition that must be met for the update to succeed
 func (ub *UpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
 	ub.conditions = append(ub.conditions, updateCondition{
-		field:    field, // Keep original field name here, mapping happens in Execute()
+		field:    field,
 		operator: operator,
 		value:    value,
+		logicOp:  "AND",
 	})
 	return ub
 }
 
 // OrCondition adds a condition with OR logic
 func (ub *UpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
-	// For now, OR conditions are treated as AND conditions in this implementation
-	// TODO: Implement proper OR logic support
-	return ub.Condition(field, operator, value)
+	ub.conditions = append(ub.conditions, updateCondition{
+		field:    field,
+		operator: operator,
+		value:    value,
+		logicOp:  "OR",
+	})
+	return ub
 }
 
 // ConditionExists adds a condition that the field must exist
@@ -194,7 +195,13 @@ func (ub *UpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder {
 
 // ConditionVersion adds optimistic locking based on version field
 func (ub *UpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder {
-	return ub.Condition("Version", "=", currentVersion)
+	fieldName := "Version"
+	if ub.query.metadata != nil {
+		if name := ub.query.metadata.VersionFieldName(); name != "" {
+			fieldName = name
+		}
+	}
+	return ub.Condition(fieldName, "=", currentVersion)
 }
 
 // ReturnValues sets what values to return after the update
@@ -253,6 +260,11 @@ func (ub *UpdateBuilder) populateKeyValues() error {
 
 // Execute performs the update operation
 func (ub *UpdateBuilder) Execute() error {
+	// Check for any errors that occurred during building
+	if ub.buildErr != nil {
+		return ub.buildErr
+	}
+
 	if err := ub.populateKeyValues(); err != nil {
 		return err
 	}
@@ -272,8 +284,9 @@ func (ub *UpdateBuilder) Execute() error {
 	}
 
 	// Build the expression components
+	// Build the expression components
 	components := ub.expr.Build()
-	conditionExpr := components.ConditionExpression
+	updateExpr := components.UpdateExpression
 	exprAttrNames := components.ExpressionAttributeNames
 	if exprAttrNames == nil {
 		exprAttrNames = make(map[string]string)
@@ -282,25 +295,29 @@ func (ub *UpdateBuilder) Execute() error {
 	if exprAttrValues == nil {
 		exprAttrValues = make(map[string]types.AttributeValue)
 	}
+	updateCondExpr := components.ConditionExpression
 
-	queryCondExpr, queryCondNames, queryCondValues, err := ub.query.buildConditionExpression(false, false, false)
+	combinedBuilder := ub.expr.Clone()
+	combinedBuilder.ResetConditions()
+
+	queryCondExpr, queryCondNames, queryCondValues, err := ub.query.buildConditionExpression(combinedBuilder, false, false, false)
 	if err != nil {
 		return fmt.Errorf("failed to build query conditions: %w", err)
 	}
-	if queryCondExpr != "" {
-		if conditionExpr != "" {
-			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
-		} else {
-			conditionExpr = queryCondExpr
-		}
+
+	finalCondExpr := ""
+	if updateCondExpr != "" && queryCondExpr != "" {
+		finalCondExpr = fmt.Sprintf("(%s) AND (%s)", updateCondExpr, queryCondExpr)
+	} else if updateCondExpr != "" {
+		finalCondExpr = updateCondExpr
+	} else if queryCondExpr != "" {
+		finalCondExpr = queryCondExpr
 	}
+
 	for k, v := range queryCondNames {
 		exprAttrNames[k] = v
 	}
 	for k, v := range queryCondValues {
-		if _, exists := exprAttrValues[k]; exists {
-			return fmt.Errorf("duplicate condition value placeholder: %s", k)
-		}
 		exprAttrValues[k] = v
 	}
 
@@ -308,8 +325,8 @@ func (ub *UpdateBuilder) Execute() error {
 	compiled := &core.CompiledQuery{
 		Operation:                "UpdateItem",
 		TableName:                ub.query.metadata.TableName(),
-		UpdateExpression:         components.UpdateExpression,
-		ConditionExpression:      conditionExpr,
+		UpdateExpression:         updateExpr,
+		ConditionExpression:      finalCondExpr,
 		ExpressionAttributeNames: exprAttrNames,
 		ReturnValues:             ub.returnValues,
 	}
@@ -339,6 +356,11 @@ func (ub *UpdateBuilder) Execute() error {
 
 // ExecuteWithResult performs the update and returns the result
 func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
+	// Check for any errors that occurred during building
+	if ub.buildErr != nil {
+		return ub.buildErr
+	}
+
 	// Validate result is a pointer
 	resultValue := reflect.ValueOf(result)
 	if resultValue.Kind() != reflect.Ptr || resultValue.IsNil() {
@@ -362,7 +384,7 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 			fieldName = fieldMeta.DynamoDBName
 		}
 
-		err := ub.expr.AddConditionExpression(fieldName, cond.operator, cond.value)
+		err := ub.expr.AddConditionExpressionWithOp(cond.logicOp, fieldName, cond.operator, cond.value)
 		if err != nil {
 			return fmt.Errorf("failed to add condition: %w", err)
 		}
@@ -370,7 +392,7 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 
 	// Build the expression components
 	components := ub.expr.Build()
-	conditionExpr := components.ConditionExpression
+	updateExpr := components.UpdateExpression
 	exprAttrNames := components.ExpressionAttributeNames
 	if exprAttrNames == nil {
 		exprAttrNames = make(map[string]string)
@@ -379,25 +401,29 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 	if exprAttrValues == nil {
 		exprAttrValues = make(map[string]types.AttributeValue)
 	}
+	updateCondExpr := components.ConditionExpression
 
-	queryCondExpr, queryCondNames, queryCondValues, err := ub.query.buildConditionExpression(false, false, false)
+	combinedBuilder := ub.expr.Clone()
+	combinedBuilder.ResetConditions()
+
+	queryCondExpr, queryCondNames, queryCondValues, err := ub.query.buildConditionExpression(combinedBuilder, false, false, false)
 	if err != nil {
 		return fmt.Errorf("failed to build query conditions: %w", err)
 	}
-	if queryCondExpr != "" {
-		if conditionExpr != "" {
-			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
-		} else {
-			conditionExpr = queryCondExpr
-		}
+
+	finalCondExpr := ""
+	if updateCondExpr != "" && queryCondExpr != "" {
+		finalCondExpr = fmt.Sprintf("(%s) AND (%s)", updateCondExpr, queryCondExpr)
+	} else if updateCondExpr != "" {
+		finalCondExpr = updateCondExpr
+	} else if queryCondExpr != "" {
+		finalCondExpr = queryCondExpr
 	}
+
 	for k, v := range queryCondNames {
 		exprAttrNames[k] = v
 	}
 	for k, v := range queryCondValues {
-		if _, exists := exprAttrValues[k]; exists {
-			return fmt.Errorf("duplicate condition value placeholder: %s", k)
-		}
 		exprAttrValues[k] = v
 	}
 
@@ -405,8 +431,8 @@ func (ub *UpdateBuilder) ExecuteWithResult(result any) error {
 	compiled := &core.CompiledQuery{
 		Operation:                "UpdateItem",
 		TableName:                ub.query.metadata.TableName(),
-		UpdateExpression:         components.UpdateExpression,
-		ConditionExpression:      conditionExpr,
+		UpdateExpression:         updateExpr,
+		ConditionExpression:      finalCondExpr,
 		ExpressionAttributeNames: exprAttrNames,
 		ReturnValues:             ub.returnValues,
 	}

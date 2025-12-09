@@ -344,6 +344,7 @@ func (m *mockMetadata) TableName() string                                      {
 func (m *mockMetadata) PrimaryKey() core.KeySchema                             { return m.primaryKey }
 func (m *mockMetadata) Indexes() []core.IndexSchema                            { return nil }
 func (m *mockMetadata) AttributeMetadata(field string) *core.AttributeMetadata { return nil }
+func (m *mockMetadata) VersionFieldName() string                               { return "" }
 
 func TestUpdateBuilderReturnValues(t *testing.T) {
 	metadata := &mockMetadata{
