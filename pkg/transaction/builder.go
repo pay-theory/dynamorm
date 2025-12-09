@@ -1033,6 +1033,19 @@ func (m *metadataAdapter) AttributeMetadata(field string) *core.AttributeMetadat
 	return nil
 }
 
+func (m *metadataAdapter) VersionFieldName() string {
+	if m.meta == nil {
+		return ""
+	}
+	if m.meta.VersionField != nil {
+		if m.meta.VersionField.DBName != "" {
+			return m.meta.VersionField.DBName
+		}
+		return m.meta.VersionField.Name
+	}
+	return ""
+}
+
 func convertFieldMetadata(field *model.FieldMetadata) *core.AttributeMetadata {
 	if field == nil {
 		return nil

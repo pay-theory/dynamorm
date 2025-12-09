@@ -754,6 +754,11 @@ func (m *MockModelMetadata) AttributeMetadata(field string) *AttributeMetadata {
 	return args.Get(0).(*AttributeMetadata)
 }
 
+func (m *MockModelMetadata) VersionFieldName() string {
+	args := m.Called()
+	return args.String(0)
+}
+
 func TestModelMetadataInterface(t *testing.T) {
 	t.Run("MockModelMetadata implements ModelMetadata", func(t *testing.T) {
 		var _ ModelMetadata = (*MockModelMetadata)(nil)

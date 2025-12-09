@@ -149,8 +149,10 @@ func cloneConditionValues(values map[string]any) map[string]any {
 	return cloned
 }
 
-func (q *Query) buildConditionExpression(includeWhereConditions bool, skipKeyConditions bool, defaultIfEmpty bool) (string, map[string]string, map[string]types.AttributeValue, error) {
-	builder := expr.NewBuilder()
+func (q *Query) buildConditionExpression(builder *expr.Builder, includeWhereConditions bool, skipKeyConditions bool, defaultIfEmpty bool) (string, map[string]string, map[string]types.AttributeValue, error) {
+	if builder == nil {
+		builder = expr.NewBuilder()
+	}
 	hasCondition := false
 
 	addCondition := func(field, operator string, value any) error {
@@ -480,7 +482,7 @@ func (q *Query) Create() error {
 		TableName: q.metadata.TableName(),
 	}
 
-	conditionExpr, names, values, err := q.buildConditionExpression(false, false, false)
+	conditionExpr, names, values, err := q.buildConditionExpression(nil, false, false, false)
 	if err != nil {
 		return err
 	}
@@ -738,7 +740,7 @@ func (q *Query) Update(fields ...string) error {
 		expressionAttributeValues[k] = av
 	}
 
-	conditionExpr, condNames, condValues, err := q.buildConditionExpression(true, true, false)
+	conditionExpr, condNames, condValues, err := q.buildConditionExpression(nil, true, true, false)
 	if err != nil {
 		return err
 	}
@@ -816,7 +818,7 @@ func (q *Query) Delete() error {
 		}
 	}
 
-	conditionExpr, condNames, condValues, err := q.buildConditionExpression(true, true, false)
+	conditionExpr, condNames, condValues, err := q.buildConditionExpression(nil, true, true, false)
 	if err != nil {
 		return err
 	}

@@ -7,9 +7,9 @@ import (
 // Organization represents a tenant in the multi-tenant system
 type Organization struct {
 	ID             string      `dynamorm:"pk" json:"id"`
-	Slug           string      `dynamorm:"index:gsi-slug,unique" json:"slug"`
+	Slug           string      `dynamorm:"index:gsi-slug,pk,sparse" json:"slug"`
 	Name           string      `json:"name"`
-	Domain         string      `dynamorm:"index:gsi-domain,unique" json:"domain,omitempty"`
+	Domain         string      `dynamorm:"index:gsi-domain,pk,sparse,omitempty" json:"domain,omitempty"`
 	Plan           string      `json:"plan"`   // free, starter, pro, enterprise
 	Status         string      `json:"status"` // active, suspended, cancelled
 	OwnerID        string      `json:"owner_id"`
@@ -63,19 +63,19 @@ type BillingInfo struct {
 
 // User represents a user within an organization
 type User struct {
-	ID              string    `dynamorm:"pk,composite:org_id,user_id" json:"id"`
-	OrgID           string    `dynamorm:"extract:org_id" json:"org_id"`
-	UserID          string    `dynamorm:"extract:user_id" json:"user_id"`
+	ID              string    `dynamorm:"pk" json:"id"`
+	OrgID           string    `dynamorm:"" json:"org_id"`
+	UserID          string    `dynamorm:"" json:"user_id"`
 	Email           string    `dynamorm:"index:gsi-email,pk" json:"email"`
-	OrgEmail        string    `dynamorm:"index:gsi-email,sk,composite:org_id,email" json:"org_email"`
+	OrgEmail        string    `dynamorm:"index:gsi-email,sk" json:"org_email"`
 	Username        string    `json:"username"`
 	FirstName       string    `json:"first_name"`
 	LastName        string    `json:"last_name"`
 	Avatar          string    `json:"avatar,omitempty"`
 	Role            string    `json:"role"`   // owner, admin, member, viewer
 	Status          string    `json:"status"` // active, invited, suspended
-	Permissions     []string  `dynamorm:"set" json:"permissions"`
-	Projects        []string  `dynamorm:"set" json:"projects"` // Project IDs user has access to
+	Permissions     []string  `dynamorm:"set,omitempty" json:"permissions"`
+	Projects        []string  `dynamorm:"set,omitempty" json:"projects"` // Project IDs user has access to
 	MFAEnabled      bool      `json:"mfa_enabled"`
 	MFASecret       string    `json:"-"`
 	LastLoginAt     time.Time `json:"last_login_at,omitempty"`
@@ -88,10 +88,10 @@ type User struct {
 
 // Project represents a project within an organization
 type Project struct {
-	ID           string          `dynamorm:"pk,composite:org_id,project_id" json:"id"`
-	OrgID        string          `dynamorm:"extract:org_id" json:"org_id"`
-	ProjectID    string          `dynamorm:"extract:project_id" json:"project_id"`
-	Name         string          `dynamorm:"index:gsi-org-projects,pk,composite:org_id" json:"name"`
+	ID           string          `dynamorm:"pk" json:"id"`
+	OrgID        string          `dynamorm:"" json:"org_id"`
+	ProjectID    string          `dynamorm:"" json:"project_id"`
+	Name         string          `dynamorm:"index:gsi-org-projects,pk" json:"name"`
 	ProjectName  string          `dynamorm:"index:gsi-org-projects,sk" json:"project_name"`
 	Slug         string          `json:"slug"`
 	Description  string          `json:"description,omitempty"`
@@ -101,7 +101,7 @@ type Project struct {
 	Settings     ProjectSettings `dynamorm:"json" json:"settings"`
 	Team         []TeamMember    `dynamorm:"json" json:"team"`
 	Resources    ResourceQuota   `dynamorm:"json" json:"resources"`
-	Tags         []string        `dynamorm:"set" json:"tags"`
+	Tags         []string        `dynamorm:"set,omitempty" json:"tags"`
 	Repository   string          `json:"repository,omitempty"`
 	DeploymentID string          `json:"deployment_id,omitempty"`
 	CreatedBy    string          `json:"created_by"`
@@ -143,9 +143,9 @@ type ResourceQuota struct {
 
 // Resource represents a billable resource (API calls, storage, compute)
 type Resource struct {
-	ID           string            `dynamorm:"pk,composite:org_id,resource_id" json:"id"`
-	OrgID        string            `dynamorm:"extract:org_id" json:"org_id"`
-	ResourceID   string            `dynamorm:"extract:resource_id" json:"resource_id"`
+	ID           string            `dynamorm:"pk" json:"id"`
+	OrgID        string            `dynamorm:"" json:"org_id"`
+	ResourceID   string            `dynamorm:"" json:"resource_id"`
 	ProjectID    string            `dynamorm:"index:gsi-project-resources,pk" json:"project_id"`
 	Timestamp    time.Time         `dynamorm:"index:gsi-project-resources,sk" json:"timestamp"`
 	Type         string            `json:"type"` // api_call, storage, compute, bandwidth
@@ -161,14 +161,14 @@ type Resource struct {
 
 // APIKey represents an API key for programmatic access
 type APIKey struct {
-	ID         string    `dynamorm:"pk,composite:org_id,key_id" json:"id"`
-	OrgID      string    `dynamorm:"extract:org_id" json:"org_id"`
-	KeyID      string    `dynamorm:"extract:key_id" json:"key_id"`
+	ID         string    `dynamorm:"pk" json:"id"`
+	OrgID      string    `dynamorm:"" json:"org_id"`
+	KeyID      string    `dynamorm:"" json:"key_id"`
 	Name       string    `json:"name"`
 	KeyHash    string    `json:"-"`          // Hashed API key
 	KeyPrefix  string    `json:"key_prefix"` // First 8 chars for identification
 	ProjectID  string    `json:"project_id,omitempty"`
-	Scopes     []string  `dynamorm:"set" json:"scopes"`
+	Scopes     []string  `dynamorm:"set,omitempty" json:"scopes"`
 	RateLimit  int       `json:"rate_limit"` // requests per hour
 	LastUsedAt time.Time `json:"last_used_at,omitempty"`
 	LastUsedIP string    `json:"last_used_ip,omitempty"`
@@ -180,10 +180,10 @@ type APIKey struct {
 
 // AuditLog represents an audit trail entry
 type AuditLog struct {
-	ID           string            `dynamorm:"pk,composite:org_id,timestamp,event_id" json:"id"`
-	OrgID        string            `dynamorm:"extract:org_id" json:"org_id"`
-	Timestamp    time.Time         `dynamorm:"extract:timestamp" json:"timestamp"`
-	EventID      string            `dynamorm:"extract:event_id" json:"event_id"`
+	ID           string            `dynamorm:"pk" json:"id"`
+	OrgID        string            `dynamorm:"" json:"org_id"`
+	Timestamp    time.Time         `dynamorm:"" json:"timestamp"`
+	EventID      string            `dynamorm:"" json:"event_id"`
 	UserID       string            `dynamorm:"index:gsi-user-audit,pk" json:"user_id"`
 	UserTime     time.Time         `dynamorm:"index:gsi-user-audit,sk" json:"user_time"`
 	Action       string            `json:"action"`        // create, update, delete, login, etc
@@ -194,7 +194,7 @@ type AuditLog struct {
 	UserAgent    string            `json:"user_agent,omitempty"`
 	Success      bool              `json:"success"`
 	ErrorMessage string            `json:"error_message,omitempty"`
-	TTL          time.Time         `dynamorm:"ttl" json:"ttl"` // 90 days retention
+	TTL          int64             `dynamorm:"ttl" json:"ttl"` // 90 days retention
 }
 
 // Change represents a field change in audit log
@@ -205,23 +205,23 @@ type Change struct {
 
 // Invitation represents a pending user invitation
 type Invitation struct {
-	ID        string    `dynamorm:"pk,composite:org_id,invite_id" json:"id"`
-	OrgID     string    `dynamorm:"extract:org_id" json:"org_id"`
-	InviteID  string    `dynamorm:"extract:invite_id" json:"invite_id"`
-	Email     string    `dynamorm:"index:gsi-invite-email,unique" json:"email"`
+	ID        string    `dynamorm:"pk" json:"id"`
+	OrgID     string    `dynamorm:"" json:"org_id"`
+	InviteID  string    `dynamorm:"" json:"invite_id"`
+	Email     string    `dynamorm:"index:gsi-invite-email" json:"email"`
 	Role      string    `json:"role"`
-	Projects  []string  `dynamorm:"set" json:"projects,omitempty"`
+	Projects  []string  `dynamorm:"set,omitempty" json:"projects,omitempty"`
 	InvitedBy string    `json:"invited_by"`
 	Token     string    `json:"-"`
-	ExpiresAt time.Time `dynamorm:"ttl" json:"expires_at"`
+	ExpiresAt int64     `dynamorm:"ttl" json:"expires_at"`
 	CreatedAt time.Time `dynamorm:"created_at" json:"created_at"`
 }
 
 // UsageReport represents monthly usage for billing
 type UsageReport struct {
-	ID             string           `dynamorm:"pk,composite:org_id,billing_cycle" json:"id"`
-	OrgID          string           `dynamorm:"extract:org_id" json:"org_id"`
-	BillingCycle   string           `dynamorm:"extract:billing_cycle" json:"billing_cycle"` // YYYY-MM
+	ID             string           `dynamorm:"pk" json:"id"`
+	OrgID          string           `dynamorm:"" json:"org_id"`
+	BillingCycle   string           `dynamorm:"" json:"billing_cycle"` // YYYY-MM
 	Plan           string           `json:"plan"`
 	UserCount      int              `json:"user_count"`
 	ProjectCount   int              `json:"project_count"`

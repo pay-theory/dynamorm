@@ -10,19 +10,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dynamorm/dynamorm"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/models"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	derrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // APIKeyHandler handles API key management
 type APIKeyHandler struct {
-	db *dynamorm.Client
+	db core.ExtendedDB
 }
 
 // NewAPIKeyHandler creates a new API key handler
-func NewAPIKeyHandler(db *dynamorm.Client) *APIKeyHandler {
+func NewAPIKeyHandler(db core.ExtendedDB) *APIKeyHandler {
 	return &APIKeyHandler{db: db}
 }
 
@@ -71,7 +72,7 @@ func (h *APIKeyHandler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		if err := h.db.Model(&models.Project{}).
 			Where("ID", "=", fmt.Sprintf("%s#%s", orgID, req.ProjectID)).
 			First(&project); err != nil {
-			if err == dynamorm.ErrNotFound {
+			if err == derrors.ErrItemNotFound {
 				http.Error(w, "project not found", http.StatusNotFound)
 				return
 			}
@@ -205,7 +206,7 @@ func (h *APIKeyHandler) GetAPIKey(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.APIKey{}).
 		Where("ID", "=", compositeID).
 		First(&apiKey); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "API key not found", http.StatusNotFound)
 			return
 		}
@@ -259,7 +260,7 @@ func (h *APIKeyHandler) UpdateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.APIKey{}).
 		Where("ID", "=", compositeID).
 		First(&apiKey); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "API key not found", http.StatusNotFound)
 			return
 		}
@@ -329,7 +330,7 @@ func (h *APIKeyHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.APIKey{}).
 		Where("ID", "=", compositeID).
 		First(&apiKey); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "API key not found", http.StatusNotFound)
 			return
 		}
@@ -362,7 +363,7 @@ func (h *APIKeyHandler) ValidateAPIKey(apiKey string) (*models.APIKey, error) {
 		Where("KeyHash", "=", keyHash).
 		Where("Active", "=", true).
 		First(&apiKeyRecord); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			return nil, fmt.Errorf("invalid API key")
 		}
 		return nil, err
@@ -388,11 +389,15 @@ func (h *APIKeyHandler) CheckRateLimit(keyID string) error {
 	hourAgo := time.Now().Add(-1 * time.Hour)
 
 	// Count requests in the last hour
-	var count int
-	h.db.Model(&models.Resource{}).
+	// Count requests in the last hour
+	count64, err := h.db.Model(&models.Resource{}).
 		Where("Metadata.api_key_id", "=", keyID).
 		Where("Timestamp", ">", hourAgo).
-		Count(&count)
+		Count()
+	if err != nil {
+		return err
+	}
+	count := int(count64)
 
 	// Get API key to check limit
 	var apiKey models.APIKey
@@ -457,7 +462,7 @@ func (h *APIKeyHandler) logAuditEvent(orgID, userID, action, resourceType, resou
 		Changes:      changes,
 		Success:      success,
 		ErrorMessage: errorMsg,
-		TTL:          time.Now().AddDate(0, 3, 0), // 90 days retention
+		TTL:          time.Now().AddDate(0, 3, 0).Unix(), // 90 days retention
 	}
 
 	// Best effort - don't fail the main operation if audit fails

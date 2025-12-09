@@ -3606,3 +3606,16 @@ func (ma *metadataAdapter) AttributeMetadata(field string) *core.AttributeMetada
 		Tags:         fieldMeta.Tags,
 	}
 }
+
+func (ma *metadataAdapter) VersionFieldName() string {
+	if ma.metadata == nil {
+		return ""
+	}
+	if ma.metadata.VersionField != nil {
+		if ma.metadata.VersionField.DBName != "" {
+			return ma.metadata.VersionField.DBName
+		}
+		return ma.metadata.VersionField.Name
+	}
+	return ""
+}

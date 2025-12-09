@@ -62,6 +62,10 @@ func (m *mockMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	}
 }
 
+func (m *mockMetadata) VersionFieldName() string {
+	return ""
+}
+
 func (m *attrAwareMetadata) TableName() string {
 	return "hashtag-table"
 }
@@ -83,6 +87,10 @@ func (m *attrAwareMetadata) AttributeMetadata(field string) *core.AttributeMetad
 		"SK": {Name: "SK", Type: "S", DynamoDBName: "SK"},
 	}
 	return mapping[field]
+}
+
+func (m *attrAwareMetadata) VersionFieldName() string {
+	return ""
 }
 
 type mockExecutor struct {
@@ -154,6 +162,19 @@ func (r *registryMetadataAdapter) AttributeMetadata(field string) *core.Attribut
 		return &core.AttributeMetadata{Name: meta.Name, Type: meta.Type.String(), DynamoDBName: meta.DBName}
 	}
 	return nil
+}
+
+func (r *registryMetadataAdapter) VersionFieldName() string {
+	if r.meta == nil {
+		return ""
+	}
+	if r.meta.VersionField != nil {
+		if r.meta.VersionField.DBName != "" {
+			return r.meta.VersionField.DBName
+		}
+		return r.meta.VersionField.Name
+	}
+	return ""
 }
 
 func (m *mockExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {

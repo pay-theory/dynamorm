@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- _Nothing yet._
+- **[CRITICAL]** Resolved expression placeholder collisions in `UpdateBuilder` when combining update expressions with query conditions.
+  - Implemented `ResetConditions()` in expression builder and shared builder context to prevent placeholder overlaps.
+- **[CRITICAL]** Fixed hardcoded `Version` field name in optimistic locking.
+  - `ConditionVersion()` now dynamically retrieves the version field name from model metadata via `VersionFieldName()`, allowing custom version field names.
 
 ## [1.0.37] - 2025-11-11
 
@@ -209,12 +212,12 @@ See [Release Notes v1.0.1](docs/releases/v1.0.1-interface-improvements.md) for d
 - Expression builder
 - Basic documentation
 
-[Unreleased]: https://github.com/dynamorm/dynamorm/compare/v1.0.36...HEAD
-[1.0.36]: https://github.com/dynamorm/dynamorm/compare/v1.0.35...v1.0.36
-[1.0.35]: https://github.com/dynamorm/dynamorm/compare/v1.0.34...v1.0.35
-[1.0.9]: https://github.com/dynamorm/dynamorm/compare/v1.0.3...v1.0.9
-[1.0.3]: https://github.com/dynamorm/dynamorm/compare/v1.0.2...v1.0.3
-[1.0.2]: https://github.com/dynamorm/dynamorm/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.1...v1.0.1
-[0.1.1]: https://github.com/dynamorm/dynamorm/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/dynamorm/dynamorm/releases/tag/v0.1.0 
+[Unreleased]: https://github.com/pay-theory/dynamorm/compare/v1.0.36...HEAD
+[1.0.36]: https://github.com/pay-theory/dynamorm/compare/v1.0.35...v1.0.36
+[1.0.35]: https://github.com/pay-theory/dynamorm/compare/v1.0.34...v1.0.35
+[1.0.9]: https://github.com/pay-theory/dynamorm/compare/v1.0.3...v1.0.9
+[1.0.3]: https://github.com/pay-theory/dynamorm/compare/v1.0.2...v1.0.3
+[1.0.2]: https://github.com/pay-theory/dynamorm/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/pay-theory/dynamorm/compare/v0.1.1...v1.0.1
+[0.1.1]: https://github.com/pay-theory/dynamorm/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/pay-theory/dynamorm/releases/tag/v0.1.0 

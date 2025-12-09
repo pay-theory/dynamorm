@@ -60,6 +60,10 @@ func (m *TestMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	return nil
 }
 
+func (m *TestMetadata) VersionFieldName() string {
+	return ""
+}
+
 func TestDefaultBatchOptions(t *testing.T) {
 	opts := DefaultBatchOptions()
 

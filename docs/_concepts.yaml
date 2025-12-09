@@ -1,0 +1,74 @@
+# _concepts.yaml - Machine-readable concept map for DynamORM
+# Helps AI assistants understand components and relationships
+
+concepts:
+  dynamorm:
+    type: library
+    language: go
+    purpose: "Type-safe, Lambda-optimized ORM for DynamoDB"
+    tagline: "Significantly faster cold starts and reduced boilerplate for DynamoDB in Go"
+    provides:
+      - type_safe_operations
+      - lambda_optimization
+      - fluent_query_builder
+      - transaction_support
+      - schema_management
+      - batch_operations
+    requires:
+      - aws_sdk_go_v2
+    replaces:
+      - raw_aws_sdk_usage
+      - gorm_sql_patterns
+    use_when:
+      - building_serverless_apps
+      - type_safety_is_required
+      - performance_is_critical
+    dont_use_when:
+      - using_sql_databases
+      - direct_sdk_control_is_mandatory
+
+  db_instance:
+    type: component
+    purpose: "Main entry point for database operations"
+    provides:
+      - connection_pooling
+      - configuration_management
+    key_methods:
+      - New: "Standard initialization"
+      - NewLambdaOptimized: "Lambda-optimized initialization"
+      - Model: "Start a query for a specific struct"
+      - Transaction: "Start an ACID transaction"
+
+  query_builder:
+    type: component
+    purpose: "Fluent interface for constructing DynamoDB queries"
+    provides:
+      - automatic_index_selection
+      - type_safe_conditions
+    key_methods:
+      - Where: "Add condition"
+      - Index: "Select specific index"
+      - Limit: "Limit results"
+      - All: "Execute and get all results"
+      - First: "Execute and get single result"
+
+  transaction:
+    type: component
+    purpose: "Manage multi-item ACID transactions"
+    provides:
+      - atomicity
+      - consistency
+    key_methods:
+      - Create: "Add create operation to tx"
+      - Update: "Add update operation to tx"
+      - Delete: "Add delete operation to tx"
+      - Execute: "Commit transaction"
+
+  struct_tags:
+    type: mechanism
+    purpose: "Map Go structs to DynamoDB attributes"
+    key_tags:
+      - dynamorm:"pk": "Partition Key"
+      - dynamorm:"sk": "Sort Key"
+      - dynamorm:"index:name,pk": "GSI Partition Key"
+      - dynamorm:"index:name,sk": "GSI Sort Key"
