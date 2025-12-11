@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -429,8 +430,15 @@ func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, 
 			}
 
 			fieldValue := v.Field(i)
-			// Skip zero values for omitempty behavior
-			if fieldValue.IsZero() {
+
+			// Check for omitempty in json tag
+			hasOmitEmpty := false
+			if jsonTag := field.Tag.Get("json"); jsonTag != "" {
+				hasOmitEmpty = strings.Contains(jsonTag, "omitempty")
+			}
+
+			// Skip zero values only if omitempty is set
+			if hasOmitEmpty && fieldValue.IsZero() {
 				continue
 			}
 
