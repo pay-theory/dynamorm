@@ -1,0 +1,48 @@
+name: Quality Gates (10/10 Rubric)
+
+on:
+  push:
+    branches: ["premain"]
+  pull_request:
+    branches: ["premain"]
+
+permissions:
+  contents: read
+
+jobs:
+  rubric:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tooling (pinned)
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.5.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.11
+
+      - name: Run rubric
+        env:
+          AWS_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: dummy
+          AWS_SECRET_ACCESS_KEY: dummy
+          DYNAMODB_ENDPOINT: http://localhost:8000
+          GOSEC_SARIF_PATH: gosec.sarif
+        run: make rubric
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rubric_artifacts
+          path: |
+            coverage_lib.out
+            gosec.sarif
+

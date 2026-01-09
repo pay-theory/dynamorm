@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pay-theory/dynamorm/internal/numutil"
 )
 
 // QueryOptimizer provides query optimization capabilities
@@ -481,7 +483,7 @@ func (oq *OptimizedQuery) Execute(dest any) error {
 		err = oq.All(dest)
 	case "Scan":
 		if oq.plan.ParallelSegments > 1 {
-			err = oq.ScanAllSegments(dest, int32(oq.plan.ParallelSegments))
+			err = oq.ScanAllSegments(dest, numutil.ClampIntToInt32(oq.plan.ParallelSegments))
 		} else {
 			err = oq.Scan(dest)
 		}

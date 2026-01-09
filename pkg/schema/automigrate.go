@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
@@ -296,7 +297,7 @@ func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetad
 	for {
 		scanInput := &dynamodb.ScanInput{
 			TableName: &sourceMetadata.TableName,
-			Limit:     int32Ptr(int32(opts.BatchSize)),
+			Limit:     int32Ptr(numutil.ClampIntToInt32(opts.BatchSize)),
 		}
 		if lastEvaluatedKey != nil {
 			scanInput.ExclusiveStartKey = lastEvaluatedKey
@@ -375,8 +376,8 @@ func (m *Manager) processItems(ctx context.Context, client *dynamodb.Client, ite
 				return fmt.Errorf("failed to write items to target table: %w", err)
 			}
 
-		// Check for unprocessed items
-		if len(result.UnprocessedItems) > 0 {
+			// Check for unprocessed items
+			if len(result.UnprocessedItems) > 0 {
 				if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
 					remainingRequests = unprocessed
 					retryCount++
@@ -451,7 +452,7 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 		// Scan source table
 		scanInput := &dynamodb.ScanInput{
 			TableName: &sourceTable,
-			Limit:     int32Ptr(int32(batchSize)),
+			Limit:     int32Ptr(numutil.ClampIntToInt32(batchSize)),
 		}
 		if lastEvaluatedKey != nil {
 			scanInput.ExclusiveStartKey = lastEvaluatedKey
@@ -503,8 +504,8 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 						return fmt.Errorf("failed to write batch: %w", err)
 					}
 
-			// Check for unprocessed items
-			if len(batchResult.UnprocessedItems) > 0 {
+					// Check for unprocessed items
+					if len(batchResult.UnprocessedItems) > 0 {
 						if unprocessed, exists := batchResult.UnprocessedItems[targetTable]; exists && len(unprocessed) > 0 {
 							remainingRequests = unprocessed
 							retryCount++

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+required=(
+  "docs/development/planning/dynamorm-controls-matrix.md"
+  "docs/development/planning/dynamorm-10of10-rubric.md"
+  "docs/development/planning/dynamorm-10of10-roadmap.md"
+  "docs/development/planning/dynamorm-evidence-plan.md"
+  "docs/development/planning/dynamorm-threat-model.md"
+)
+
+failures=0
+
+for f in "${required[@]}"; do
+  if [[ ! -f "${f}" ]]; then
+    echo "missing: ${f}"
+    failures=$((failures + 1))
+  fi
+done
+
+if [[ -f "docs/development/planning/dynamorm-10of10-rubric.md" ]]; then
+  grep -Eq '^-\s+\*\*Rubric version:\*\*\s+`v[0-9]+' docs/development/planning/dynamorm-10of10-rubric.md || {
+    echo "dynamorm-10of10-rubric.md: missing rubric version line"
+    failures=$((failures + 1))
+  }
+fi
+
+if [[ "${failures}" -ne 0 ]]; then
+  echo "planning-docs: FAIL (${failures} issue(s))"
+  exit 1
+fi
+
+echo "planning-docs: present"
+

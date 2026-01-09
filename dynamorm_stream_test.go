@@ -24,12 +24,12 @@ type TestOrder struct {
 func TestUnmarshalStreamImage(t *testing.T) {
 	// Create a mock DynamoDB stream image
 	streamImage := map[string]events.DynamoDBAttributeValue{
-		"PK": events.NewStringAttribute("ORDER#123"),
-		"SK": events.NewStringAttribute("METADATA"),
-		"order_id": events.NewStringAttribute("123"),
+		"PK":          events.NewStringAttribute("ORDER#123"),
+		"SK":          events.NewStringAttribute("METADATA"),
+		"order_id":    events.NewStringAttribute("123"),
 		"customer_id": events.NewStringAttribute("CUST456"),
-		"total": events.NewNumberAttribute("99.99"),
-		"status": events.NewStringAttribute("pending"),
+		"total":       events.NewNumberAttribute("99.99"),
+		"status":      events.NewStringAttribute("pending"),
 		"items": events.NewListAttribute([]events.DynamoDBAttributeValue{
 			events.NewStringAttribute("ITEM1"),
 			events.NewStringAttribute("ITEM2"),
@@ -56,19 +56,19 @@ func TestUnmarshalStreamImage_ComplexTypes(t *testing.T) {
 	assert.NotNil(t, convertLambdaAttributeValue(events.NewBooleanAttribute(true)))
 	assert.NotNil(t, convertLambdaAttributeValue(events.NewNullAttribute()))
 	assert.NotNil(t, convertLambdaAttributeValue(events.NewBinaryAttribute([]byte("data"))))
-	
+
 	// Test complex types
 	listAttr := events.NewListAttribute([]events.DynamoDBAttributeValue{
 		events.NewStringAttribute("item1"),
 		events.NewNumberAttribute("42"),
 	})
 	assert.NotNil(t, convertLambdaAttributeValue(listAttr))
-	
+
 	mapAttr := events.NewMapAttribute(map[string]events.DynamoDBAttributeValue{
 		"key": events.NewStringAttribute("value"),
 	})
 	assert.NotNil(t, convertLambdaAttributeValue(mapAttr))
-	
+
 	// Test set types
 	assert.NotNil(t, convertLambdaAttributeValue(events.NewStringSetAttribute([]string{"a", "b"})))
 	assert.NotNil(t, convertLambdaAttributeValue(events.NewNumberSetAttribute([]string{"1", "2"})))
@@ -77,7 +77,7 @@ func TestUnmarshalStreamImage_ComplexTypes(t *testing.T) {
 
 func TestUnmarshalStreamImage_EmptyImage(t *testing.T) {
 	streamImage := make(map[string]events.DynamoDBAttributeValue)
-	
+
 	var order TestOrder
 	err := UnmarshalStreamImage(streamImage, &order)
 	// Should not error on empty image
@@ -88,7 +88,7 @@ func TestUnmarshalStreamImage_NilDestination(t *testing.T) {
 	streamImage := map[string]events.DynamoDBAttributeValue{
 		"PK": events.NewStringAttribute("TEST"),
 	}
-	
+
 	err := UnmarshalStreamImage(streamImage, nil)
 	assert.Error(t, err)
 }
@@ -100,28 +100,28 @@ func TestUnmarshalStreamImage_JSONString(t *testing.T) {
 		City    string `json:"city"`
 		Country string `json:"country"`
 	}
-	
+
 	type Customer struct {
-		PK      string  `dynamorm:"PK"`
-		SK      string  `dynamorm:"SK"`
-		Name    string  `dynamorm:"name"`
-		Address Address `dynamorm:"address"`
+		PK      string   `dynamorm:"PK"`
+		SK      string   `dynamorm:"SK"`
+		Name    string   `dynamorm:"name"`
+		Address Address  `dynamorm:"address"`
 		Tags    []string `dynamorm:"tags"`
 	}
-	
+
 	// Create stream image with JSON string for struct field
 	streamImage := map[string]events.DynamoDBAttributeValue{
-		"PK":   events.NewStringAttribute("CUSTOMER#123"),
-		"SK":   events.NewStringAttribute("PROFILE"),
-		"name": events.NewStringAttribute("John Doe"),
+		"PK":      events.NewStringAttribute("CUSTOMER#123"),
+		"SK":      events.NewStringAttribute("PROFILE"),
+		"name":    events.NewStringAttribute("John Doe"),
 		"address": events.NewStringAttribute(`{"street":"123 Main St","city":"New York","country":"USA"}`),
-		"tags": events.NewStringAttribute(`["premium","verified"]`),
+		"tags":    events.NewStringAttribute(`["premium","verified"]`),
 	}
-	
+
 	var customer Customer
 	err := UnmarshalStreamImage(streamImage, &customer)
 	require.NoError(t, err)
-	
+
 	assert.Equal(t, "CUSTOMER#123", customer.PK)
 	assert.Equal(t, "PROFILE", customer.SK)
 	assert.Equal(t, "John Doe", customer.Name)
@@ -140,9 +140,9 @@ func TestUnmarshalStreamImage_TimeFields(t *testing.T) {
 		UpdatedAt time.Time `dynamorm:"updated_at"`
 		ExpiresAt time.Time `dynamorm:"expires_at"`
 	}
-	
+
 	now := time.Now().UTC().Truncate(time.Second) // Truncate to match RFC3339 precision
-	
+
 	// Test various time formats
 	streamImage := map[string]events.DynamoDBAttributeValue{
 		"PK":         events.NewStringAttribute("EVENT#123"),
@@ -151,11 +151,11 @@ func TestUnmarshalStreamImage_TimeFields(t *testing.T) {
 		"updated_at": events.NewStringAttribute(now.Add(time.Hour).Format(time.RFC3339Nano)),
 		"expires_at": events.NewStringAttribute(fmt.Sprintf("%d", now.Add(24*time.Hour).Unix())),
 	}
-	
+
 	var event Event
 	err := UnmarshalStreamImage(streamImage, &event)
 	require.NoError(t, err)
-	
+
 	assert.Equal(t, "EVENT#123", event.PK)
 	assert.Equal(t, "METADATA", event.SK)
 	assert.Equal(t, now, event.CreatedAt)
@@ -172,7 +172,7 @@ func TestUnmarshalStreamImage_MapInterface(t *testing.T) {
 		Payload map[string]interface{} `dynamorm:"payload"`
 		Status  string                 `dynamorm:"status"`
 	}
-	
+
 	// Create stream image with nested map structure
 	streamImage := map[string]events.DynamoDBAttributeValue{
 		"PK":     events.NewStringAttribute("REQ#123"),
@@ -185,7 +185,7 @@ func TestUnmarshalStreamImage_MapInterface(t *testing.T) {
 			"priority":       events.NewNumberAttribute("1"),
 			"urgent":         events.NewBooleanAttribute(true),
 			"metadata": events.NewMapAttribute(map[string]events.DynamoDBAttributeValue{
-				"source": events.NewStringAttribute("web"),
+				"source":  events.NewStringAttribute("web"),
 				"user_id": events.NewNumberAttribute("12345"),
 			}),
 			"tags": events.NewListAttribute([]events.DynamoDBAttributeValue{
@@ -194,29 +194,29 @@ func TestUnmarshalStreamImage_MapInterface(t *testing.T) {
 			}),
 		}),
 	}
-	
+
 	var asyncReq AsyncRequest
 	err := UnmarshalStreamImage(streamImage, &asyncReq)
 	require.NoError(t, err)
-	
+
 	assert.Equal(t, "REQ#123", asyncReq.PK)
 	assert.Equal(t, "REQ#123", asyncReq.SK)
 	assert.Equal(t, "knowledge_query", asyncReq.Action)
 	assert.Equal(t, "PENDING", asyncReq.Status)
-	
+
 	// Verify the payload map is properly unmarshaled
 	assert.NotEmpty(t, asyncReq.Payload)
 	assert.Equal(t, "paytheory", asyncReq.Payload["knowledge_base"])
 	assert.Equal(t, "What are the API authentication methods?", asyncReq.Payload["query"])
 	assert.Equal(t, int64(1), asyncReq.Payload["priority"])
 	assert.Equal(t, true, asyncReq.Payload["urgent"])
-	
+
 	// Check nested map
 	metadata, ok := asyncReq.Payload["metadata"].(map[string]interface{})
 	require.True(t, ok, "metadata should be a map[string]interface{}")
 	assert.Equal(t, "web", metadata["source"])
 	assert.Equal(t, int64(12345), metadata["user_id"])
-	
+
 	// Check list
 	tags, ok := asyncReq.Payload["tags"].([]interface{})
 	require.True(t, ok, "tags should be a []interface{}")

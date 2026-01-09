@@ -578,7 +578,6 @@ func validateBasicValue(value any) error {
 	return nil
 }
 
-
 // ValidateExpression validates a complete expression for security
 func ValidateExpression(expression string) error {
 	if len(expression) > MaxExpressionLength {

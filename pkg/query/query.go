@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pay-theory/dynamorm/internal/expr"
+	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/index"
 )
@@ -1466,7 +1467,7 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 
 	// Set other parameters
 	if q.limit > 0 {
-		limit := int32(q.limit)
+		limit := numutil.ClampIntToInt32(q.limit)
 		compiled.Limit = &limit
 	}
 
@@ -1528,7 +1529,7 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 
 	// Set parameters
 	if q.limit > 0 {
-		limit := int32(q.limit)
+		limit := numutil.ClampIntToInt32(q.limit)
 		compiled.Limit = &limit
 	}
 

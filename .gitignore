@@ -108,3 +108,8 @@ jspm_packages/
 .serverless/
 .fusebox/
 .dynamodb/ 
+
+# Local notes (keep templates tracked)
+docs/development/notes/*
+!docs/development/notes/template-notes.md
+notes/

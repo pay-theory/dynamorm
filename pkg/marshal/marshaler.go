@@ -111,12 +111,12 @@ func (m *Marshaler) MarshalItem(model any, metadata *model.Metadata) (map[string
 	// If the value is not addressable, we need to make a copy
 	var ptr unsafe.Pointer
 	if v.CanAddr() {
-		ptr = unsafe.Pointer(v.UnsafeAddr())
+		ptr = unsafe.Pointer(v.UnsafeAddr()) // #nosec G103 -- performance-critical marshaling uses verified field offsets
 	} else {
 		// Create an addressable copy
 		vcopy := reflect.New(v.Type()).Elem()
 		vcopy.Set(v)
-		ptr = unsafe.Pointer(vcopy.UnsafeAddr())
+		ptr = unsafe.Pointer(vcopy.UnsafeAddr()) // #nosec G103 -- performance-critical marshaling uses verified field offsets
 	}
 
 	// Pre-calculate timestamps once

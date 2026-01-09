@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/google/uuid"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
@@ -47,7 +48,7 @@ type Note struct {
 
 // NotesApp manages note operations
 type NotesApp struct {
-	db     *dynamorm.DB
+	db     core.ExtendedDB
 	userID string // Current user for the demo
 }
 
@@ -360,7 +361,8 @@ func (app *NotesApp) runCLI() {
 	fmt.Println("  pin <num>             - Toggle pin status")
 	fmt.Println("  delete <num>          - Delete a note")
 	fmt.Println("  stats                 - Show statistics")
-	fmt.Println("  quit                  - Exit\n")
+	fmt.Println("  quit                  - Exit")
+	fmt.Println()
 
 	for {
 		fmt.Print("> ")

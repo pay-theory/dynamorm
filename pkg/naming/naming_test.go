@@ -139,8 +139,8 @@ func TestToSnakeCase(t *testing.T) {
 		"lowercase": "lowercase",
 
 		// Edge cases
-		"PK":       "pk",
-		"SK":       "sk",
+		"PK":        "pk",
+		"SK":        "sk",
 		"AccountID": "account_id",
 		"DeletedAt": "deleted_at",
 	}

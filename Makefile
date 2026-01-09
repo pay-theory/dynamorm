@@ -1,6 +1,6 @@
 # DynamORM Makefile
 
-.PHONY: all build test test-unit unit-cover clean lint fmt docker-up docker-down docker-clean integration benchmark stress test-all
+.PHONY: all build test test-unit unit-cover clean lint fmt fmt-check docker-up docker-down docker-clean integration benchmark stress test-all verify-coverage verify-go-modules verify-ci-toolchain verify-planning-docs sec rubric
 
 # Variables
 GOMOD := github.com/pay-theory/dynamorm
@@ -31,6 +31,9 @@ test-unit:
 unit-cover:
 	@echo "Running offline unit coverage..."
 	@go test ./... -short -coverpkg=./... -coverprofile=coverage_unit.out
+
+verify-coverage:
+	@./scripts/verify-coverage.sh
 
 # Run integration tests (requires DynamoDB Local)
 integration: docker-up
@@ -63,6 +66,9 @@ fmt:
 	@go fmt ./...
 	@gofmt -s -w .
 
+fmt-check:
+	@./scripts/fmt-check.sh
+
 # Run linters
 lint:
 	@echo "Running linters..."
@@ -86,7 +92,11 @@ docker-up:
 		fi \
 	else \
 		if [ -f docker-compose.yml ]; then \
-			docker-compose up -d dynamodb-local; \
+			if command -v docker-compose > /dev/null 2>&1; then \
+				docker-compose up -d dynamodb-local; \
+			else \
+				docker compose up -d dynamodb-local; \
+			fi; \
 		else \
 			docker run -d --name dynamodb-local -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -inMemory -sharedDb; \
 		fi \
@@ -140,6 +150,23 @@ check:
 	@echo "Checking for compilation errors..."
 	@go build -o /dev/null ./... 2>&1 | grep -E "^#|error" || echo "✅ No compilation errors"
 
+verify-go-modules:
+	@./scripts/verify-go-modules.sh
+
+verify-ci-toolchain:
+	@./scripts/verify-ci-toolchain.sh
+
+verify-planning-docs:
+	@./scripts/verify-planning-docs.sh
+
+sec:
+	@./scripts/sec-gosec.sh
+	@./scripts/sec-govulncheck.sh
+	@go mod verify
+
+rubric:
+	@./scripts/verify-rubric.sh
+
 # Show test coverage in browser
 coverage: test
 	@echo "Generating coverage report..."
@@ -184,10 +211,17 @@ help:
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  make fmt         - Format code"
+	@echo "  make fmt-check   - Verify formatting is clean"
 	@echo "  make lint        - Run linters"
 	@echo "  make check       - Check for compilation errors"
 	@echo "  make coverage    - Show test coverage in browser"
 	@echo "  make coverage-dashboard - Show coverage dashboard in terminal"
+	@echo "  make verify-coverage - Verify library coverage threshold"
+	@echo "  make verify-go-modules - Compile all Go modules"
+	@echo "  make verify-ci-toolchain - Verify CI toolchain alignment"
+	@echo "  make verify-planning-docs - Verify planning docs exist"
+	@echo "  make sec         - Run security gates (gosec + govulncheck + go mod verify)"
+	@echo "  make rubric      - Run full rubric gate set"
 	@echo ""
 	@echo "Docker/DynamoDB:"
 	@echo "  make docker-up   - Start DynamoDB Local"

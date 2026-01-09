@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/google/uuid"
 	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
@@ -68,7 +69,7 @@ type Contact struct {
 
 // ContactsApp manages contact operations
 type ContactsApp struct {
-	db    *dynamorm.DB
+	db    core.ExtendedDB
 	orgID string // Current organization
 }
 
@@ -482,7 +483,8 @@ func (app *ContactsApp) runCLI() {
 	fmt.Println("  delete <num>        - Delete a contact")
 	fmt.Println("  import              - Import sample contacts")
 	fmt.Println("  stats               - Show statistics")
-	fmt.Println("  quit                - Exit\n")
+	fmt.Println("  quit                - Exit")
+	fmt.Println()
 
 	for {
 		fmt.Print("> ")

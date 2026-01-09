@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/pay-theory/dynamorm/internal/expr"
+	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/internal/reflectutil"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
@@ -2105,7 +2106,7 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 
 	// Set limit
 	if q.limit != nil {
-		input.Limit = aws.Int32(int32(*q.limit))
+		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
 	}
 
 	// Set consistent read (only works for main table queries, not GSI)
@@ -2199,7 +2200,7 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 
 	// Set limit
 	if q.limit != nil {
-		input.Limit = aws.Int32(int32(*q.limit))
+		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
 	}
 
 	// Set consistent read (only works for main table scans, not GSI)
@@ -2949,7 +2950,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		// Set limit
 		if q.limit != nil {
-			input.Limit = aws.Int32(int32(*q.limit))
+			input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
 		}
 
 		// Execute query
@@ -3018,7 +3019,7 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		// Set limit
 		if q.limit != nil {
-			input.Limit = aws.Int32(int32(*q.limit))
+			input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
 		}
 
 		// Execute scan
@@ -3311,7 +3312,7 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 	if q.limit != nil && *q.limit > 0 {
 		// Distribute limit across segments
 		segmentLimit := (*q.limit + int(totalSegments) - 1) / int(totalSegments)
-		input.Limit = aws.Int32(int32(segmentLimit))
+		input.Limit = aws.Int32(numutil.ClampIntToInt32(segmentLimit))
 	}
 
 	// Execute scan and collect results

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"runtime"
 	"sync"
@@ -359,7 +360,11 @@ func (mm *MemoryMonitor) checkMemory() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	currentMB := int64(memStats.Alloc / 1024 / 1024)
+	currentMBu := memStats.Alloc / 1024 / 1024
+	currentMB := int64(currentMBu)
+	if currentMBu > uint64(math.MaxInt64) {
+		currentMB = math.MaxInt64
+	}
 
 	// Store current memory with atomic operation (stats fields are accessed atomically elsewhere)
 	atomic.StoreInt64(&mm.stats.CurrentMemoryMB, currentMB)

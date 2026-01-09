@@ -110,8 +110,8 @@ func createLambdaDB() (*LambdaDB, error) {
 		config.WithRetryMaxAttempts(3),
 	}
 
-// Enable X-Ray tracing automatically when running in Lambda. The AWS SDK picks up
-// X-Ray configuration from the environment, so no explicit setup is required here.
+	// Enable X-Ray tracing automatically when running in Lambda. The AWS SDK picks up
+	// X-Ray configuration from the environment, so no explicit setup is required here.
 
 	cfg := session.Config{
 		Region:           getRegion(),

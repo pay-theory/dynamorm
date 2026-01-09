@@ -2,15 +2,15 @@ package query
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"math/rand"
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -123,7 +123,7 @@ func (e *MainExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 		allItems = append(allItems, output.Items...)
 
 		// Check if we need to paginate
-		if output.LastEvaluatedKey == nil || (input.Limit != nil && int32(len(allItems)) >= *input.Limit) {
+		if output.LastEvaluatedKey == nil || (input.Limit != nil && int64(len(allItems)) >= int64(*input.Limit)) {
 			break
 		}
 
@@ -210,7 +210,7 @@ func (e *MainExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 		allItems = append(allItems, output.Items...)
 
 		// Check if we need to paginate
-		if output.LastEvaluatedKey == nil || (input.Limit != nil && int32(len(allItems)) >= *input.Limit) {
+		if output.LastEvaluatedKey == nil || (input.Limit != nil && int64(len(allItems)) >= int64(*input.Limit)) {
 			break
 		}
 
@@ -559,10 +559,16 @@ func (e *MainExecutor) ExecuteBatchGet(input *CompiledBatchGet, opts *core.Batch
 	return collected, nil
 }
 
-var (
-	jitterRand = rand.New(rand.NewSource(time.Now().UnixNano()))
-	jitterMu   sync.Mutex
-)
+func cryptoFloat64() (float64, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0, err
+	}
+
+	// Use the top 53 bits (IEEE-754 float64 mantissa) for a uniform [0,1) fraction.
+	u := binary.BigEndian.Uint64(b[:]) >> 11
+	return float64(u) / (1 << 53), nil
+}
 
 func buildKeysAndAttributes(input *CompiledBatchGet) types.KeysAndAttributes {
 	kaa := types.KeysAndAttributes{
@@ -616,10 +622,10 @@ func calculateBatchRetryDelay(policy *core.RetryPolicy, attempt int) time.Durati
 	}
 
 	if policy.Jitter > 0 {
-		jitterMu.Lock()
-		offset := (jitterRand.Float64()*2 - 1) * policy.Jitter * float64(delay)
-		jitterMu.Unlock()
-		delay += time.Duration(offset)
+		if r, err := cryptoFloat64(); err == nil {
+			offset := (r*2 - 1) * policy.Jitter * float64(delay)
+			delay += time.Duration(offset)
+		}
 		if delay < 0 {
 			delay = policy.InitialDelay
 			if delay <= 0 {
