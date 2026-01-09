@@ -72,7 +72,7 @@ fmt-check:
 # Run linters
 lint:
 	@echo "Running linters..."
-	@golangci-lint run ./...
+	@golangci-lint run --timeout=5m --config .golangci-v2.yml ./...
 
 # Clean build artifacts
 clean:
