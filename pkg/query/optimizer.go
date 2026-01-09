@@ -277,7 +277,7 @@ func (o *QueryOptimizer) applyHeuristicEstimates(q *Query, plan *QueryPlan, esti
 }
 
 // suggestIndexes suggests appropriate indexes for the query
-func (o *QueryOptimizer) suggestIndexes(q *Query) []string {
+func (o *QueryOptimizer) suggestIndexes(_ *Query) []string {
 	suggestions := []string{}
 
 	// Get available indexes from metadata
@@ -298,7 +298,7 @@ func (o *QueryOptimizer) calculateOptimalSegments(q *Query) int {
 		if q.limit < 100 {
 			segments = 1
 		} else if q.limit < 1000 {
-			segments = min(segments, 4)
+			segments = minInt(segments, 4)
 		}
 	}
 
@@ -542,7 +542,7 @@ func (oq *OptimizedQuery) ExplainPlan() string {
 }
 
 // Helper function for min
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

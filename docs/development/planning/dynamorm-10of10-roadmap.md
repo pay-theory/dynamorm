@@ -26,7 +26,7 @@ Evidence (refresh whenever behavior changes):
 - ✅ `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
 - ✅ `bash scripts/fmt-check.sh`
 - ✅ `golangci-lint config verify -c .golangci-v2.yml`
-- ❌ `make lint` (current baseline: **728** issues; largest buckets: `errcheck` **326**, `govet` **171** (`fieldalignment`), `revive` **87**, `goimports` **52**)
+- ❌ `make lint` (current baseline: **579** issues; largest buckets: `errcheck` **326**, `govet` **171** (`fieldalignment`), `gocognit` **26**, `gocyclo` **26**, `dupl` **15**)
 - ✅ `bash scripts/verify-go-modules.sh`
 - ✅ `bash scripts/verify-ci-toolchain.sh`
 - ✅ `bash scripts/sec-gosec.sh`

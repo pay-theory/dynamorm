@@ -39,7 +39,7 @@ type MainExecutor struct {
 }
 
 // NewExecutor creates a new MainExecutor instance
-func NewExecutor(client DynamoDBAPI, ctx context.Context) *MainExecutor {
+func NewExecutor(client DynamoDBAPI, ctx context.Context) *MainExecutor { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &MainExecutor{
 		client: client,
 		ctx:    ctx,

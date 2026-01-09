@@ -178,6 +178,7 @@ func (s *Session) AWSConfig() aws.Config {
 
 // WithContext returns a new session with the given context
 func (s *Session) WithContext(ctx context.Context) *Session {
+	_ = ctx
 	// DynamoDB client operations accept context at the operation level
 	// This method is here for consistency with the DB interface
 	return s

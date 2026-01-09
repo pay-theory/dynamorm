@@ -181,8 +181,8 @@ func (rp *ResourceProtector) SecureBodyReader(r *http.Request) ([]byte, error) {
 
 	// Update max concurrent requests
 	for {
-		max := atomic.LoadInt64(&rp.stats.MaxConcurrentReq)
-		if current <= max || atomic.CompareAndSwapInt64(&rp.stats.MaxConcurrentReq, max, current) {
+		maxConcurrent := atomic.LoadInt64(&rp.stats.MaxConcurrentReq)
+		if current <= maxConcurrent || atomic.CompareAndSwapInt64(&rp.stats.MaxConcurrentReq, maxConcurrent, current) {
 			break
 		}
 	}
@@ -267,8 +267,8 @@ func (bl *BatchLimiter) AcquireBatch(ctx context.Context, batchSize int) error {
 
 	// Update max concurrent batch ops
 	for {
-		max := atomic.LoadInt64(&bl.protector.stats.MaxConcurrentBatch)
-		if current <= max || atomic.CompareAndSwapInt64(&bl.protector.stats.MaxConcurrentBatch, max, current) {
+		maxConcurrent := atomic.LoadInt64(&bl.protector.stats.MaxConcurrentBatch)
+		if current <= maxConcurrent || atomic.CompareAndSwapInt64(&bl.protector.stats.MaxConcurrentBatch, maxConcurrent, current) {
 			break
 		}
 	}

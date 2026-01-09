@@ -29,6 +29,7 @@ Known warning:
 
 - Baseline (2026-01-09): **728** issues
 - After Milestone 1 (2026-01-09): **666** issues (removed `goimports`, `misspell`, `gosec`, and stale `//nolint` warnings)
+- After Milestone 2 (2026-01-09): **579** issues (removed all `revive` findings; deferred context signature reorders via narrow `//nolint:revive` for compatibility)
 
 ## Guardrails (no “green by exclusion”)
 

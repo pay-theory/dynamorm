@@ -205,6 +205,8 @@ func NewMockDeleteTableOutput(tableName string) *dynamodb.DeleteTableOutput {
 
 // NewMockUpdateTimeToLiveOutput creates a mock UpdateTimeToLive response
 func NewMockUpdateTimeToLiveOutput(tableName string) *dynamodb.UpdateTimeToLiveOutput {
+	_ = tableName
+
 	return &dynamodb.UpdateTimeToLiveOutput{
 		TimeToLiveSpecification: &types.TimeToLiveSpecification{
 			AttributeName: stringPtr("ttl"),

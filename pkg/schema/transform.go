@@ -55,11 +55,7 @@ func (v *TransformValidator) ValidateTransform(transform interface{}) error {
 		}
 
 		// Validate output type matches target model
-		if err := v.validateModelType(outputType, v.targetMetadata, "target"); err != nil {
-			return err
-		}
-
-		return nil
+		return v.validateModelType(outputType, v.targetMetadata, "target")
 	}
 
 	// Check function signature for AttributeValue transforms
@@ -215,6 +211,8 @@ func TransformWithValidation(item map[string]types.AttributeValue, transform Tra
 	if transform == nil {
 		return item, nil
 	}
+
+	_ = sourceMetadata
 
 	// Apply transform
 	transformedItem, err := transform(item)

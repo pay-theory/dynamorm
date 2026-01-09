@@ -27,6 +27,8 @@ type RequiredKeys struct {
 
 // SelectOptimal selects the best index for the given query requirements
 func (s *Selector) SelectOptimal(required RequiredKeys, conditions []any) (*core.IndexSchema, error) {
+	_ = conditions
+
 	var bestIndex *core.IndexSchema
 	var bestScore int
 

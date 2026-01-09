@@ -2729,56 +2729,56 @@ type errorQuery struct {
 	err error
 }
 
-func (e *errorQuery) Where(field string, op string, value any) core.Query  { return e }
-func (e *errorQuery) Index(indexName string) core.Query                    { return e }
-func (e *errorQuery) Filter(field string, op string, value any) core.Query { return e }
-func (e *errorQuery) OrFilter(field string, op string, value any) core.Query {
+func (e *errorQuery) Where(_ string, _ string, _ any) core.Query  { return e }
+func (e *errorQuery) Index(_ string) core.Query                   { return e }
+func (e *errorQuery) Filter(_ string, _ string, _ any) core.Query { return e }
+func (e *errorQuery) OrFilter(_ string, _ string, _ any) core.Query {
 	return e
 }
-func (e *errorQuery) FilterGroup(fn func(q core.Query)) core.Query { return e }
-func (e *errorQuery) OrFilterGroup(fn func(core.Query)) core.Query {
+func (e *errorQuery) FilterGroup(_ func(q core.Query)) core.Query { return e }
+func (e *errorQuery) OrFilterGroup(_ func(core.Query)) core.Query {
 	return e
 }
 func (e *errorQuery) IfNotExists() core.Query { return e }
 func (e *errorQuery) IfExists() core.Query    { return e }
-func (e *errorQuery) WithCondition(field, operator string, value any) core.Query {
+func (e *errorQuery) WithCondition(_ string, _ string, _ any) core.Query {
 	return e
 }
-func (e *errorQuery) WithConditionExpression(expr string, values map[string]any) core.Query {
+func (e *errorQuery) WithConditionExpression(_ string, _ map[string]any) core.Query {
 	return e
 }
-func (e *errorQuery) OrderBy(field string, order string) core.Query                   { return e }
-func (e *errorQuery) Limit(limit int) core.Query                                      { return e }
-func (e *errorQuery) Offset(offset int) core.Query                                    { return e }
-func (e *errorQuery) Select(fields ...string) core.Query                              { return e }
-func (e *errorQuery) ConsistentRead() core.Query                                      { return e }
-func (e *errorQuery) WithRetry(maxRetries int, initialDelay time.Duration) core.Query { return e }
-func (e *errorQuery) First(dest any) error                                            { return e.err }
-func (e *errorQuery) All(dest any) error                                              { return e.err }
-func (e *errorQuery) Count() (int64, error)                                           { return 0, e.err }
-func (e *errorQuery) Create() error                                                   { return e.err }
-func (e *errorQuery) CreateOrUpdate() error                                           { return e.err }
-func (e *errorQuery) Update(fields ...string) error                                   { return e.err }
-func (e *errorQuery) Delete() error                                                   { return e.err }
-func (e *errorQuery) Scan(dest any) error                                             { return e.err }
-func (e *errorQuery) BatchGet(keys []any, dest any) error                             { return e.err }
-func (e *errorQuery) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOptions) error {
+func (e *errorQuery) OrderBy(_ string, _ string) core.Query       { return e }
+func (e *errorQuery) Limit(_ int) core.Query                      { return e }
+func (e *errorQuery) Offset(_ int) core.Query                     { return e }
+func (e *errorQuery) Select(_ ...string) core.Query               { return e }
+func (e *errorQuery) ConsistentRead() core.Query                  { return e }
+func (e *errorQuery) WithRetry(_ int, _ time.Duration) core.Query { return e }
+func (e *errorQuery) First(_ any) error                           { return e.err }
+func (e *errorQuery) All(_ any) error                             { return e.err }
+func (e *errorQuery) Count() (int64, error)                       { return 0, e.err }
+func (e *errorQuery) Create() error                               { return e.err }
+func (e *errorQuery) CreateOrUpdate() error                       { return e.err }
+func (e *errorQuery) Update(_ ...string) error                    { return e.err }
+func (e *errorQuery) Delete() error                               { return e.err }
+func (e *errorQuery) Scan(_ any) error                            { return e.err }
+func (e *errorQuery) BatchGet(_ []any, _ any) error               { return e.err }
+func (e *errorQuery) BatchGetWithOptions(_ []any, _ any, _ *core.BatchGetOptions) error {
 	return e.err
 }
-func (e *errorQuery) BatchGetBuilder() core.BatchGetBuilder             { return &errorBatchGetBuilder{err: e.err} }
-func (e *errorQuery) BatchCreate(items any) error                       { return e.err }
-func (e *errorQuery) BatchDelete(keys []any) error                      { return e.err }
-func (e *errorQuery) BatchWrite(putItems []any, deleteKeys []any) error { return e.err }
-func (e *errorQuery) BatchUpdateWithOptions(items []any, fields []string, options ...any) error {
+func (e *errorQuery) BatchGetBuilder() core.BatchGetBuilder { return &errorBatchGetBuilder{err: e.err} }
+func (e *errorQuery) BatchCreate(_ any) error               { return e.err }
+func (e *errorQuery) BatchDelete(_ []any) error             { return e.err }
+func (e *errorQuery) BatchWrite(_ []any, _ []any) error     { return e.err }
+func (e *errorQuery) BatchUpdateWithOptions(_ []any, _ []string, _ ...any) error {
 	return e.err
 }
-func (e *errorQuery) WithContext(ctx context.Context) core.Query                 { return e }
-func (e *errorQuery) AllPaginated(dest any) (*core.PaginatedResult, error)       { return nil, e.err }
-func (e *errorQuery) UpdateBuilder() core.UpdateBuilder                          { return nil }
-func (e *errorQuery) ParallelScan(segment int32, totalSegments int32) core.Query { return e }
-func (e *errorQuery) ScanAllSegments(dest any, totalSegments int32) error        { return e.err }
-func (e *errorQuery) Cursor(cursor string) core.Query                            { return e }
-func (e *errorQuery) SetCursor(cursor string) error                              { return e.err }
+func (e *errorQuery) WithContext(_ context.Context) core.Query          { return e }
+func (e *errorQuery) AllPaginated(_ any) (*core.PaginatedResult, error) { return nil, e.err }
+func (e *errorQuery) UpdateBuilder() core.UpdateBuilder                 { return nil }
+func (e *errorQuery) ParallelScan(_ int32, _ int32) core.Query          { return e }
+func (e *errorQuery) ScanAllSegments(_ any, _ int32) error              { return e.err }
+func (e *errorQuery) Cursor(_ string) core.Query                        { return e }
+func (e *errorQuery) SetCursor(_ string) error                          { return e.err }
 
 // Re-export types for convenience
 type (
@@ -3090,52 +3090,54 @@ type errorUpdateBuilder struct {
 	err error
 }
 
-func (e *errorUpdateBuilder) Set(field string, value any) core.UpdateBuilder { return e }
-func (e *errorUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
+func (e *errorUpdateBuilder) Set(_ string, _ any) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) SetIfNotExists(_ string, _ any, _ any) core.UpdateBuilder {
 	return e
 }
-func (e *errorUpdateBuilder) Add(field string, value any) core.UpdateBuilder              { return e }
-func (e *errorUpdateBuilder) Increment(field string) core.UpdateBuilder                   { return e }
-func (e *errorUpdateBuilder) Decrement(field string) core.UpdateBuilder                   { return e }
-func (e *errorUpdateBuilder) Remove(field string) core.UpdateBuilder                      { return e }
-func (e *errorUpdateBuilder) Delete(field string, value any) core.UpdateBuilder           { return e }
-func (e *errorUpdateBuilder) AppendToList(field string, values any) core.UpdateBuilder    { return e }
-func (e *errorUpdateBuilder) PrependToList(field string, values any) core.UpdateBuilder   { return e }
-func (e *errorUpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder { return e }
-func (e *errorUpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
+func (e *errorUpdateBuilder) Add(_ string, _ any) core.UpdateBuilder           { return e }
+func (e *errorUpdateBuilder) Increment(_ string) core.UpdateBuilder            { return e }
+func (e *errorUpdateBuilder) Decrement(_ string) core.UpdateBuilder            { return e }
+func (e *errorUpdateBuilder) Remove(_ string) core.UpdateBuilder               { return e }
+func (e *errorUpdateBuilder) Delete(_ string, _ any) core.UpdateBuilder        { return e }
+func (e *errorUpdateBuilder) AppendToList(_ string, _ any) core.UpdateBuilder  { return e }
+func (e *errorUpdateBuilder) PrependToList(_ string, _ any) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) RemoveFromListAt(_ string, _ int) core.UpdateBuilder {
 	return e
 }
-func (e *errorUpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
+func (e *errorUpdateBuilder) SetListElement(_ string, _ int, _ any) core.UpdateBuilder {
 	return e
 }
-func (e *errorUpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+func (e *errorUpdateBuilder) Condition(_ string, _ string, _ any) core.UpdateBuilder {
 	return e
 }
-func (e *errorUpdateBuilder) ConditionExists(field string) core.UpdateBuilder          { return e }
-func (e *errorUpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder       { return e }
-func (e *errorUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder { return e }
-func (e *errorUpdateBuilder) ReturnValues(option string) core.UpdateBuilder            { return e }
-func (e *errorUpdateBuilder) Execute() error                                           { return e.err }
-func (e *errorUpdateBuilder) ExecuteWithResult(result any) error                       { return e.err }
+func (e *errorUpdateBuilder) OrCondition(_ string, _ string, _ any) core.UpdateBuilder {
+	return e
+}
+func (e *errorUpdateBuilder) ConditionExists(_ string) core.UpdateBuilder    { return e }
+func (e *errorUpdateBuilder) ConditionNotExists(_ string) core.UpdateBuilder { return e }
+func (e *errorUpdateBuilder) ConditionVersion(_ int64) core.UpdateBuilder    { return e }
+func (e *errorUpdateBuilder) ReturnValues(_ string) core.UpdateBuilder       { return e }
+func (e *errorUpdateBuilder) Execute() error                                 { return e.err }
+func (e *errorUpdateBuilder) ExecuteWithResult(_ any) error                  { return e.err }
 
 // errorBatchGetBuilder is returned when BatchGet builder construction fails.
 type errorBatchGetBuilder struct {
 	err error
 }
 
-func (b *errorBatchGetBuilder) Keys(keys []any) core.BatchGetBuilder                    { return b }
-func (b *errorBatchGetBuilder) ChunkSize(size int) core.BatchGetBuilder                 { return b }
-func (b *errorBatchGetBuilder) ConsistentRead() core.BatchGetBuilder                    { return b }
-func (b *errorBatchGetBuilder) Parallel(maxConcurrency int) core.BatchGetBuilder        { return b }
-func (b *errorBatchGetBuilder) WithRetry(policy *core.RetryPolicy) core.BatchGetBuilder { return b }
-func (b *errorBatchGetBuilder) Select(fields ...string) core.BatchGetBuilder            { return b }
-func (b *errorBatchGetBuilder) OnProgress(callback core.BatchProgressCallback) core.BatchGetBuilder {
+func (b *errorBatchGetBuilder) Keys(_ []any) core.BatchGetBuilder                  { return b }
+func (b *errorBatchGetBuilder) ChunkSize(_ int) core.BatchGetBuilder               { return b }
+func (b *errorBatchGetBuilder) ConsistentRead() core.BatchGetBuilder               { return b }
+func (b *errorBatchGetBuilder) Parallel(_ int) core.BatchGetBuilder                { return b }
+func (b *errorBatchGetBuilder) WithRetry(_ *core.RetryPolicy) core.BatchGetBuilder { return b }
+func (b *errorBatchGetBuilder) Select(_ ...string) core.BatchGetBuilder            { return b }
+func (b *errorBatchGetBuilder) OnProgress(_ core.BatchProgressCallback) core.BatchGetBuilder {
 	return b
 }
-func (b *errorBatchGetBuilder) OnError(handler core.BatchChunkErrorHandler) core.BatchGetBuilder {
+func (b *errorBatchGetBuilder) OnError(_ core.BatchChunkErrorHandler) core.BatchGetBuilder {
 	return b
 }
-func (b *errorBatchGetBuilder) Execute(dest any) error { return b.err }
+func (b *errorBatchGetBuilder) Execute(_ any) error { return b.err }
 
 // ParallelScan configures parallel scanning with segment and total segments
 func (q *query) ParallelScan(segment int32, totalSegments int32) core.Query {
@@ -3392,6 +3394,8 @@ func (q *query) BatchUpdateWithOptions(items []any, fields []string, options ...
 		return err
 	}
 
+	_ = options
+
 	// For now, perform updates sequentially
 	// In a full implementation, this would support parallel updates with options
 	itemsValue := reflect.ValueOf(items)
@@ -3466,12 +3470,16 @@ type queryExecutor struct {
 
 // ExecuteQuery implements QueryExecutor interface
 func (qe *queryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
+	_ = input
+	_ = dest
 	// For now, return not implemented
 	return fmt.Errorf("ExecuteQuery not implemented")
 }
 
 // ExecuteScan implements QueryExecutor interface
 func (qe *queryExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
+	_ = input
+	_ = dest
 	// For now, return not implemented
 	return fmt.Errorf("ExecuteScan not implemented")
 }

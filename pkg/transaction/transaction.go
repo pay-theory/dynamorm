@@ -258,6 +258,8 @@ func (tx *Transaction) Delete(model any) error {
 
 // Get adds a get operation to the transaction
 func (tx *Transaction) Get(model any, dest any) error {
+	_ = dest
+
 	metadata, err := tx.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)

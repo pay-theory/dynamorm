@@ -506,7 +506,7 @@ func (q *Query) BatchCreateWithResult(items any) (*BatchResult, error) {
 	}
 
 	// Custom error handler to collect results
-	opts.ErrorHandler = func(item any, err error) error {
+	opts.ErrorHandler = func(_ any, err error) error {
 		result.Failed++
 		result.Errors = append(result.Errors, err)
 		// Don't stop on error, continue processing
@@ -514,7 +514,7 @@ func (q *Query) BatchCreateWithResult(items any) (*BatchResult, error) {
 	}
 
 	// Custom progress callback to track success
-	opts.ProgressCallback = func(processed, total int) {
+	opts.ProgressCallback = func(processed, _ int) {
 		result.Succeeded = processed - result.Failed
 	}
 

@@ -25,6 +25,7 @@ type DefaultDBFactory struct{}
 
 // CreateDB creates a real DynamORM database connection
 func (f *DefaultDBFactory) CreateDB(config session.Config) (core.ExtendedDB, error) {
+	_ = config
 	// In the real implementation, this would call dynamorm.New(config)
 	// which returns an ExtendedDB instance
 	// For now, we'll return a placeholder
@@ -126,7 +127,7 @@ func (f *ConfigurableMockDBFactory) CreateDB(config session.Config) (core.Extend
 	// Apply any configuration-specific behavior here
 	if f.config.EnableLogging {
 		if f.OnCreateDB == nil {
-			f.OnCreateDB = func(cfg session.Config) {
+			f.OnCreateDB = func(_ session.Config) {
 				// Placeholder hook for logging; callers can replace this function to capture config.
 			}
 		}

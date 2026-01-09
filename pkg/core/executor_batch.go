@@ -22,7 +22,7 @@ type BatchWriteExecutor struct {
 }
 
 // NewBatchWriteExecutor creates a new batch write executor
-func NewBatchWriteExecutor(client *dynamodb.Client, ctx context.Context) *BatchWriteExecutor {
+func NewBatchWriteExecutor(client *dynamodb.Client, ctx context.Context) *BatchWriteExecutor { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &BatchWriteExecutor{
 		client: client,
 		ctx:    ctx,
@@ -65,6 +65,8 @@ func (e *BatchWriteExecutor) ExecuteBatchWriteItem(tableName string, writeReques
 
 // ExecuteQuery implements the QueryExecutor interface
 func (e *BatchWriteExecutor) ExecuteQuery(input *CompiledQuery, dest any) error {
+	_ = input
+	_ = dest
 	// BatchWriteExecutor is optimized for batch write operations.
 	// For query operations, use the query package's MainExecutor or dynamorm.Model().
 	return fmt.Errorf("BatchWriteExecutor does not support ExecuteQuery - this executor is specialized for batch write operations only. Use dynamorm.Model() for queries")
@@ -72,6 +74,8 @@ func (e *BatchWriteExecutor) ExecuteQuery(input *CompiledQuery, dest any) error 
 
 // ExecuteScan implements the QueryExecutor interface
 func (e *BatchWriteExecutor) ExecuteScan(input *CompiledQuery, dest any) error {
+	_ = input
+	_ = dest
 	// BatchWriteExecutor is optimized for batch write operations.
 	// For scan operations, use the query package's MainExecutor or dynamorm.Model().
 	return fmt.Errorf("BatchWriteExecutor does not support ExecuteScan - this executor is specialized for batch write operations only. Use dynamorm.Model() for scans")
@@ -155,7 +159,7 @@ type ExecutorWithBatchSupport struct {
 }
 
 // NewExecutorWithBatchSupport creates a new executor with batch support
-func NewExecutorWithBatchSupport(client *dynamodb.Client, ctx context.Context) *ExecutorWithBatchSupport {
+func NewExecutorWithBatchSupport(client *dynamodb.Client, ctx context.Context) *ExecutorWithBatchSupport { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &ExecutorWithBatchSupport{
 		UpdateExecutor:     NewUpdateExecutor(client, ctx),
 		BatchWriteExecutor: NewBatchWriteExecutor(client, ctx),

@@ -1704,7 +1704,7 @@ func (q *Query) UpdateBuilder() core.UpdateBuilder {
 }
 
 // NewWithConditions creates a new Query instance with all necessary fields
-func NewWithConditions(model any, metadata core.ModelMetadata, executor QueryExecutor, conditions []Condition, ctx context.Context) *Query {
+func NewWithConditions(model any, metadata core.ModelMetadata, executor QueryExecutor, conditions []Condition, ctx context.Context) *Query { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &Query{
 		model:                   model,
 		metadata:                metadata,

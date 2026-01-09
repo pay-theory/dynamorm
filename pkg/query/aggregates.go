@@ -682,6 +682,8 @@ func (q *Query) CountDistinct(field string) (int64, error) {
 // Having is deprecated - use GroupBy().Having() instead for proper aggregate filtering
 // This method is kept for backward compatibility but does nothing
 func (q *Query) Having(condition string, value any) core.Query {
+	_ = condition
+	_ = value
 	// Use GroupBy().Having() for actual functionality
 	return q
 }

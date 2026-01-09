@@ -69,10 +69,7 @@ func (q *Query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOpt
 		items, execErr := executor.ExecuteBatchGet(chunk.request, effectiveOpts)
 		if execErr != nil {
 			if effectiveOpts.OnChunkError != nil {
-				if handlerErr := effectiveOpts.OnChunkError(chunk.originals, execErr); handlerErr != nil {
-					return handlerErr
-				}
-				return nil
+				return effectiveOpts.OnChunkError(chunk.originals, execErr)
 			}
 			return execErr
 		}

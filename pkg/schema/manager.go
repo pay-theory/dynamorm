@@ -521,6 +521,12 @@ func (m *Manager) calculateGSIUpdates(metadata *model.Metadata, current *types.T
 // WithGSICreate creates a TableOption for adding a new GSI
 func WithGSICreate(indexName string, partitionKey string, sortKey string, projectionType types.ProjectionType) TableOption {
 	return func(input *dynamodb.CreateTableInput) {
+		_ = indexName
+		_ = partitionKey
+		_ = sortKey
+		_ = projectionType
+		_ = input
+
 		// This is a marker option - actual GSI creation is handled in UpdateTable
 		// by comparing model metadata with current table state
 	}
@@ -529,6 +535,9 @@ func WithGSICreate(indexName string, partitionKey string, sortKey string, projec
 // WithGSIDelete creates a TableOption for deleting a GSI
 func WithGSIDelete(indexName string) TableOption {
 	return func(input *dynamodb.CreateTableInput) {
+		_ = indexName
+		_ = input
+
 		// This is a marker option - actual GSI deletion is handled in UpdateTable
 		// by comparing model metadata with current table state
 	}
