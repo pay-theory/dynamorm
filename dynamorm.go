@@ -1399,32 +1399,10 @@ func (q *query) buildBatchDeleteWriteRequests(keys []any, start, end int, metada
 func (q *query) buildKeyMapForBatchDelete(key any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
 	switch k := key.(type) {
 	case map[string]any:
-		return q.buildKeyMapFromMapKey(k, metadata)
+		return q.buildKeyMapFromPrimaryKey(metadata, k)
 	default:
 		return q.buildKeyMapFromAnyKey(key, metadata)
 	}
-}
-
-func (q *query) buildKeyMapFromMapKey(keyMap map[string]any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
-	result := make(map[string]types.AttributeValue)
-
-	if pk, hasPK := keyMap["pk"]; hasPK {
-		av, err := q.db.converter.ToAttributeValue(pk)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert partition key: %w", err)
-		}
-		result[metadata.PrimaryKey.PartitionKey.DBName] = av
-	}
-
-	if sk, hasSK := keyMap["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-		av, err := q.db.converter.ToAttributeValue(sk)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert sort key: %w", err)
-		}
-		result[metadata.PrimaryKey.SortKey.DBName] = av
-	}
-
-	return result, nil
 }
 
 func (q *query) buildKeyMapFromAnyKey(key any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
@@ -2110,48 +2088,81 @@ func isConditionalCheckFailedException(err error) bool {
 	return errors.As(err, &ccfe)
 }
 
-// executeQuery performs a DynamoDB Query operation
-func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
-	builder := expr.NewBuilderWithConverter(q.db.converter)
+func (q *query) queryExpressionBuilder() *expr.Builder {
 	if q.builder != nil {
-		builder = q.builder.Clone()
+		return q.builder.Clone()
 	}
+	return expr.NewBuilderWithConverter(q.db.converter)
+}
 
-	// Add key conditions
+func (q *query) scanExpressionBuilder() *expr.Builder {
+	if q.builder != nil {
+		return q.builder
+	}
+	return expr.NewBuilderWithConverter(q.db.converter)
+}
+
+func (q *query) addKeyConditionsToBuilder(builder *expr.Builder, metadata *model.Metadata, keyConditions []condition) error {
 	for _, cond := range keyConditions {
-		fieldMeta, _ := lookupField(metadata, cond.field)
+		fieldMeta, exists := lookupField(metadata, cond.field)
+		if !exists || fieldMeta == nil {
+			return fmt.Errorf("failed to add key condition for %s: field not found", cond.field)
+		}
+
 		op := normalizeOperator(cond.op)
 		if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
-			return nil, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
+			return fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
 		}
 	}
 
-	// Add filter conditions
+	return nil
+}
+
+func (q *query) addFilterConditionsToBuilder(builder *expr.Builder, metadata *model.Metadata, filterConditions []condition) error {
 	for _, cond := range filterConditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
 		op := normalizeOperator(cond.op)
-		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
-				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
-				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
+		fieldName := cond.field
+
+		if fieldMeta, exists := lookupField(metadata, cond.field); exists && fieldMeta != nil {
+			fieldName = fieldMeta.DBName
+		}
+
+		if err := builder.AddFilterCondition("AND", fieldName, op, cond.value); err != nil {
+			return fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
 		}
 	}
 
-	// Add projection
-	if len(q.fields) > 0 {
-		builder.AddProjection(q.fields...)
+	return nil
+}
+
+func (q *query) addFilterConditionsToBuilderWithRecording(builder *expr.Builder, metadata *model.Metadata, filterConditions []condition) error {
+	for _, cond := range filterConditions {
+		op := normalizeOperator(cond.op)
+		fieldName := cond.field
+
+		if fieldMeta, exists := lookupField(metadata, cond.field); exists && fieldMeta != nil {
+			fieldName = fieldMeta.DBName
+		}
+
+		if err := builder.AddFilterCondition("AND", fieldName, op, cond.value); err != nil {
+			q.recordBuilderError(err)
+			return fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
+		}
 	}
 
-	// Build expressions
-	components := builder.Build()
+	return nil
+}
 
-	// Build Query input
+func (q *query) addProjectionToBuilder(builder *expr.Builder) {
+	if len(q.fields) == 0 {
+		return
+	}
+	builder.AddProjection(q.fields...)
+}
+
+func queryInputFromComponents(tableName string, components expr.ExpressionComponents) *dynamodb.QueryInput {
 	input := &dynamodb.QueryInput{
-		TableName: aws.String(metadata.TableName),
+		TableName: aws.String(tableName),
 	}
 
 	if components.KeyConditionExpression != "" {
@@ -2170,90 +2181,12 @@ func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition
 		input.ExpressionAttributeValues = components.ExpressionAttributeValues
 	}
 
-	// Set index name if specified
-	if q.indexName != "" {
-		input.IndexName = aws.String(q.indexName)
-	}
-
-	// Set scan direction
-	if q.orderBy != nil && q.orderBy.order == "DESC" {
-		input.ScanIndexForward = aws.Bool(false)
-	}
-
-	// Set limit
-	if q.limit != nil {
-		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
-	}
-
-	// Set consistent read (only works for main table queries, not GSI)
-	if q.consistentRead && q.indexName == "" {
-		input.ConsistentRead = aws.Bool(true)
-	}
-
-	// Execute query and collect results
-	var items []map[string]types.AttributeValue
-
-	client, err := q.db.session.Client()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for query: %w", err)
-	}
-
-	paginator := dynamodb.NewQueryPaginator(client, input)
-
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(q.ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query items: %w", err)
-		}
-
-		items = append(items, output.Items...)
-
-		// Stop if we have enough items
-		if q.limit != nil && len(items) >= *q.limit {
-			items = items[:*q.limit]
-			break
-		}
-	}
-
-	return items, nil
+	return input
 }
 
-// executeScan performs a DynamoDB Scan operation
-func (q *query) executeScan(metadata *model.Metadata, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
-	// Use the existing builder from the query to preserve Filter() conditions
-	builder := q.builder
-	if builder == nil {
-		builder = expr.NewBuilderWithConverter(q.db.converter)
-	}
-
-	// Add filter conditions from parameters (these come from Where() conditions)
-	for _, cond := range filterConditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
-		op := normalizeOperator(cond.op)
-		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
-				q.recordBuilderError(err)
-				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
-				q.recordBuilderError(err)
-				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		}
-	}
-
-	// Add projection
-	if len(q.fields) > 0 {
-		builder.AddProjection(q.fields...)
-	}
-
-	// Build expressions
-	components := builder.Build()
-
-	// Build Scan input
+func scanInputFromComponents(tableName string, components expr.ExpressionComponents) *dynamodb.ScanInput {
 	input := &dynamodb.ScanInput{
-		TableName: aws.String(metadata.TableName),
+		TableName: aws.String(tableName),
 	}
 
 	if components.FilterExpression != "" {
@@ -2269,23 +2202,146 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 		input.ExpressionAttributeValues = components.ExpressionAttributeValues
 	}
 
-	// Set index name if specified
+	return input
+}
+
+func (q *query) applyQueryReadOptions(input *dynamodb.QueryInput) {
 	if q.indexName != "" {
 		input.IndexName = aws.String(q.indexName)
 	}
-
-	// Set limit
+	if q.orderBy != nil && q.orderBy.order == "DESC" {
+		input.ScanIndexForward = aws.Bool(false)
+	}
 	if q.limit != nil {
 		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
 	}
-
-	// Set consistent read (only works for main table scans, not GSI)
 	if q.consistentRead && q.indexName == "" {
 		input.ConsistentRead = aws.Bool(true)
 	}
+}
 
-	// Execute scan and collect results
+func (q *query) applyQueryCountOptions(input *dynamodb.QueryInput) {
+	if q.indexName != "" {
+		input.IndexName = aws.String(q.indexName)
+	}
+}
+
+func (q *query) applyScanReadOptions(input *dynamodb.ScanInput) {
+	if q.indexName != "" {
+		input.IndexName = aws.String(q.indexName)
+	}
+	if q.limit != nil {
+		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
+	}
+	if q.consistentRead && q.indexName == "" {
+		input.ConsistentRead = aws.Bool(true)
+	}
+}
+
+func (q *query) paginationLimit() (int, bool) {
+	if q.limit == nil {
+		return 0, false
+	}
+	if *q.limit <= 0 {
+		return 0, true
+	}
+	return *q.limit, true
+}
+
+func (q *query) collectPaginatedItems(
+	hasMorePages func() bool,
+	nextPage func(context.Context) ([]map[string]types.AttributeValue, error),
+	limit int,
+	hasLimit bool,
+	trim bool,
+) ([]map[string]types.AttributeValue, error) {
 	var items []map[string]types.AttributeValue
+
+	for hasMorePages() {
+		pageItems, err := nextPage(q.ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		items = append(items, pageItems...)
+		if hasLimit && len(items) >= limit {
+			if trim {
+				return items[:limit], nil
+			}
+			break
+		}
+	}
+
+	return items, nil
+}
+
+func (q *query) collectQueryCount(client *dynamodb.Client, input *dynamodb.QueryInput) (int64, error) {
+	var totalCount int64
+	paginator := dynamodb.NewQueryPaginator(client, input)
+
+	for paginator.HasMorePages() {
+		output, err := paginator.NextPage(q.ctx)
+		if err != nil {
+			return 0, fmt.Errorf("failed to count items: %w", err)
+		}
+		totalCount += int64(output.Count)
+	}
+
+	return totalCount, nil
+}
+
+// executeQuery performs a DynamoDB Query operation
+func (q *query) executeQuery(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
+	builder := q.queryExpressionBuilder()
+	if err := q.addKeyConditionsToBuilder(builder, metadata, keyConditions); err != nil {
+		return nil, err
+	}
+	if err := q.addFilterConditionsToBuilder(builder, metadata, filterConditions); err != nil {
+		return nil, err
+	}
+	q.addProjectionToBuilder(builder)
+
+	components := builder.Build()
+
+	input := queryInputFromComponents(metadata.TableName, components)
+	q.applyQueryReadOptions(input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for query: %w", err)
+	}
+
+	paginator := dynamodb.NewQueryPaginator(client, input)
+	limit, hasLimit := q.paginationLimit()
+	return q.collectPaginatedItems(
+		paginator.HasMorePages,
+		func(ctx context.Context) ([]map[string]types.AttributeValue, error) {
+			output, err := paginator.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to query items: %w", err)
+			}
+			return output.Items, nil
+		},
+		limit,
+		hasLimit,
+		true,
+	)
+}
+
+// executeScan performs a DynamoDB Scan operation
+func (q *query) executeScan(metadata *model.Metadata, filterConditions []condition) ([]map[string]types.AttributeValue, error) {
+	// Use the existing builder from the query to preserve Filter() conditions
+	builder := q.scanExpressionBuilder()
+
+	if err := q.addFilterConditionsToBuilderWithRecording(builder, metadata, filterConditions); err != nil {
+		return nil, err
+	}
+
+	q.addProjectionToBuilder(builder)
+	components := builder.Build()
+
+	input := scanInputFromComponents(metadata.TableName, components)
+	q.applyScanReadOptions(input)
 
 	client, err := q.db.session.Client()
 	if err != nil {
@@ -2293,23 +2349,20 @@ func (q *query) executeScan(metadata *model.Metadata, filterConditions []conditi
 	}
 
 	paginator := dynamodb.NewScanPaginator(client, input)
-
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(q.ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan items: %w", err)
-		}
-
-		items = append(items, output.Items...)
-
-		// Stop if we have enough items
-		if q.limit != nil && len(items) >= *q.limit {
-			items = items[:*q.limit]
-			break
-		}
-	}
-
-	return items, nil
+	limit, hasLimit := q.paginationLimit()
+	return q.collectPaginatedItems(
+		paginator.HasMorePages,
+		func(ctx context.Context) ([]map[string]types.AttributeValue, error) {
+			output, err := paginator.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to scan items: %w", err)
+			}
+			return output.Items, nil
+		},
+		limit,
+		hasLimit,
+		true,
+	)
 }
 
 // isIndexKey checks if a field is a key in the specified index
@@ -2394,82 +2447,25 @@ func (q *query) unmarshalItems(items []map[string]types.AttributeValue, dest any
 
 // executeQueryCount performs a DynamoDB Query operation to count items
 func (q *query) executeQueryCount(metadata *model.Metadata, keyConditions []condition, filterConditions []condition) (int64, error) {
-	builder := expr.NewBuilderWithConverter(q.db.converter)
-	if q.builder != nil {
-		builder = q.builder.Clone()
+	builder := q.queryExpressionBuilder()
+	if err := q.addKeyConditionsToBuilder(builder, metadata, keyConditions); err != nil {
+		return 0, err
+	}
+	if err := q.addFilterConditionsToBuilder(builder, metadata, filterConditions); err != nil {
+		return 0, err
 	}
 
-	// Add key conditions
-	for _, cond := range keyConditions {
-		fieldMeta, _ := lookupField(metadata, cond.field)
-		op := normalizeOperator(cond.op)
-		if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
-			return 0, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
-		}
-	}
-
-	// Add filter conditions
-	for _, cond := range filterConditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
-		op := normalizeOperator(cond.op)
-		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
-				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
-				return 0, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		}
-	}
-
-	// Build expressions
 	components := builder.Build()
-
-	// Build Query input with Select = COUNT
-	input := &dynamodb.QueryInput{
-		TableName: aws.String(metadata.TableName),
-		Select:    types.SelectCount,
-	}
-
-	if components.KeyConditionExpression != "" {
-		input.KeyConditionExpression = aws.String(components.KeyConditionExpression)
-	}
-	if components.FilterExpression != "" {
-		input.FilterExpression = aws.String(components.FilterExpression)
-	}
-	if len(components.ExpressionAttributeNames) > 0 {
-		input.ExpressionAttributeNames = components.ExpressionAttributeNames
-	}
-	if len(components.ExpressionAttributeValues) > 0 {
-		input.ExpressionAttributeValues = components.ExpressionAttributeValues
-	}
-
-	// Set index name if specified
-	if q.indexName != "" {
-		input.IndexName = aws.String(q.indexName)
-	}
-
-	// Execute query and count results
-	var totalCount int64
+	input := queryInputFromComponents(metadata.TableName, components)
+	input.Select = types.SelectCount
+	q.applyQueryCountOptions(input)
 
 	client, err := q.db.session.Client()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get client for query count: %w", err)
 	}
 
-	paginator := dynamodb.NewQueryPaginator(client, input)
-
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(q.ctx)
-		if err != nil {
-			return 0, fmt.Errorf("failed to count items: %w", err)
-		}
-
-		totalCount += int64(output.Count)
-	}
-
-	return totalCount, nil
+	return q.collectQueryCount(client, input)
 }
 
 // executeScanCount performs a DynamoDB Scan operation to count items
@@ -2550,120 +2546,33 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		return fmt.Errorf("update requires primary key")
 	}
 
-	// Build key map
-	keyMap := make(map[string]types.AttributeValue)
-
-	// Add partition key
-	if pkValue, hasPK := pk["pk"]; hasPK {
-		av, err := q.db.converter.ToAttributeValue(pkValue)
-		if err != nil {
-			return fmt.Errorf("failed to convert partition key: %w", err)
-		}
-		keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-	}
-
-	// Add sort key if present
-	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-		av, err := q.db.converter.ToAttributeValue(skValue)
-		if err != nil {
-			return fmt.Errorf("failed to convert sort key: %w", err)
-		}
-		keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+	keyMap, err := q.buildKeyMapFromPrimaryKey(metadata, pk)
+	if err != nil {
+		return err
 	}
 
 	// Build update expression with custom converter support
 	builder := expr.NewBuilderWithConverter(q.db.converter)
 
-	modelValue := reflect.ValueOf(q.model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
+	modelValue := derefValue(reflect.ValueOf(q.model))
+
+	fieldsToUpdate := q.fieldsToUpdate(metadata, modelValue, fields)
+	if err = q.addUpdateExpressions(builder, metadata, modelValue, fieldsToUpdate); err != nil {
+		return err
 	}
 
-	// Determine which fields to update
-	fieldsToUpdate := fields
-	if len(fieldsToUpdate) == 0 {
-		// If no fields specified, update all non-zero fields except primary keys and special fields
-		fieldsToUpdate = []string{}
-		for fieldName, fieldMeta := range metadata.Fields {
-			if fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
-				continue
-			}
-			fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-			if !reflectutil.IsEmpty(fieldValue) || !fieldMeta.OmitEmpty {
-				fieldsToUpdate = append(fieldsToUpdate, fieldName)
-			}
-		}
-	}
+	q.addUpdatedAtUpdate(builder, metadata)
 
-	// Build SET expressions
-	for _, fieldName := range fieldsToUpdate {
-		fieldMeta, exists := lookupField(metadata, fieldName)
-		if !exists {
-			// Don't silently skip - return error for unknown fields
-			return fmt.Errorf("field '%s' not found in model metadata (use Go field name or DB attribute name)", fieldName)
-		}
-
-		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-
-		// Handle special fields
-		switch {
-		case fieldMeta.IsUpdatedAt:
-			// Always update to current time
-			builder.AddUpdateSet(fieldMeta.DBName, time.Now())
-		case fieldMeta.IsVersion:
-			// Increment version
-			builder.AddUpdateAdd(fieldMeta.DBName, int64(1))
-		default:
-			// Regular field update
-			builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface())
-		}
-	}
-
-	// Always update updated_at if it exists
-	if metadata.UpdatedAtField != nil {
-		builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now())
-	}
-
-	// Add version check if version field exists
-	if metadata.VersionField != nil {
-		currentVersion := modelValue.FieldByIndex(metadata.VersionField.IndexPath).Int()
-		if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", currentVersion); err != nil {
-			return fmt.Errorf("failed to add version condition: %w", err)
-		}
+	if err = q.addUpdateVersionCondition(builder, metadata, modelValue); err != nil {
+		return err
 	}
 
 	// Build the update expression
 	components := builder.Build()
 
-	conditionExpr := components.ConditionExpression
-	exprAttrNames := components.ExpressionAttributeNames
-	if exprAttrNames == nil {
-		exprAttrNames = make(map[string]string)
-	}
-	exprAttrValues := components.ExpressionAttributeValues
-	if exprAttrValues == nil {
-		exprAttrValues = make(map[string]types.AttributeValue)
-	}
-
-	queryCondExpr, queryCondNames, queryCondValues, err := q.buildConditionExpression(metadata, true, true, false)
+	conditionExpr, exprAttrNames, exprAttrValues, err := q.mergeQueryConditions(metadata, components.ConditionExpression, components.ExpressionAttributeNames, components.ExpressionAttributeValues)
 	if err != nil {
 		return err
-	}
-	if queryCondExpr != "" {
-		if conditionExpr != "" {
-			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
-		} else {
-			conditionExpr = queryCondExpr
-		}
-	}
-	for k, v := range queryCondNames {
-		exprAttrNames[k] = v
-	}
-	for k, v := range queryCondValues {
-		if _, exists := exprAttrValues[k]; exists {
-			return fmt.Errorf("duplicate condition value placeholder: %s", k)
-		}
-		exprAttrValues[k] = v
 	}
 
 	// Build UpdateItem input
@@ -2703,25 +2612,9 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 		return fmt.Errorf("delete requires primary key in conditions")
 	}
 
-	// Build key map
-	keyMap := make(map[string]types.AttributeValue)
-
-	// Add partition key
-	if pkValue, hasPK := pk["pk"]; hasPK {
-		av, err := q.db.converter.ToAttributeValue(pkValue)
-		if err != nil {
-			return fmt.Errorf("failed to convert partition key: %w", err)
-		}
-		keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-	}
-
-	// Add sort key if present
-	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-		av, err := q.db.converter.ToAttributeValue(skValue)
-		if err != nil {
-			return fmt.Errorf("failed to convert sort key: %w", err)
-		}
-		keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+	keyMap, err := q.buildKeyMapFromPrimaryKey(metadata, pk)
+	if err != nil {
+		return err
 	}
 
 	// Build DeleteItem input
@@ -2732,49 +2625,14 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 
 	builder := expr.NewBuilderWithConverter(q.db.converter)
 
-	if metadata.VersionField != nil && q.model != nil {
-		modelValue := reflect.ValueOf(q.model)
-		if modelValue.Kind() == reflect.Ptr {
-			modelValue = modelValue.Elem()
-		}
-		versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
-		if !versionValue.IsZero() {
-			if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", versionValue.Int()); err != nil {
-				return fmt.Errorf("failed to add version condition: %w", err)
-			}
-		}
+	if err = q.addDeleteVersionCondition(builder, metadata); err != nil {
+		return err
 	}
 
 	components := builder.Build()
-	conditionExpr := components.ConditionExpression
-	exprAttrNames := components.ExpressionAttributeNames
-	if exprAttrNames == nil {
-		exprAttrNames = make(map[string]string)
-	}
-	exprAttrValues := components.ExpressionAttributeValues
-	if exprAttrValues == nil {
-		exprAttrValues = make(map[string]types.AttributeValue)
-	}
-
-	queryCondExpr, queryCondNames, queryCondValues, err := q.buildConditionExpression(metadata, true, true, false)
+	conditionExpr, exprAttrNames, exprAttrValues, err := q.mergeQueryConditions(metadata, components.ConditionExpression, components.ExpressionAttributeNames, components.ExpressionAttributeValues)
 	if err != nil {
 		return err
-	}
-	if queryCondExpr != "" {
-		if conditionExpr != "" {
-			conditionExpr = fmt.Sprintf("(%s) AND (%s)", conditionExpr, queryCondExpr)
-		} else {
-			conditionExpr = queryCondExpr
-		}
-	}
-	for k, v := range queryCondNames {
-		exprAttrNames[k] = v
-	}
-	for k, v := range queryCondValues {
-		if _, exists := exprAttrValues[k]; exists {
-			return fmt.Errorf("duplicate condition value placeholder: %s", k)
-		}
-		exprAttrValues[k] = v
 	}
 
 	if conditionExpr != "" {
@@ -2798,6 +2656,145 @@ func (q *query) deleteItem(metadata *model.Metadata) error {
 	}
 
 	return nil
+}
+
+func (q *query) buildKeyMapFromPrimaryKey(metadata *model.Metadata, pk map[string]any) (map[string]types.AttributeValue, error) {
+	keyMap := make(map[string]types.AttributeValue)
+
+	if pkValue, hasPK := pk["pk"]; hasPK {
+		av, err := q.db.converter.ToAttributeValue(pkValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert partition key: %w", err)
+		}
+		keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
+	}
+
+	if skValue, hasSK := pk["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
+		av, err := q.db.converter.ToAttributeValue(skValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert sort key: %w", err)
+		}
+		keyMap[metadata.PrimaryKey.SortKey.DBName] = av
+	}
+
+	return keyMap, nil
+}
+
+func derefValue(value reflect.Value) reflect.Value {
+	if value.Kind() == reflect.Ptr {
+		return value.Elem()
+	}
+	return value
+}
+
+func (q *query) fieldsToUpdate(metadata *model.Metadata, modelValue reflect.Value, fields []string) []string {
+	if len(fields) > 0 {
+		return fields
+	}
+
+	fieldsToUpdate := make([]string, 0, len(metadata.Fields))
+	for fieldName, fieldMeta := range metadata.Fields {
+		if fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
+			continue
+		}
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if !reflectutil.IsEmpty(fieldValue) || !fieldMeta.OmitEmpty {
+			fieldsToUpdate = append(fieldsToUpdate, fieldName)
+		}
+	}
+
+	return fieldsToUpdate
+}
+
+func (q *query) addUpdateExpressions(builder *expr.Builder, metadata *model.Metadata, modelValue reflect.Value, fieldsToUpdate []string) error {
+	for _, fieldName := range fieldsToUpdate {
+		fieldMeta, exists := lookupField(metadata, fieldName)
+		if !exists {
+			return fmt.Errorf("field '%s' not found in model metadata (use Go field name or DB attribute name)", fieldName)
+		}
+
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		switch {
+		case fieldMeta.IsUpdatedAt:
+			builder.AddUpdateSet(fieldMeta.DBName, time.Now())
+		case fieldMeta.IsVersion:
+			builder.AddUpdateAdd(fieldMeta.DBName, int64(1))
+		default:
+			builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface())
+		}
+	}
+
+	return nil
+}
+
+func (q *query) addUpdatedAtUpdate(builder *expr.Builder, metadata *model.Metadata) {
+	if metadata.UpdatedAtField == nil {
+		return
+	}
+	builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now())
+}
+
+func (q *query) addUpdateVersionCondition(builder *expr.Builder, metadata *model.Metadata, modelValue reflect.Value) error {
+	if metadata.VersionField == nil {
+		return nil
+	}
+	currentVersion := modelValue.FieldByIndex(metadata.VersionField.IndexPath).Int()
+	if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", currentVersion); err != nil {
+		return fmt.Errorf("failed to add version condition: %w", err)
+	}
+	return nil
+}
+
+func (q *query) addDeleteVersionCondition(builder *expr.Builder, metadata *model.Metadata) error {
+	if metadata.VersionField == nil || q.model == nil {
+		return nil
+	}
+
+	modelValue := derefValue(reflect.ValueOf(q.model))
+	versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
+	if versionValue.IsZero() {
+		return nil
+	}
+
+	if err := builder.AddConditionExpression(metadata.VersionField.DBName, "=", versionValue.Int()); err != nil {
+		return fmt.Errorf("failed to add version condition: %w", err)
+	}
+	return nil
+}
+
+func (q *query) mergeQueryConditions(
+	metadata *model.Metadata,
+	conditionExpr string,
+	exprAttrNames map[string]string,
+	exprAttrValues map[string]types.AttributeValue,
+) (string, map[string]string, map[string]types.AttributeValue, error) {
+	queryCondExpr, queryCondNames, queryCondValues, err := q.buildConditionExpression(metadata, true, true, false)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	if queryCondExpr != "" {
+		conditionExpr = mergeAndExpression(conditionExpr, queryCondExpr)
+	}
+
+	if exprAttrNames == nil {
+		exprAttrNames = make(map[string]string)
+	}
+	for k, v := range queryCondNames {
+		exprAttrNames[k] = v
+	}
+
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
+	}
+	for k, v := range queryCondValues {
+		if _, exists := exprAttrValues[k]; exists {
+			return "", nil, nil, fmt.Errorf("duplicate condition value placeholder: %s", k)
+		}
+		exprAttrValues[k] = v
+	}
+
+	return conditionExpr, exprAttrNames, exprAttrValues, nil
 }
 
 // errorQuery is a query that always returns an error
@@ -2913,217 +2910,184 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		return nil, err
 	}
 
-	// Get metadata
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
 		return nil, err
 	}
 
-	// Separate key conditions from filter conditions
-	var keyConditions []condition
-	var filterConditions []condition
+	keyConditions, filterConditions := q.splitPaginatedConditions(metadata)
+
+	items, scannedCount, lastEvaluatedKey, err := q.fetchPaginatedItems(metadata, keyConditions, filterConditions)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := q.unmarshalPaginatedItems(items, dest, metadata); err != nil {
+		return nil, err
+	}
+
+	return q.buildPaginatedResult(dest, items, scannedCount, lastEvaluatedKey)
+}
+
+func (q *query) splitPaginatedConditions(metadata *model.Metadata) ([]condition, []condition) {
+	keyConditions := make([]condition, 0, len(q.conditions))
+	filterConditions := make([]condition, 0, len(q.conditions))
 
 	for _, cond := range q.conditions {
-		normalizedCond := condition{
-			field: cond.field,
-			op:    normalizeOperator(cond.op),
-			value: cond.value,
-		}
-
-		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
-		if !exists {
-			filterConditions = append(filterConditions, normalizedCond)
+		normalized := normalizeCondition(cond)
+		fieldMeta, exists := lookupField(metadata, normalized.field)
+		if !exists || fieldMeta == nil {
+			filterConditions = append(filterConditions, normalized)
 			continue
 		}
 
-		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
-		if isPK || isSK {
-			if normalizedCond.op == "=" || normalizedCond.op == operatorBeginsWith ||
-				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
-				normalizedCond.op == operatorBetween {
-				if isPK && normalizedCond.op != "=" {
-					filterConditions = append(filterConditions, normalizedCond)
-				} else {
-					keyConditions = append(keyConditions, normalizedCond)
-				}
-			} else {
-				filterConditions = append(filterConditions, normalizedCond)
-			}
-		} else {
-			filterConditions = append(filterConditions, normalizedCond)
+		if q.isKeyConditionForPagination(fieldMeta, metadata, normalized.op) {
+			keyConditions = append(keyConditions, normalized)
+			continue
 		}
+
+		filterConditions = append(filterConditions, normalized)
 	}
 
-	// Determine operation type
-	var items []map[string]types.AttributeValue
-	var scannedCount int
-	var lastEvaluatedKey map[string]types.AttributeValue
+	return keyConditions, filterConditions
+}
 
+func normalizeCondition(cond condition) condition {
+	return condition{
+		field: cond.field,
+		op:    normalizeOperator(cond.op),
+		value: cond.value,
+	}
+}
+
+func (q *query) isKeyConditionForPagination(fieldMeta *model.FieldMetadata, metadata *model.Metadata, op string) bool {
+	isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+	if !isPK && !isSK {
+		return false
+	}
+	if !isKeyConditionOperator(op) {
+		return false
+	}
+	if isPK && op != "=" {
+		return false
+	}
+	return true
+}
+
+func isKeyConditionOperator(op string) bool {
+	switch op {
+	case "=", operatorBeginsWith, "<", "<=", ">", ">=", operatorBetween:
+		return true
+	default:
+		return false
+	}
+}
+
+func (q *query) fetchPaginatedItems(
+	metadata *model.Metadata,
+	keyConditions []condition,
+	filterConditions []condition,
+) ([]map[string]types.AttributeValue, int, map[string]types.AttributeValue, error) {
 	if len(keyConditions) > 0 {
-		// Use Query operation
-		builder := expr.NewBuilderWithConverter(q.db.converter)
+		return q.fetchPaginatedQueryItems(metadata, keyConditions, filterConditions)
+	}
+	return q.fetchPaginatedScanItems(metadata, filterConditions)
+}
 
-		// Add key conditions
-		for _, cond := range keyConditions {
-			fieldMeta, _ := lookupField(metadata, cond.field)
-			op := normalizeOperator(cond.op)
-			if err := builder.AddKeyCondition(fieldMeta.DBName, op, cond.value); err != nil {
-				return nil, fmt.Errorf("failed to add key condition for %s: %w", cond.field, err)
-			}
-		}
+func (q *query) fetchPaginatedQueryItems(
+	metadata *model.Metadata,
+	keyConditions []condition,
+	filterConditions []condition,
+) ([]map[string]types.AttributeValue, int, map[string]types.AttributeValue, error) {
+	builder := expr.NewBuilderWithConverter(q.db.converter)
 
-		// Add filter conditions
-		for _, cond := range filterConditions {
-			fieldMeta, exists := lookupField(metadata, cond.field)
-			op := normalizeOperator(cond.op)
-			if exists {
-				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
-					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-				}
-			} else {
-				if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
-					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-				}
-			}
-		}
+	if err := q.addKeyConditionsToBuilder(builder, metadata, keyConditions); err != nil {
+		return nil, 0, nil, err
+	}
+	if err := q.addFilterConditionsToBuilder(builder, metadata, filterConditions); err != nil {
+		return nil, 0, nil, err
+	}
+	q.addProjectionToBuilder(builder)
 
-		// Add projection
-		if len(q.fields) > 0 {
-			builder.AddProjection(q.fields...)
-		}
+	components := builder.Build()
+	input := queryInputFromComponents(metadata.TableName, components)
+	q.applyPaginatedQueryOptions(input)
 
-		// Build expressions
-		components := builder.Build()
-
-		// Build Query input
-		input := &dynamodb.QueryInput{
-			TableName: aws.String(metadata.TableName),
-		}
-
-		if components.KeyConditionExpression != "" {
-			input.KeyConditionExpression = aws.String(components.KeyConditionExpression)
-		}
-		if components.FilterExpression != "" {
-			input.FilterExpression = aws.String(components.FilterExpression)
-		}
-		if components.ProjectionExpression != "" {
-			input.ProjectionExpression = aws.String(components.ProjectionExpression)
-		}
-		if len(components.ExpressionAttributeNames) > 0 {
-			input.ExpressionAttributeNames = components.ExpressionAttributeNames
-		}
-		if len(components.ExpressionAttributeValues) > 0 {
-			input.ExpressionAttributeValues = components.ExpressionAttributeValues
-		}
-
-		// Set index name if specified
-		if q.indexName != "" {
-			input.IndexName = aws.String(q.indexName)
-		}
-
-		// Set scan direction
-		if q.orderBy != nil && q.orderBy.order == "DESC" {
-			input.ScanIndexForward = aws.Bool(false)
-		}
-
-		// Set limit
-		if q.limit != nil {
-			input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
-		}
-
-		// Execute query
-		client, err := q.db.session.Client()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get client for paginated query: %w", err)
-		}
-
-		output, err := client.Query(q.ctx, input)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query items: %w", err)
-		}
-
-		items = output.Items
-		scannedCount = int(output.ScannedCount)
-		lastEvaluatedKey = output.LastEvaluatedKey
-	} else {
-		// Use Scan operation
-		builder := expr.NewBuilderWithConverter(q.db.converter)
-
-		// Add filter conditions
-		for _, cond := range filterConditions {
-			fieldMeta, exists := lookupField(metadata, cond.field)
-			op := normalizeOperator(cond.op)
-			if exists {
-				if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
-					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-				}
-			} else {
-				if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
-					return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-				}
-			}
-		}
-
-		// Add projection
-		if len(q.fields) > 0 {
-			builder.AddProjection(q.fields...)
-		}
-
-		// Build expressions
-		components := builder.Build()
-
-		// Build Scan input
-		input := &dynamodb.ScanInput{
-			TableName: aws.String(metadata.TableName),
-		}
-
-		if components.FilterExpression != "" {
-			input.FilterExpression = aws.String(components.FilterExpression)
-		}
-		if components.ProjectionExpression != "" {
-			input.ProjectionExpression = aws.String(components.ProjectionExpression)
-		}
-		if len(components.ExpressionAttributeNames) > 0 {
-			input.ExpressionAttributeNames = components.ExpressionAttributeNames
-		}
-		if len(components.ExpressionAttributeValues) > 0 {
-			input.ExpressionAttributeValues = components.ExpressionAttributeValues
-		}
-
-		// Set index name if specified
-		if q.indexName != "" {
-			input.IndexName = aws.String(q.indexName)
-		}
-
-		// Set limit
-		if q.limit != nil {
-			input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
-		}
-
-		// Execute scan
-		client, err := q.db.session.Client()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get client for paginated scan: %w", err)
-		}
-
-		output, err := client.Scan(q.ctx, input)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan items: %w", err)
-		}
-
-		items = output.Items
-		scannedCount = int(output.ScannedCount)
-		lastEvaluatedKey = output.LastEvaluatedKey
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("failed to get client for paginated query: %w", err)
 	}
 
-	// Unmarshal items
-	if len(items) > 0 {
-		if err := q.unmarshalItems(items, dest, metadata); err != nil {
-			return nil, err
-		}
+	output, err := client.Query(q.ctx, input)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("failed to query items: %w", err)
 	}
 
-	// Create result
+	return output.Items, int(output.ScannedCount), output.LastEvaluatedKey, nil
+}
+
+func (q *query) fetchPaginatedScanItems(
+	metadata *model.Metadata,
+	filterConditions []condition,
+) ([]map[string]types.AttributeValue, int, map[string]types.AttributeValue, error) {
+	builder := expr.NewBuilderWithConverter(q.db.converter)
+
+	if err := q.addFilterConditionsToBuilder(builder, metadata, filterConditions); err != nil {
+		return nil, 0, nil, err
+	}
+	q.addProjectionToBuilder(builder)
+
+	components := builder.Build()
+	input := scanInputFromComponents(metadata.TableName, components)
+	q.applyPaginatedScanOptions(input)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("failed to get client for paginated scan: %w", err)
+	}
+
+	output, err := client.Scan(q.ctx, input)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("failed to scan items: %w", err)
+	}
+
+	return output.Items, int(output.ScannedCount), output.LastEvaluatedKey, nil
+}
+
+func (q *query) applyPaginatedQueryOptions(input *dynamodb.QueryInput) {
+	if q.indexName != "" {
+		input.IndexName = aws.String(q.indexName)
+	}
+	if q.orderBy != nil && q.orderBy.order == "DESC" {
+		input.ScanIndexForward = aws.Bool(false)
+	}
+	if q.limit != nil {
+		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
+	}
+}
+
+func (q *query) applyPaginatedScanOptions(input *dynamodb.ScanInput) {
+	if q.indexName != "" {
+		input.IndexName = aws.String(q.indexName)
+	}
+	if q.limit != nil {
+		input.Limit = aws.Int32(numutil.ClampIntToInt32(*q.limit))
+	}
+}
+
+func (q *query) unmarshalPaginatedItems(items []map[string]types.AttributeValue, dest any, metadata *model.Metadata) error {
+	if len(items) == 0 {
+		return nil
+	}
+	return q.unmarshalItems(items, dest, metadata)
+}
+
+func (q *query) buildPaginatedResult(
+	dest any,
+	items []map[string]types.AttributeValue,
+	scannedCount int,
+	lastEvaluatedKey map[string]types.AttributeValue,
+) (*core.PaginatedResult, error) {
 	result := &core.PaginatedResult{
 		Items:            dest,
 		Count:            len(items),
@@ -3132,7 +3096,6 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 		HasMore:          len(lastEvaluatedKey) > 0,
 	}
 
-	// Generate next cursor if there are more results
 	if result.HasMore {
 		cursor, err := queryPkg.EncodeCursor(lastEvaluatedKey, q.indexName, "")
 		if err != nil {
@@ -3323,9 +3286,28 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 // executeScanSegment executes a scan for a specific segment
 func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegments int32) ([]map[string]types.AttributeValue, error) {
 	builder := expr.NewBuilderWithConverter(q.db.converter)
+	filterConditions := q.scanSegmentFilterConditions(metadata)
+	if err := q.addFilterConditionsToBuilderWithRecording(builder, metadata, filterConditions); err != nil {
+		return nil, err
+	}
 
-	// Add filter conditions
-	var filterConditions []condition
+	q.addProjectionToBuilder(builder)
+	components := builder.Build()
+
+	input := scanInputFromComponents(metadata.TableName, components)
+	input.Segment = aws.Int32(segment)
+	input.TotalSegments = aws.Int32(totalSegments)
+	q.applyScanSegmentOptions(input, totalSegments)
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for scan segment: %w", err)
+	}
+	return q.collectScanSegmentItems(client, input, totalSegments)
+}
+
+func (q *query) scanSegmentFilterConditions(metadata *model.Metadata) []condition {
+	filterConditions := make([]condition, 0, len(q.conditions))
 	for _, cond := range q.conditions {
 		normalizedCond := condition{
 			field: cond.field,
@@ -3339,87 +3321,43 @@ func (q *query) executeScanSegment(metadata *model.Metadata, segment, totalSegme
 		}
 	}
 
-	for _, cond := range filterConditions {
-		fieldMeta, exists := lookupField(metadata, cond.field)
-		op := normalizeOperator(cond.op)
-		if exists {
-			if err := builder.AddFilterCondition("AND", fieldMeta.DBName, op, cond.value); err != nil {
-				q.recordBuilderError(err)
-				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		} else {
-			if err := builder.AddFilterCondition("AND", cond.field, op, cond.value); err != nil {
-				q.recordBuilderError(err)
-				return nil, fmt.Errorf("failed to add filter condition for %s: %w", cond.field, err)
-			}
-		}
-	}
+	return filterConditions
+}
 
-	// Add projection
-	if len(q.fields) > 0 {
-		builder.AddProjection(q.fields...)
-	}
-
-	// Build expressions
-	components := builder.Build()
-
-	// Build Scan input
-	input := &dynamodb.ScanInput{
-		TableName:     aws.String(metadata.TableName),
-		Segment:       aws.Int32(segment),
-		TotalSegments: aws.Int32(totalSegments),
-	}
-
-	if components.FilterExpression != "" {
-		input.FilterExpression = aws.String(components.FilterExpression)
-	}
-	if components.ProjectionExpression != "" {
-		input.ProjectionExpression = aws.String(components.ProjectionExpression)
-	}
-	if len(components.ExpressionAttributeNames) > 0 {
-		input.ExpressionAttributeNames = components.ExpressionAttributeNames
-	}
-	if len(components.ExpressionAttributeValues) > 0 {
-		input.ExpressionAttributeValues = components.ExpressionAttributeValues
-	}
-
-	// Set index name if specified
+func (q *query) applyScanSegmentOptions(input *dynamodb.ScanInput, totalSegments int32) {
 	if q.indexName != "" {
 		input.IndexName = aws.String(q.indexName)
 	}
 
-	// Set limit if specified (but be careful with parallel scans)
-	if q.limit != nil && *q.limit > 0 {
-		// Distribute limit across segments
-		segmentLimit := (*q.limit + int(totalSegments) - 1) / int(totalSegments)
-		input.Limit = aws.Int32(numutil.ClampIntToInt32(segmentLimit))
+	if q.limit == nil || *q.limit <= 0 {
+		return
 	}
 
-	// Execute scan and collect results
-	var items []map[string]types.AttributeValue
+	segmentLimit := (*q.limit + int(totalSegments) - 1) / int(totalSegments)
+	input.Limit = aws.Int32(numutil.ClampIntToInt32(segmentLimit))
+}
 
-	client, err := q.db.session.Client()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for scan segment: %w", err)
-	}
-
+func (q *query) collectScanSegmentItems(client *dynamodb.Client, input *dynamodb.ScanInput, totalSegments int32) ([]map[string]types.AttributeValue, error) {
 	paginator := dynamodb.NewScanPaginator(client, input)
-
-	for paginator.HasMorePages() {
-		output, err := paginator.NextPage(q.ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		items = append(items, output.Items...)
-
-		// If we have a limit and reached it, stop
-		if q.limit != nil && len(items) >= *q.limit/int(totalSegments) {
-			break
-		}
+	limit := 0
+	hasLimit := q.limit != nil
+	if q.limit != nil {
+		limit = *q.limit / int(totalSegments)
 	}
 
-	return items, nil
+	return q.collectPaginatedItems(
+		paginator.HasMorePages,
+		func(ctx context.Context) ([]map[string]types.AttributeValue, error) {
+			output, err := paginator.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return output.Items, nil
+		},
+		limit,
+		hasLimit,
+		false,
+	)
 }
 
 // Cursor sets the pagination cursor for the query
