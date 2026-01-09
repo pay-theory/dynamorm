@@ -154,14 +154,16 @@ func (m *Manager) copyDataIfRequested(opts *AutoMigrateOptions, sourceMetadata, 
 		return nil
 	}
 
+	var transformFunc TransformFunc
 	if opts.Transform != nil {
-		_, err := CreateModelTransform(opts.Transform, sourceMetadata, targetMetadata)
+		var err error
+		transformFunc, err = CreateModelTransform(opts.Transform, sourceMetadata, targetMetadata)
 		if err != nil {
 			return fmt.Errorf("invalid transform function: %w", err)
 		}
 	}
 
-	if err := m.copyData(opts, sourceMetadata, targetMetadata); err != nil {
+	if err := m.copyData(opts, sourceMetadata, targetMetadata, transformFunc); err != nil {
 		return fmt.Errorf("failed to copy data: %w", err)
 	}
 
@@ -302,7 +304,7 @@ func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string
 }
 
 // copyData copies data from source to target table with optional transformation
-func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
+func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata, transformFunc TransformFunc) error {
 	ctx := opts.Context
 
 	// Get client once for the entire operation
@@ -329,7 +331,7 @@ func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetad
 
 		// Process items
 		if len(result.Items) > 0 {
-			if err := m.processItems(ctx, client, result.Items, opts, sourceMetadata, targetMetadata); err != nil {
+			if err := m.processItems(ctx, client, result.Items, targetMetadata.TableName, transformFunc, sourceMetadata, targetMetadata); err != nil {
 				return fmt.Errorf("failed to process items: %w", err)
 			}
 		}
@@ -346,116 +348,21 @@ func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetad
 
 // processItems processes and writes items to the target table
 func (m *Manager) processItems(ctx context.Context, client *dynamodb.Client, items []map[string]types.AttributeValue,
-	opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
-
-	// Prepare batch write requests
-	writeRequests := make([]types.WriteRequest, 0, len(items))
-
-	for _, item := range items {
-		// Apply transformation if provided
-		transformedItem := item
-		if opts.Transform != nil {
-			var err error
-			transformedItem, err = m.applyTransform(item, opts.Transform, sourceMetadata, targetMetadata)
-			if err != nil {
-				return fmt.Errorf("failed to transform item: %w", err)
-			}
-		}
-
-		writeRequests = append(writeRequests, types.WriteRequest{
-			PutRequest: &types.PutRequest{
-				Item: transformedItem,
-			},
-		})
-	}
-
-	// Process in batches of 25 (DynamoDB limit)
-	const maxBatchSize = 25
-	for i := 0; i < len(writeRequests); i += maxBatchSize {
-		end := i + maxBatchSize
-		if end > len(writeRequests) {
-			end = len(writeRequests)
-		}
-
-		batch := writeRequests[i:end]
-		remainingRequests := batch
-		retryCount := 0
-		maxRetries := 5
-		allProcessed := false
-
-		for len(remainingRequests) > 0 && retryCount < maxRetries {
-			batchInput := &dynamodb.BatchWriteItemInput{
-				RequestItems: map[string][]types.WriteRequest{
-					targetMetadata.TableName: remainingRequests,
-				},
-			}
-
-			result, err := client.BatchWriteItem(ctx, batchInput)
-			if err != nil {
-				return fmt.Errorf("failed to write items to target table: %w", err)
-			}
-
-			// Check for unprocessed items
-			if len(result.UnprocessedItems) > 0 {
-				if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
-					remainingRequests = unprocessed
-					retryCount++
-
-					// Add exponential backoff with jitter
-					if retryCount < maxRetries {
-						backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
-						select {
-						case <-time.After(backoff):
-							// Continue with retry
-						case <-ctx.Done():
-							return fmt.Errorf("context canceled during retry: %w", ctx.Err())
-						}
-					}
-				} else {
-					// No unprocessed items for our table
-					allProcessed = true
-					break
-				}
-			} else {
-				// All items processed successfully
-				allProcessed = true
-				break
-			}
-		}
-
-		// If we still have unprocessed items after retries, try individual puts
-		// This is more compatible with DynamoDB Local
-		if !allProcessed && len(remainingRequests) > 0 {
-			for _, req := range remainingRequests {
-				if req.PutRequest != nil {
-					putInput := &dynamodb.PutItemInput{
-						TableName: &targetMetadata.TableName,
-						Item:      req.PutRequest.Item,
-					}
-					_, err := client.PutItem(ctx, putInput)
-					if err != nil {
-						return fmt.Errorf("failed to put individual item after batch failures: %w", err)
-					}
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// applyTransform applies a transformation function to an item
-func (m *Manager) applyTransform(item map[string]types.AttributeValue, transform interface{},
-	sourceMetadata, targetMetadata *model.Metadata) (map[string]types.AttributeValue, error) {
-
-	// Create the appropriate transform function
-	transformFunc, err := CreateModelTransform(transform, sourceMetadata, targetMetadata)
+	targetTable string,
+	transformFunc TransformFunc,
+	sourceMetadata, targetMetadata *model.Metadata,
+) error {
+	writeRequests, err := buildPutWriteRequestsWithTransform(items, transformFunc, sourceMetadata, targetMetadata)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create transform function: %w", err)
+		return err
 	}
 
-	// Apply the transform with validation
-	return TransformWithValidation(item, transformFunc, sourceMetadata, targetMetadata)
+	const (
+		maxBatchSize = 25
+		maxRetries   = 5
+	)
+
+	return writeRequestsBatched(ctx, client, targetTable, writeRequests, maxBatchSize, maxRetries)
 }
 
 // copyTableData copies all data from source to target table
@@ -467,112 +374,239 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 
 	var lastEvaluatedKey map[string]types.AttributeValue
 
+	maxBatchSize := resolveDataCopyBatchSize(batchSize)
+
 	for {
-		// Scan source table
-		scanInput := &dynamodb.ScanInput{
-			TableName: &sourceTable,
-			Limit:     int32Ptr(numutil.ClampIntToInt32(batchSize)),
-		}
-		if lastEvaluatedKey != nil {
-			scanInput.ExclusiveStartKey = lastEvaluatedKey
-		}
-
-		result, err := client.Scan(ctx, scanInput)
+		result, err := scanTablePage(ctx, client, sourceTable, batchSize, lastEvaluatedKey)
 		if err != nil {
-			return fmt.Errorf("failed to scan source table: %w", err)
+			return err
 		}
 
-		// Batch write to target table
-		if len(result.Items) > 0 {
-			// Use smaller batch size for DynamoDB Local compatibility
-			maxBatchSize := 10
-			if batchSize < maxBatchSize {
-				maxBatchSize = batchSize
-			}
-
-			for i := 0; i < len(result.Items); i += maxBatchSize {
-				end := i + maxBatchSize
-				if end > len(result.Items) {
-					end = len(result.Items)
-				}
-
-				batch := result.Items[i:end]
-				writeRequests := make([]types.WriteRequest, len(batch))
-				for j, item := range batch {
-					writeRequests[j] = types.WriteRequest{
-						PutRequest: &types.PutRequest{
-							Item: item,
-						},
-					}
-				}
-
-				// Batch write with retry logic for unprocessed items
-				remainingRequests := writeRequests
-				retryCount := 0
-				maxRetries := 5
-
-				for len(remainingRequests) > 0 && retryCount < maxRetries {
-					batchInput := &dynamodb.BatchWriteItemInput{
-						RequestItems: map[string][]types.WriteRequest{
-							targetTable: remainingRequests,
-						},
-					}
-
-					batchResult, err := client.BatchWriteItem(ctx, batchInput)
-					if err != nil {
-						return fmt.Errorf("failed to write batch: %w", err)
-					}
-
-					// Check for unprocessed items
-					if len(batchResult.UnprocessedItems) > 0 {
-						if unprocessed, exists := batchResult.UnprocessedItems[targetTable]; exists && len(unprocessed) > 0 {
-							remainingRequests = unprocessed
-							retryCount++
-
-							// Add exponential backoff with jitter
-							if retryCount < maxRetries {
-								backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
-								select {
-								case <-time.After(backoff):
-									// Continue with retry
-								case <-ctx.Done():
-									return fmt.Errorf("context canceled during retry: %w", ctx.Err())
-								}
-							}
-						} else {
-							// No unprocessed items for our table
-							break
-						}
-					} else {
-						// All items processed successfully
-						break
-					}
-				}
-
-				// If we still have unprocessed items after retries, log and continue
-				// This is more lenient for DynamoDB Local compatibility
-				if len(remainingRequests) > 0 {
-					// For DynamoDB Local, we'll try individual puts as fallback
-					for _, req := range remainingRequests {
-						if req.PutRequest != nil {
-							putInput := &dynamodb.PutItemInput{
-								TableName: &targetTable,
-								Item:      req.PutRequest.Item,
-							}
-							_, err := client.PutItem(ctx, putInput)
-							if err != nil {
-								return fmt.Errorf("failed to put individual item after batch failures: %w", err)
-							}
-						}
-					}
-				}
-			}
+		if err := writeItemsToTable(ctx, client, targetTable, result.Items, maxBatchSize); err != nil {
+			return err
 		}
 
 		// Check if more items
 		lastEvaluatedKey = result.LastEvaluatedKey
 		if lastEvaluatedKey == nil {
 			break
+		}
+	}
+
+	return nil
+}
+
+func resolveDataCopyBatchSize(batchSize int) int {
+	const maxLocalBatchSize = 10
+	if batchSize <= 0 {
+		return maxLocalBatchSize
+	}
+	if batchSize < maxLocalBatchSize {
+		return batchSize
+	}
+	return maxLocalBatchSize
+}
+
+func scanTablePage(
+	ctx context.Context,
+	client *dynamodb.Client,
+	sourceTable string,
+	batchSize int,
+	lastEvaluatedKey map[string]types.AttributeValue,
+) (*dynamodb.ScanOutput, error) {
+	scanInput := &dynamodb.ScanInput{
+		TableName: &sourceTable,
+		Limit:     int32Ptr(numutil.ClampIntToInt32(batchSize)),
+	}
+	if lastEvaluatedKey != nil {
+		scanInput.ExclusiveStartKey = lastEvaluatedKey
+	}
+
+	result, err := client.Scan(ctx, scanInput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan source table: %w", err)
+	}
+
+	return result, nil
+}
+
+func writeItemsToTable(
+	ctx context.Context,
+	client *dynamodb.Client,
+	targetTable string,
+	items []map[string]types.AttributeValue,
+	maxBatchSize int,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	const maxRetries = 5
+	writeRequests := buildPutWriteRequests(items)
+	return writeRequestsBatched(ctx, client, targetTable, writeRequests, maxBatchSize, maxRetries)
+}
+
+func buildPutWriteRequests(items []map[string]types.AttributeValue) []types.WriteRequest {
+	writeRequests := make([]types.WriteRequest, 0, len(items))
+	for _, item := range items {
+		writeRequests = append(writeRequests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: item,
+			},
+		})
+	}
+	return writeRequests
+}
+
+func buildPutWriteRequestsWithTransform(
+	items []map[string]types.AttributeValue,
+	transform TransformFunc,
+	sourceMetadata, targetMetadata *model.Metadata,
+) ([]types.WriteRequest, error) {
+	if transform == nil {
+		return buildPutWriteRequests(items), nil
+	}
+
+	writeRequests := make([]types.WriteRequest, 0, len(items))
+	for _, item := range items {
+		transformedItem, err := TransformWithValidation(item, transform, sourceMetadata, targetMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform item: %w", err)
+		}
+
+		writeRequests = append(writeRequests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: transformedItem,
+			},
+		})
+	}
+
+	return writeRequests, nil
+}
+
+func writeRequestsBatched(
+	ctx context.Context,
+	client *dynamodb.Client,
+	tableName string,
+	writeRequests []types.WriteRequest,
+	maxBatchSize int,
+	maxRetries int,
+) error {
+	if len(writeRequests) == 0 {
+		return nil
+	}
+	if maxBatchSize <= 0 {
+		maxBatchSize = len(writeRequests)
+	}
+
+	for i := 0; i < len(writeRequests); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(writeRequests) {
+			end = len(writeRequests)
+		}
+
+		batch := writeRequests[i:end]
+		remaining, err := batchWriteWithRetries(ctx, client, tableName, batch, maxRetries)
+		if err != nil {
+			return err
+		}
+		if len(remaining) == 0 {
+			continue
+		}
+
+		if err := putWriteRequestsIndividually(ctx, client, tableName, remaining); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func batchWriteWithRetries(
+	ctx context.Context,
+	client *dynamodb.Client,
+	tableName string,
+	writeRequests []types.WriteRequest,
+	maxRetries int,
+) ([]types.WriteRequest, error) {
+	if len(writeRequests) == 0 {
+		return nil, nil
+	}
+	if maxRetries <= 0 {
+		return writeRequests, nil
+	}
+
+	remainingRequests := writeRequests
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		batchInput := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{
+				tableName: remainingRequests,
+			},
+		}
+
+		result, err := client.BatchWriteItem(ctx, batchInput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write batch: %w", err)
+		}
+
+		remainingRequests = unprocessedRequestsForTable(result.UnprocessedItems, tableName)
+		if len(remainingRequests) == 0 {
+			return nil, nil
+		}
+
+		if attempt == maxRetries {
+			break
+		}
+
+		if err := sleepWithBackoff(ctx, attempt); err != nil {
+			return nil, err
+		}
+	}
+
+	return remainingRequests, nil
+}
+
+func unprocessedRequestsForTable(unprocessedItems map[string][]types.WriteRequest, tableName string) []types.WriteRequest {
+	if len(unprocessedItems) == 0 {
+		return nil
+	}
+	unprocessed, exists := unprocessedItems[tableName]
+	if !exists || len(unprocessed) == 0 {
+		return nil
+	}
+	return unprocessed
+}
+
+func sleepWithBackoff(ctx context.Context, retryCount int) error {
+	backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("context canceled during retry: %w", ctx.Err())
+	}
+}
+
+func putWriteRequestsIndividually(
+	ctx context.Context,
+	client *dynamodb.Client,
+	tableName string,
+	remainingRequests []types.WriteRequest,
+) error {
+	for _, req := range remainingRequests {
+		if req.PutRequest == nil {
+			continue
+		}
+
+		putInput := &dynamodb.PutItemInput{
+			TableName: &tableName,
+			Item:      req.PutRequest.Item,
+		}
+		if _, err := client.PutItem(ctx, putInput); err != nil {
+			return fmt.Errorf("failed to put individual item after batch failures: %w", err)
 		}
 	}
 
