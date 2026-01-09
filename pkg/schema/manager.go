@@ -360,83 +360,23 @@ func (m *Manager) UpdateTable(model any, opts ...TableOption) error {
 		return fmt.Errorf("failed to get model metadata: %w", err)
 	}
 
-	// Get current table description
 	current, err := m.DescribeTable(model)
 	if err != nil {
 		return err
 	}
 
-	// Build update input
 	input := &dynamodb.UpdateTableInput{
 		TableName: aws.String(metadata.TableName),
 	}
 
-	// Apply options to determine what to update
-	createInput := &dynamodb.CreateTableInput{}
-	for _, opt := range opts {
-		opt(createInput)
-	}
+	createInput := buildCreateTableInput(opts)
 
-	// Update billing mode if changed
-	if createInput.BillingMode != "" && createInput.BillingMode != current.BillingModeSummary.BillingMode {
-		input.BillingMode = createInput.BillingMode
+	applyBillingModeUpdate(input, createInput, current)
+	applyStreamUpdate(input, createInput)
+	applySSEUpdate(input, createInput)
 
-		// If switching to provisioned, set throughput
-		if createInput.BillingMode == types.BillingModeProvisioned && createInput.ProvisionedThroughput != nil {
-			input.ProvisionedThroughput = createInput.ProvisionedThroughput
-		}
-	}
-
-	// Update streams if changed
-	if createInput.StreamSpecification != nil {
-		input.StreamSpecification = createInput.StreamSpecification
-	}
-
-	// Update SSE if changed
-	if createInput.SSESpecification != nil {
-		input.SSESpecification = createInput.SSESpecification
-	}
-
-	// Handle GSI updates
-	gsiUpdates, err := m.calculateGSIUpdates(metadata, current)
-	if err != nil {
-		return fmt.Errorf("failed to calculate GSI updates: %w", err)
-	}
-
-	// Apply GSI updates (DynamoDB allows only one GSI operation per UpdateTable call)
-	if len(gsiUpdates.ToCreate) > 0 || len(gsiUpdates.ToDelete) > 0 {
-		// If there are multiple GSI changes, we'll need to make multiple UpdateTable calls
-		// For now, we'll return an error with instructions
-		totalChanges := len(gsiUpdates.ToCreate) + len(gsiUpdates.ToDelete)
-		if totalChanges > 1 {
-			return fmt.Errorf("multiple GSI changes detected (%d creates, %d deletes). DynamoDB allows only one GSI operation per UpdateTable call. Please use AutoMigrate for complex schema changes",
-				len(gsiUpdates.ToCreate), len(gsiUpdates.ToDelete))
-		}
-
-		// Apply single GSI create
-		if len(gsiUpdates.ToCreate) == 1 {
-			input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
-				{
-					Create: &types.CreateGlobalSecondaryIndexAction{
-						IndexName:             gsiUpdates.ToCreate[0].IndexName,
-						KeySchema:             gsiUpdates.ToCreate[0].KeySchema,
-						Projection:            gsiUpdates.ToCreate[0].Projection,
-						ProvisionedThroughput: gsiUpdates.ToCreate[0].ProvisionedThroughput,
-					},
-				},
-			}
-		}
-
-		// Apply single GSI delete
-		if len(gsiUpdates.ToDelete) == 1 {
-			input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
-				{
-					Delete: &types.DeleteGlobalSecondaryIndexAction{
-						IndexName: aws.String(gsiUpdates.ToDelete[0]),
-					},
-				},
-			}
-		}
+	if err = m.applyGSIUpdates(input, metadata, current); err != nil {
+		return err
 	}
 
 	ctx := context.Background()
@@ -452,6 +392,87 @@ func (m *Manager) UpdateTable(model any, opts ...TableOption) error {
 
 	// Wait for update to complete
 	return m.waitForTableActive(metadata.TableName)
+}
+
+func buildCreateTableInput(opts []TableOption) *dynamodb.CreateTableInput {
+	createInput := &dynamodb.CreateTableInput{}
+	for _, opt := range opts {
+		opt(createInput)
+	}
+	return createInput
+}
+
+func applyBillingModeUpdate(input *dynamodb.UpdateTableInput, createInput *dynamodb.CreateTableInput, current *types.TableDescription) {
+	if createInput.BillingMode == "" || current.BillingModeSummary == nil {
+		return
+	}
+
+	if createInput.BillingMode == current.BillingModeSummary.BillingMode {
+		return
+	}
+
+	input.BillingMode = createInput.BillingMode
+	if createInput.BillingMode == types.BillingModeProvisioned && createInput.ProvisionedThroughput != nil {
+		input.ProvisionedThroughput = createInput.ProvisionedThroughput
+	}
+}
+
+func applyStreamUpdate(input *dynamodb.UpdateTableInput, createInput *dynamodb.CreateTableInput) {
+	if createInput.StreamSpecification != nil {
+		input.StreamSpecification = createInput.StreamSpecification
+	}
+}
+
+func applySSEUpdate(input *dynamodb.UpdateTableInput, createInput *dynamodb.CreateTableInput) {
+	if createInput.SSESpecification != nil {
+		input.SSESpecification = createInput.SSESpecification
+	}
+}
+
+func (m *Manager) applyGSIUpdates(input *dynamodb.UpdateTableInput, metadata *model.Metadata, current *types.TableDescription) error {
+	gsiUpdates, err := m.calculateGSIUpdates(metadata, current)
+	if err != nil {
+		return fmt.Errorf("failed to calculate GSI updates: %w", err)
+	}
+
+	totalChanges := len(gsiUpdates.ToCreate) + len(gsiUpdates.ToDelete)
+	if totalChanges == 0 {
+		return nil
+	}
+
+	if totalChanges > 1 {
+		return fmt.Errorf(
+			"multiple GSI changes detected (%d creates, %d deletes). DynamoDB allows only one GSI operation per UpdateTable call. Please use AutoMigrate for complex schema changes",
+			len(gsiUpdates.ToCreate),
+			len(gsiUpdates.ToDelete),
+		)
+	}
+
+	if len(gsiUpdates.ToCreate) == 1 {
+		input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
+			{
+				Create: &types.CreateGlobalSecondaryIndexAction{
+					IndexName:             gsiUpdates.ToCreate[0].IndexName,
+					KeySchema:             gsiUpdates.ToCreate[0].KeySchema,
+					Projection:            gsiUpdates.ToCreate[0].Projection,
+					ProvisionedThroughput: gsiUpdates.ToCreate[0].ProvisionedThroughput,
+				},
+			},
+		}
+		return nil
+	}
+
+	if len(gsiUpdates.ToDelete) == 1 {
+		input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
+			{
+				Delete: &types.DeleteGlobalSecondaryIndexAction{
+					IndexName: aws.String(gsiUpdates.ToDelete[0]),
+				},
+			},
+		}
+	}
+
+	return nil
 }
 
 // GSIUpdatePlan contains GSIs to create and delete

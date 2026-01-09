@@ -69,48 +69,73 @@ func WithContext(ctx context.Context) AutoMigrateOption {
 
 // AutoMigrateWithOptions performs an enhanced auto-migration with data copy support
 func (m *Manager) AutoMigrateWithOptions(sourceModel any, options ...AutoMigrateOption) error {
-	// Apply options
+	opts := newAutoMigrateOptions(options)
+
+	sourceMetadata, targetModel, targetMetadata, err := m.resolveAutoMigrateModels(sourceModel, opts.TargetModel)
+	if err != nil {
+		return err
+	}
+
+	if err := m.createBackupIfRequested(opts.Context, sourceMetadata.TableName, opts.BackupTable); err != nil {
+		return err
+	}
+
+	if err := m.ensureTargetTable(targetModel, targetMetadata.TableName); err != nil {
+		return err
+	}
+
+	return m.copyDataIfRequested(opts, sourceMetadata, targetMetadata)
+}
+
+func newAutoMigrateOptions(options []AutoMigrateOption) *AutoMigrateOptions {
 	opts := &AutoMigrateOptions{
-		BatchSize: 25, // Default batch size
+		BatchSize: 25,
 		Context:   context.Background(),
 	}
 	for _, opt := range options {
 		opt(opts)
 	}
+	return opts
+}
 
-	// Register source model
+func (m *Manager) resolveAutoMigrateModels(sourceModel any, targetOverride any) (*model.Metadata, any, *model.Metadata, error) {
 	if err := m.registry.Register(sourceModel); err != nil {
-		return fmt.Errorf("failed to register source model: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to register source model: %w", err)
 	}
 
 	sourceMetadata, err := m.registry.GetMetadata(sourceModel)
 	if err != nil {
-		return fmt.Errorf("failed to get source metadata: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get source metadata: %w", err)
 	}
 
-	// Determine target model
 	targetModel := sourceModel
-	if opts.TargetModel != nil {
-		targetModel = opts.TargetModel
-		if registerErr := m.registry.Register(targetModel); registerErr != nil {
-			return fmt.Errorf("failed to register target model: %w", registerErr)
+	if targetOverride != nil {
+		targetModel = targetOverride
+		if err = m.registry.Register(targetModel); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to register target model: %w", err)
 		}
 	}
 
 	targetMetadata, err := m.registry.GetMetadata(targetModel)
 	if err != nil {
-		return fmt.Errorf("failed to get target metadata: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get target metadata: %w", err)
 	}
 
-	// Handle backup if requested
-	if opts.BackupTable != "" {
-		if backupErr := m.createBackup(opts.Context, sourceMetadata.TableName, opts.BackupTable); backupErr != nil {
-			return fmt.Errorf("failed to create backup: %w", backupErr)
-		}
-	}
+	return sourceMetadata, targetModel, targetMetadata, nil
+}
 
-	// Create target table if it doesn't exist
-	exists, err := m.TableExists(targetMetadata.TableName)
+func (m *Manager) createBackupIfRequested(ctx context.Context, sourceTable string, backupTable string) error {
+	if backupTable == "" {
+		return nil
+	}
+	if err := m.createBackup(ctx, sourceTable, backupTable); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) ensureTargetTable(targetModel any, tableName string) error {
+	exists, err := m.TableExists(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to check target table existence: %w", err)
 	}
@@ -121,19 +146,23 @@ func (m *Manager) AutoMigrateWithOptions(sourceModel any, options ...AutoMigrate
 		}
 	}
 
-	// Copy data if requested
-	if opts.DataCopy && sourceMetadata.TableName != targetMetadata.TableName {
-		// Validate transform function early, before processing any data
-		if opts.Transform != nil {
-			_, err := CreateModelTransform(opts.Transform, sourceMetadata, targetMetadata)
-			if err != nil {
-				return fmt.Errorf("invalid transform function: %w", err)
-			}
-		}
+	return nil
+}
 
-		if err := m.copyData(opts, sourceMetadata, targetMetadata); err != nil {
-			return fmt.Errorf("failed to copy data: %w", err)
+func (m *Manager) copyDataIfRequested(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
+	if !opts.DataCopy || sourceMetadata.TableName == targetMetadata.TableName {
+		return nil
+	}
+
+	if opts.Transform != nil {
+		_, err := CreateModelTransform(opts.Transform, sourceMetadata, targetMetadata)
+		if err != nil {
+			return fmt.Errorf("invalid transform function: %w", err)
 		}
+	}
+
+	if err := m.copyData(opts, sourceMetadata, targetMetadata); err != nil {
+		return fmt.Errorf("failed to copy data: %w", err)
 	}
 
 	return nil

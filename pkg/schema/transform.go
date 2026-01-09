@@ -101,94 +101,128 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 	transformValue := reflect.ValueOf(transformFunc)
 	transformType := transformValue.Type()
 
-	// Validate the transform function
 	validator := NewTransformValidator(sourceMetadata, targetMetadata)
 	if err := validator.ValidateTransform(transformFunc); err != nil {
 		return nil, err
 	}
 
-	// If it's already an AttributeValue transform, return it directly
-	if transformType.NumIn() == 1 && transformType.NumOut() == 2 {
-		inputType := transformType.In(0)
-		outputType := transformType.Out(0)
-		errorType := transformType.Out(1)
-
-		expectedInputType := reflect.TypeOf(map[string]types.AttributeValue{})
-		expectedOutputType := reflect.TypeOf(map[string]types.AttributeValue{})
-		expectedErrorType := reflect.TypeOf((*error)(nil)).Elem()
-
-		if inputType == expectedInputType && outputType == expectedOutputType && errorType == expectedErrorType {
-			// Create a wrapper to ensure proper type
-			return func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
-				augmented := augmentAttributeMapForTransform(source, sourceMetadata)
-				results := transformValue.Call([]reflect.Value{reflect.ValueOf(augmented)})
-				output, ok := results[0].Interface().(map[string]types.AttributeValue)
-				if !ok {
-					return nil, fmt.Errorf("transform returned %T; expected map[string]types.AttributeValue", results[0].Interface())
-				}
-				if results[1].IsNil() {
-					return output, nil
-				}
-				err, ok := results[1].Interface().(error)
-				if !ok {
-					return nil, fmt.Errorf("transform returned %T; expected error", results[1].Interface())
-				}
-				return output, err
-			}, nil
-		}
+	if isAttributeValueTransform(transformType) {
+		return wrapAttributeValueTransform(transformValue, sourceMetadata), nil
 	}
 
-	// Import the marshal package for proper field name mapping
 	converter := pkgTypes.NewConverter()
 	marshaler := marshal.New(converter)
 
-	// Create a wrapper for model-to-model transforms
+	return wrapModelTransform(transformValue, transformType, sourceMetadata, targetMetadata, converter, marshaler), nil
+}
+
+func isAttributeValueTransform(transformType reflect.Type) bool {
+	if transformType.NumIn() != 1 || transformType.NumOut() != 2 {
+		return false
+	}
+
+	inputType := transformType.In(0)
+	outputType := transformType.Out(0)
+	errorType := transformType.Out(1)
+
+	expectedMapType := reflect.TypeOf(map[string]types.AttributeValue{})
+	expectedErrorType := reflect.TypeOf((*error)(nil)).Elem()
+
+	return inputType == expectedMapType && outputType == expectedMapType && errorType == expectedErrorType
+}
+
+func wrapAttributeValueTransform(transformValue reflect.Value, sourceMetadata *model.Metadata) TransformFunc {
+	return func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+		augmented := augmentAttributeMapForTransform(source, sourceMetadata)
+		return callAttributeValueTransform(transformValue, augmented)
+	}
+}
+
+func callAttributeValueTransform(transformValue reflect.Value, source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
+	results := transformValue.Call([]reflect.Value{reflect.ValueOf(source)})
+
+	output, ok := results[0].Interface().(map[string]types.AttributeValue)
+	if !ok {
+		return nil, fmt.Errorf("transform returned %T; expected map[string]types.AttributeValue", results[0].Interface())
+	}
+
+	if results[1].IsNil() {
+		return output, nil
+	}
+
+	err, ok := results[1].Interface().(error)
+	if !ok {
+		return nil, fmt.Errorf("transform returned %T; expected error", results[1].Interface())
+	}
+
+	return output, err
+}
+
+func wrapModelTransform(
+	transformValue reflect.Value,
+	transformType reflect.Type,
+	sourceMetadata *model.Metadata,
+	targetMetadata *model.Metadata,
+	converter *pkgTypes.Converter,
+	marshaler *marshal.Marshaler,
+) TransformFunc {
 	return func(sourceItem map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
-		// Create source model instance
-		sourceModelType := transformType.In(0)
-		if sourceModelType.Kind() == reflect.Ptr {
-			sourceModelType = sourceModelType.Elem()
-		}
-		sourceModel := reflect.New(sourceModelType).Elem()
-
-		// Unmarshal source item to model using field-by-field conversion
-		// This ensures field names are mapped correctly according to struct tags
-		for attrName, attrValue := range sourceItem {
-			// Find the corresponding field in metadata
-			field, exists := sourceMetadata.FieldsByDBName[attrName]
-			if !exists {
-				continue // Skip unknown fields
-			}
-
-			// Get the struct field
-			structField := sourceModel.FieldByIndex(field.IndexPath)
-			if !structField.CanSet() {
-				continue
-			}
-
-			// Convert and set the value
-			if err := converter.FromAttributeValue(attrValue, structField.Addr().Interface()); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal field %s: %w", field.Name, err)
-			}
+		sourceModel, err := buildSourceModel(transformType, sourceItem, sourceMetadata, converter)
+		if err != nil {
+			return nil, err
 		}
 
-		// Call transform function
-		results := transformValue.Call([]reflect.Value{sourceModel})
-		if len(results) != 1 {
-			return nil, fmt.Errorf("transform function must return exactly one value")
+		targetModel, err := callModelTransform(transformValue, sourceModel)
+		if err != nil {
+			return nil, err
 		}
 
-		targetModel := results[0].Interface()
-
-		// Use DynamORM marshaler to convert target model to AttributeValue map
-		// This ensures field names are mapped correctly according to struct tags
 		targetMap, err := marshaler.MarshalItem(targetModel, targetMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal target item: %w", err)
 		}
 
 		return targetMap, nil
-	}, nil
+	}
+}
+
+func buildSourceModel(
+	transformType reflect.Type,
+	sourceItem map[string]types.AttributeValue,
+	sourceMetadata *model.Metadata,
+	converter *pkgTypes.Converter,
+) (reflect.Value, error) {
+	sourceModelType := transformType.In(0)
+	if sourceModelType.Kind() == reflect.Ptr {
+		sourceModelType = sourceModelType.Elem()
+	}
+	sourceModel := reflect.New(sourceModelType).Elem()
+
+	for attrName, attrValue := range sourceItem {
+		field, exists := sourceMetadata.FieldsByDBName[attrName]
+		if !exists {
+			continue
+		}
+
+		structField := sourceModel.FieldByIndex(field.IndexPath)
+		if !structField.CanSet() {
+			continue
+		}
+
+		if err := converter.FromAttributeValue(attrValue, structField.Addr().Interface()); err != nil {
+			return reflect.Value{}, fmt.Errorf("failed to unmarshal field %s: %w", field.Name, err)
+		}
+	}
+
+	return sourceModel, nil
+}
+
+func callModelTransform(transformValue reflect.Value, sourceModel reflect.Value) (any, error) {
+	results := transformValue.Call([]reflect.Value{sourceModel})
+	if len(results) != 1 {
+		return nil, fmt.Errorf("transform function must return exactly one value")
+	}
+	return results[0].Interface(), nil
 }
 
 func augmentAttributeMapForTransform(item map[string]types.AttributeValue, metadata *model.Metadata) map[string]types.AttributeValue {
