@@ -3,9 +3,10 @@ package integration
 import (
 	"testing"
 
-	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/tests"
 )
 
 type UpdateOmitEmptyItem struct {

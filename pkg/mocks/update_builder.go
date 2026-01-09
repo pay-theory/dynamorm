@@ -1,8 +1,9 @@
 package mocks
 
 import (
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // MockUpdateBuilder is a mock implementation of the core.UpdateBuilder interface.

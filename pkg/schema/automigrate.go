@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/pkg/model"
 )
@@ -389,7 +390,7 @@ func (m *Manager) processItems(ctx context.Context, client *dynamodb.Client, ite
 						case <-time.After(backoff):
 							// Continue with retry
 						case <-ctx.Done():
-							return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+							return fmt.Errorf("context canceled during retry: %w", ctx.Err())
 						}
 					}
 				} else {
@@ -517,7 +518,7 @@ func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable st
 								case <-time.After(backoff):
 									// Continue with retry
 								case <-ctx.Done():
-									return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
+									return fmt.Errorf("context canceled during retry: %w", ctx.Err())
 								}
 							}
 						} else {

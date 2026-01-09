@@ -1,10 +1,11 @@
 package testing
 
 import (
+	"github.com/stretchr/testify/mock"
+
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/mocks"
-	"github.com/stretchr/testify/mock"
 )
 
 // TestDB provides a fluent interface for setting up mock expectations

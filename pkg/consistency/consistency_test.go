@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/mocks"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/mocks"
 )
 
 func TestRetryWithVerification(t *testing.T) {

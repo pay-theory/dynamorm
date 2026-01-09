@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
 	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	derrors "github.com/pay-theory/dynamorm/pkg/errors"

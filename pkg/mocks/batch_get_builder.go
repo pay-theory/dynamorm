@@ -1,8 +1,9 @@
 package mocks
 
 import (
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // MockBatchGetBuilder is a mock implementation of core.BatchGetBuilder.

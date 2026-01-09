@@ -25,6 +25,11 @@ Known warning:
 
 - `Found unknown linters in //nolint directives: unusedparams, unusedwrite` (stale directives; must be fixed or removed).
 
+## Progress snapshots
+
+- Baseline (2026-01-09): **728** issues
+- After Milestone 1 (2026-01-09): **666** issues (removed `goimports`, `misspell`, `gosec`, and stale `//nolint` warnings)
+
 ## Guardrails (no “green by exclusion”)
 
 - Do not loosen `.golangci-v2.yml` thresholds to make the numbers go down.
@@ -96,4 +101,3 @@ make lint
 # JSON output for tracking progress between milestones
 golangci-lint run --timeout=5m --config .golangci-v2.yml --output.json.path /tmp/golangci.json ./... || true
 ```
-

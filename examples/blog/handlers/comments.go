@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/google/uuid"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/blog/models"
 	"github.com/pay-theory/dynamorm/examples/blog/services"

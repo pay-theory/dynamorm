@@ -3,8 +3,9 @@ package testing
 import (
 	"errors"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // CommonScenarios provides pre-built test scenarios

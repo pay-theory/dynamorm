@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/pkg/marshal"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"

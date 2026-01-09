@@ -417,8 +417,6 @@ func (o *QueryOptimizer) generatePlanID(q *Query) string {
 }
 
 // generateStatsKey generates a key for storing query statistics
-//
-//nolint:unusedparams // q is used in the function body
 func (o *QueryOptimizer) generateStatsKey(q *Query) string {
 	// Similar to plan ID but without specific values
 	parts := []string{

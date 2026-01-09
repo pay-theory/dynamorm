@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/naming"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
@@ -201,7 +202,7 @@ func (m *Marshaler) buildStructMarshaler(typ reflect.Type, metadata *model.Metad
 		}
 
 		// Prefer registered custom converters when available so callers can
-		// override marshalling behavior for specific types.
+		// override marshaling behavior for specific types.
 		if m.hasCustomConverter(field.Type) {
 			fm.marshalFunc = m.buildCustomConverterMarshalFunc(field.Type)
 			sm.fields = append(sm.fields, fm)

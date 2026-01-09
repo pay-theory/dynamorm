@@ -5,10 +5,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm/internal/expr"
-	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/internal/expr"
+	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
 // Helper function to get keys from a map

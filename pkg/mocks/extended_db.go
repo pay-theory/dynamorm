@@ -5,9 +5,10 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/stretchr/testify/mock"
+
 	"github.com/pay-theory/dynamorm/pkg/core"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
-	"github.com/stretchr/testify/mock"
 )
 
 // MockExtendedDB is a complete mock implementation of core.ExtendedDB.

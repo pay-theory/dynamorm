@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
 )
@@ -537,7 +538,7 @@ type QueryCanceler struct {
 	cancel context.CancelFunc
 }
 
-// WithCancellation returns a query that can be cancelled
+// WithCancellation returns a query that can be canceled
 func (q *Query) WithCancellation() (core.Query, *QueryCanceler) {
 	ctx, cancel := context.WithCancel(q.ctx)
 	q.ctx = ctx

@@ -13,13 +13,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestConcurrentQueries tests system behavior under heavy concurrent load
@@ -163,13 +164,25 @@ func TestConcurrentQueries(t *testing.T) {
 	// Calculate memory increase safely
 	var memIncrease uint64
 	var memIncreaseMB int64
+	const bytesPerMB = uint64(1024 * 1024)
+	const maxInt64 = int64(^uint64(0) >> 1)
 	if endMem >= startMem {
 		memIncrease = endMem - startMem
-		memIncreaseMB = int64(memIncrease / (1024 * 1024))
+		memIncreaseMBU64 := memIncrease / bytesPerMB
+		if memIncreaseMBU64 > uint64(maxInt64) {
+			memIncreaseMB = maxInt64
+		} else {
+			memIncreaseMB = int64(memIncreaseMBU64)
+		}
 	} else {
 		// Memory decreased (possible due to GC)
 		memDecrease := startMem - endMem
-		memIncreaseMB = -int64(memDecrease / (1024 * 1024))
+		memDecreaseMBU64 := memDecrease / bytesPerMB
+		if memDecreaseMBU64 > uint64(maxInt64) {
+			memIncreaseMB = -maxInt64
+		} else {
+			memIncreaseMB = -int64(memDecreaseMBU64)
+		}
 	}
 
 	t.Logf("Concurrent test results:")

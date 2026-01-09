@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/multi-tenant/handlers"
 	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
-	"github.com/rs/cors"
 )
 
 func main() {

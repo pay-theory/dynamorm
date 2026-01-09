@@ -3,8 +3,9 @@ package mocks
 import (
 	"context"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // MockDB is a mock implementation of the core.DB interface.

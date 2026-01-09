@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // TestItem for testing create operations

@@ -677,7 +677,6 @@ func TestIndexSchema(t *testing.T) {
 // TestAttributeMetadata tests the AttributeMetadata struct
 func TestAttributeMetadata(t *testing.T) {
 	t.Run("Basic attribute", func(t *testing.T) {
-		//nolint:unusedwrite // Fields are used in assertions below
 		attr := &AttributeMetadata{
 			Name:         "UserEmail",
 			Type:         "string",
@@ -697,7 +696,6 @@ func TestAttributeMetadata(t *testing.T) {
 	})
 
 	t.Run("Attribute without tags", func(t *testing.T) {
-		//nolint:unusedwrite // Fields are used in assertions below
 		attr := &AttributeMetadata{
 			Name:         "ID",
 			Type:         "string",

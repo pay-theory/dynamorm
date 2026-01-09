@@ -7,8 +7,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // MockQuery is a mock implementation of the core.Query interface.

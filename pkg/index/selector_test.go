@@ -3,10 +3,11 @@ package index_test
 import (
 	"testing"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/pkg/index"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/index"
 )
 
 func TestNewSelector(t *testing.T) {

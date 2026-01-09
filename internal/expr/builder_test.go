@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/internal/expr"
 )
 
 func TestNewBuilder(t *testing.T) {

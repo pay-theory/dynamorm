@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // Mock types for testing
@@ -717,9 +718,9 @@ func TestWithCancellation(t *testing.T) {
 
 	select {
 	case <-done:
-		// Context was cancelled successfully
+		// Context was canceled successfully
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("Context was not cancelled")
+		t.Fatal("Context was not canceled")
 	}
 
 	// Calling cancel again should not panic

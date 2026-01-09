@@ -9,10 +9,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	derrors "github.com/pay-theory/dynamorm/pkg/errors"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // UserHandler handles user-related requests

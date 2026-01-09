@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
+
 	"github.com/pay-theory/dynamorm"
 )
 
