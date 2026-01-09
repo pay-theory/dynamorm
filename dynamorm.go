@@ -1596,56 +1596,81 @@ func (q *query) addPrimaryKeyCondition(operator string) {
 
 func (q *query) buildConditionExpression(metadata *model.Metadata, includeWhereConditions bool, skipKeyConditions bool, defaultIfEmpty bool) (string, map[string]string, map[string]types.AttributeValue, error) {
 	builder := expr.NewBuilderWithConverter(q.db.converter)
-	hasCondition := false
-
-	addCondition := func(field, operator string, value any) error {
-		if err := builder.AddConditionExpression(field, operator, value); err != nil {
-			return err
-		}
-		hasCondition = true
-		return nil
-	}
-
-	for _, cond := range q.writeConditions {
-		if err := addCondition(cond.field, cond.op, cond.value); err != nil {
-			return "", nil, nil, fmt.Errorf("failed to add condition for %s: %w", cond.field, err)
-		}
+	hasCondition, err := q.addWriteConditionsToBuilder(builder)
+	if err != nil {
+		return "", nil, nil, err
 	}
 
 	if includeWhereConditions {
-		for _, cond := range q.conditions {
-			fieldMeta, exists := lookupField(metadata, cond.field)
-			if !exists {
-				continue
-			}
-			if skipKeyConditions && (fieldMeta.IsPK || fieldMeta.IsSK) {
-				continue
-			}
-			if err := addCondition(fieldMeta.DBName, normalizeOperator(cond.op), cond.value); err != nil {
-				return "", nil, nil, fmt.Errorf("failed to add condition for %s: %w", cond.field, err)
-			}
+		whereHasCondition, whereErr := q.addWhereConditionsToBuilder(builder, metadata, skipKeyConditions)
+		if whereErr != nil {
+			return "", nil, nil, whereErr
 		}
+		hasCondition = hasCondition || whereHasCondition
 	}
 
 	if defaultIfEmpty && !hasCondition && len(q.rawConditions) == 0 {
-		if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
-			return "", nil, nil, fmt.Errorf("partition key metadata missing")
-		}
-		if err := addCondition(metadata.PrimaryKey.PartitionKey.DBName, "attribute_not_exists", nil); err != nil {
-			return "", nil, nil, fmt.Errorf("failed to add default partition key condition: %w", err)
-		}
-		if metadata.PrimaryKey.SortKey != nil {
-			if err := addCondition(metadata.PrimaryKey.SortKey.DBName, "attribute_not_exists", nil); err != nil {
-				return "", nil, nil, fmt.Errorf("failed to add default sort key condition: %w", err)
-			}
+		if err = q.addDefaultNotExistsConditionsToBuilder(builder, metadata); err != nil {
+			return "", nil, nil, err
 		}
 	}
 
 	components := builder.Build()
-	conditionExpr := components.ConditionExpression
-	names := components.ExpressionAttributeNames
-	values := components.ExpressionAttributeValues
+	mergedExpr, mergedValues, err := q.mergeRawConditionExpressions(components.ConditionExpression, components.ExpressionAttributeValues)
+	if err != nil {
+		return "", nil, nil, err
+	}
 
+	return mergedExpr, components.ExpressionAttributeNames, mergedValues, nil
+}
+
+func (q *query) addWriteConditionsToBuilder(builder *expr.Builder) (bool, error) {
+	hasCondition := false
+	for _, cond := range q.writeConditions {
+		if err := builder.AddConditionExpression(cond.field, cond.op, cond.value); err != nil {
+			return false, fmt.Errorf("failed to add condition for %s: %w", cond.field, err)
+		}
+		hasCondition = true
+	}
+	return hasCondition, nil
+}
+
+func (q *query) addWhereConditionsToBuilder(builder *expr.Builder, metadata *model.Metadata, skipKeyConditions bool) (bool, error) {
+	hasCondition := false
+	for _, cond := range q.conditions {
+		fieldMeta, exists := lookupField(metadata, cond.field)
+		if !exists {
+			continue
+		}
+		if skipKeyConditions && (fieldMeta.IsPK || fieldMeta.IsSK) {
+			continue
+		}
+		if err := builder.AddConditionExpression(fieldMeta.DBName, normalizeOperator(cond.op), cond.value); err != nil {
+			return false, fmt.Errorf("failed to add condition for %s: %w", cond.field, err)
+		}
+		hasCondition = true
+	}
+	return hasCondition, nil
+}
+
+func (q *query) addDefaultNotExistsConditionsToBuilder(builder *expr.Builder, metadata *model.Metadata) error {
+	if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
+		return fmt.Errorf("partition key metadata missing")
+	}
+
+	if err := builder.AddConditionExpression(metadata.PrimaryKey.PartitionKey.DBName, "attribute_not_exists", nil); err != nil {
+		return fmt.Errorf("failed to add default partition key condition: %w", err)
+	}
+	if metadata.PrimaryKey.SortKey != nil {
+		if err := builder.AddConditionExpression(metadata.PrimaryKey.SortKey.DBName, "attribute_not_exists", nil); err != nil {
+			return fmt.Errorf("failed to add default sort key condition: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (q *query) mergeRawConditionExpressions(conditionExpr string, values map[string]types.AttributeValue) (string, map[string]types.AttributeValue, error) {
 	mergedExpr := conditionExpr
 	mergedValues := values
 
@@ -1653,29 +1678,43 @@ func (q *query) buildConditionExpression(metadata *model.Metadata, includeWhereC
 		if raw.expression == "" {
 			continue
 		}
-		if mergedExpr == "" {
-			mergedExpr = raw.expression
-		} else {
-			mergedExpr = fmt.Sprintf("(%s) AND (%s)", mergedExpr, raw.expression)
+
+		mergedExpr = mergeAndExpression(mergedExpr, raw.expression)
+		if len(raw.values) == 0 {
+			continue
 		}
-		if len(raw.values) > 0 {
-			if mergedValues == nil {
-				mergedValues = make(map[string]types.AttributeValue)
-			}
-			for key, val := range raw.values {
-				if _, exists := mergedValues[key]; exists {
-					return "", nil, nil, fmt.Errorf("duplicate placeholder %s in condition expression", key)
-				}
-				av, err := q.db.converter.ToAttributeValue(val)
-				if err != nil {
-					return "", nil, nil, fmt.Errorf("failed to convert condition value for %s: %w", key, err)
-				}
-				mergedValues[key] = av
-			}
+
+		if mergedValues == nil {
+			mergedValues = make(map[string]types.AttributeValue)
+		}
+
+		if err := q.mergeRawConditionValues(mergedValues, raw.values); err != nil {
+			return "", nil, err
 		}
 	}
 
-	return mergedExpr, names, mergedValues, nil
+	return mergedExpr, mergedValues, nil
+}
+
+func (q *query) mergeRawConditionValues(dst map[string]types.AttributeValue, values map[string]any) error {
+	for key, val := range values {
+		if _, exists := dst[key]; exists {
+			return fmt.Errorf("duplicate placeholder %s in condition expression", key)
+		}
+		av, err := q.db.converter.ToAttributeValue(val)
+		if err != nil {
+			return fmt.Errorf("failed to convert condition value for %s: %w", key, err)
+		}
+		dst[key] = av
+	}
+	return nil
+}
+
+func mergeAndExpression(current, next string) string {
+	if current == "" {
+		return next
+	}
+	return fmt.Sprintf("(%s) AND (%s)", current, next)
 }
 
 func (q *query) extractPrimaryKey(metadata *model.Metadata) map[string]any {
