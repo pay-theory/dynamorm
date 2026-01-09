@@ -21,6 +21,8 @@ type Converter struct {
 	mu               sync.RWMutex
 }
 
+var timeType = reflect.TypeOf(time.Time{})
+
 // CustomConverter defines the interface for custom type converters
 type CustomConverter interface {
 	// ToAttributeValue converts a Go value to DynamoDB AttributeValue
@@ -225,88 +227,95 @@ func (c *Converter) FromAttributeValue(av types.AttributeValue, target any) erro
 
 // fromAttributeValue handles the actual conversion from AttributeValue
 func (c *Converter) fromAttributeValue(av types.AttributeValue, target reflect.Value) error {
-	// Handle NULL
 	if _, ok := av.(*types.AttributeValueMemberNULL); ok {
-		// Leave target as zero value
 		return nil
 	}
 
-	// Ensure target is settable
 	if !target.CanSet() {
 		return fmt.Errorf("target is not settable")
 	}
 
-	// Handle pointer targets
-	if target.Kind() == reflect.Ptr {
-		if target.IsNil() {
-			target.Set(reflect.New(target.Type().Elem()))
-		}
-		target = target.Elem()
-	}
+	target = ensureSettableConcreteTarget(target)
 
-	// Check for custom converter
 	if converter, exists := c.lookupConverter(target.Type()); exists {
 		return converter.FromAttributeValue(av, target.Addr().Interface())
 	}
 
-	// Handle time.Time specially
-	if target.Type() == reflect.TypeOf(time.Time{}) {
-		if s, ok := av.(*types.AttributeValueMemberS); ok {
-			t, err := time.Parse(time.RFC3339Nano, s.Value)
-			if err != nil {
-				return fmt.Errorf("invalid time format: %w", err)
-			}
-			target.Set(reflect.ValueOf(t))
-			return nil
-		}
+	if target.Type() == timeType {
+		return c.fromAttributeValueTime(av, target)
+	}
+
+	return c.fromAttributeValueByType(av, target)
+}
+
+func ensureSettableConcreteTarget(target reflect.Value) reflect.Value {
+	if target.Kind() != reflect.Ptr {
+		return target
+	}
+
+	if target.IsNil() {
+		target.Set(reflect.New(target.Type().Elem()))
+	}
+
+	return target.Elem()
+}
+
+func (c *Converter) fromAttributeValueTime(av types.AttributeValue, target reflect.Value) error {
+	s, ok := av.(*types.AttributeValueMemberS)
+	if !ok {
 		return fmt.Errorf("expected string for time.Time, got %T", av)
 	}
 
-	// Handle based on AttributeValue type
+	t, err := time.Parse(time.RFC3339Nano, s.Value)
+	if err != nil {
+		return fmt.Errorf("invalid time format: %w", err)
+	}
+
+	target.Set(reflect.ValueOf(t))
+	return nil
+}
+
+func (c *Converter) fromAttributeValueByType(av types.AttributeValue, target reflect.Value) error {
 	switch v := av.(type) {
 	case *types.AttributeValueMemberS:
 		return c.stringToValue(v.Value, target)
-
 	case *types.AttributeValueMemberN:
 		return c.numberToValue(v.Value, target)
-
 	case *types.AttributeValueMemberBOOL:
 		if target.Kind() != reflect.Bool {
 			return fmt.Errorf("cannot convert bool to %s", target.Type())
 		}
 		target.SetBool(v.Value)
 		return nil
-
 	case *types.AttributeValueMemberB:
 		if target.Kind() != reflect.Slice || target.Type().Elem().Kind() != reflect.Uint8 {
 			return fmt.Errorf("cannot convert binary to %s", target.Type())
 		}
 		target.SetBytes(v.Value)
 		return nil
-
 	case *types.AttributeValueMemberL:
 		return c.listToSlice(v.Value, target)
-
 	case *types.AttributeValueMemberM:
-		if target.Kind() == reflect.Map {
-			return c.attributeValueMapToMap(v.Value, target)
-		}
-		if target.Kind() == reflect.Struct {
-			return c.mapToStruct(v.Value, target)
-		}
-		return fmt.Errorf("cannot convert map to %s", target.Type())
-
+		return c.fromAttributeValueMap(v.Value, target)
 	case *types.AttributeValueMemberSS:
 		return c.stringSetToSlice(v.Value, target)
-
 	case *types.AttributeValueMemberNS:
 		return c.numberSetToSlice(v.Value, target)
-
 	case *types.AttributeValueMemberBS:
 		return c.binarySetToSlice(v.Value, target)
-
 	default:
 		return fmt.Errorf("unsupported AttributeValue type: %T", av)
+	}
+}
+
+func (c *Converter) fromAttributeValueMap(value map[string]types.AttributeValue, target reflect.Value) error {
+	switch target.Kind() {
+	case reflect.Map:
+		return c.attributeValueMapToMap(value, target)
+	case reflect.Struct:
+		return c.mapToStruct(value, target)
+	default:
+		return fmt.Errorf("cannot convert map to %s", target.Type())
 	}
 }
 
