@@ -24,10 +24,10 @@ import (
 type MultiAccountDB struct {
 	baseDB        *LambdaDB
 	accounts      map[string]AccountConfig
-	cache         *sync.Map // Cache DB connections per account
-	baseConfig    aws.Config
+	cache         *sync.Map
 	refreshTicker *time.Ticker
 	refreshStop   chan struct{}
+	baseConfig    aws.Config
 	mu            sync.RWMutex
 }
 

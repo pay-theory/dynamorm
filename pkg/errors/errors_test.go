@@ -177,9 +177,9 @@ func TestDynamORMError_Unwrap(t *testing.T) {
 // TestDynamORMError_Is tests the Is method
 func TestDynamORMError_Is(t *testing.T) {
 	tests := []struct {
-		name   string
-		err    *DynamORMError
 		target error
+		err    *DynamORMError
+		name   string
 		want   bool
 	}{
 		{
@@ -269,8 +269,8 @@ func TestNewErrorWithContext(t *testing.T) {
 // TestIsNotFound tests the IsNotFound helper function
 func TestIsNotFound(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{
@@ -322,8 +322,8 @@ func TestIsNotFound(t *testing.T) {
 // TestIsInvalidModel tests the IsInvalidModel helper function
 func TestIsInvalidModel(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{
@@ -369,8 +369,8 @@ func TestIsInvalidModel(t *testing.T) {
 // TestIsConditionFailed tests the IsConditionFailed helper function
 func TestIsConditionFailed(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{

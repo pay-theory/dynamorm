@@ -31,15 +31,15 @@ import (
 
 // DB is the main DynamORM database instance
 type DB struct {
+	lambdaDeadline      time.Time
+	ctx                 context.Context
 	session             *session.Session
 	registry            *model.Registry
 	converter           *pkgTypes.Converter
-	marshaler           *marshal.Marshaler // Optimized marshaler
-	ctx                 context.Context
-	mu                  sync.RWMutex
-	lambdaDeadline      time.Time // Lambda execution deadline for timeout handling
+	marshaler           *marshal.Marshaler
+	metadataCache       sync.Map
 	lambdaTimeoutBuffer time.Duration
-	metadataCache       sync.Map // type -> *model.Metadata
+	mu                  sync.RWMutex
 }
 
 // UnmarshalItem unmarshals a DynamoDB AttributeValue map into a Go struct.
@@ -491,47 +491,35 @@ func (db *DB) WithLambdaTimeoutBuffer(buffer time.Duration) core.DB {
 
 // query implements the core.Query interface
 type query struct {
-	db      *DB
-	model   any
-	ctx     context.Context
-	builder *expr.Builder
-	// builderErr captures any expression builder error encountered during query construction
-	builderErr error
-
-	// Query conditions
-	conditions []condition
-	// Conditional expressions for write operations
-	writeConditions []condition
-	rawConditions   []rawConditionExpression
-	indexName       string
-	orderBy         *orderBy
-	limit           *int
-	offset          *int
-	fields          []string
-
-	// Parallel scan fields
-	segment       *int32
-	totalSegments *int32
-
-	// Pagination fields
+	model             any
+	ctx               context.Context
+	builderErr        error
+	offset            *int
+	builder           *expr.Builder
+	retryConfig       *retryConfig
+	totalSegments     *int32
+	segment           *int32
+	db                *DB
+	orderBy           *orderBy
+	limit             *int
+	indexName         string
 	exclusiveStartKey string
-
-	// Consistency options
-	consistentRead bool
-
-	// Retry configuration
-	retryConfig *retryConfig
+	fields            []string
+	rawConditions     []rawConditionExpression
+	writeConditions   []condition
+	conditions        []condition
+	consistentRead    bool
 }
 
 type condition struct {
+	value any
 	field string
 	op    string
-	value any
 }
 
 type rawConditionExpression struct {
-	expression string
 	values     map[string]any
+	expression string
 }
 
 func normalizeOperator(op string) string {
@@ -3185,8 +3173,8 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 
 	// Create a channel for results
 	type segmentResult struct {
-		items []map[string]types.AttributeValue
 		err   error
+		items []map[string]types.AttributeValue
 	}
 	resultsChan := make(chan segmentResult, totalSegments)
 
@@ -3199,7 +3187,7 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 				if r := recover(); r != nil {
 					// Log the panic with context
 					err := fmt.Errorf("scan segment %d panicked: %v", segment, r)
-					resultsChan <- segmentResult{nil, err}
+					resultsChan <- segmentResult{err: err}
 				}
 				wg.Done()
 			}()
@@ -3224,11 +3212,11 @@ func (q *query) ScanAllSegments(dest any, totalSegments int32) error {
 			// Execute scan for this segment using the cloned query
 			items, err := segmentQuery.executeScanSegment(metadata, segment, totalSegments)
 			if err != nil {
-				resultsChan <- segmentResult{nil, fmt.Errorf("segment %d failed: %w", segment, err)}
+				resultsChan <- segmentResult{err: fmt.Errorf("segment %d failed: %w", segment, err)}
 				return
 			}
 
-			resultsChan <- segmentResult{items, nil}
+			resultsChan <- segmentResult{items: items}
 		}(i)
 	}
 

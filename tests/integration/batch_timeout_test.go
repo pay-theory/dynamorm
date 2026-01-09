@@ -17,6 +17,7 @@ import (
 
 // BinRecord represents the structure from the issue report
 type BinRecord struct {
+	UpdatedRowAt    time.Time `json:"updated_row_at"`
 	CardBin         string    `dynamorm:"pk" json:"card_bin" validate:"required,min=6,max=6"`
 	CardBinExtended string    `dynamorm:"sk" json:"card_bin_extended"`
 	CardBrand       string    `json:"card_brand" validate:"required"`
@@ -24,7 +25,6 @@ type BinRecord struct {
 	CardSubType     string    `json:"card_sub_type" validate:"required"`
 	CountryCode     string    `json:"country_code" validate:"required,len=3"`
 	CountryCodeNum  string    `json:"country_code_num" validate:"required,len=3"`
-	UpdatedRowAt    time.Time `json:"updated_row_at"`
 }
 
 func (BinRecord) TableName() string {

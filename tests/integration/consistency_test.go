@@ -13,13 +13,13 @@ import (
 
 // TestModel for consistency tests
 type ConsistencyTestModel struct {
-	PK        string `dynamorm:"pk"`
-	SK        string `dynamorm:"sk"`
-	Email     string `dynamorm:"index:email-index,pk"`
-	Username  string `dynamorm:"index:username-index,pk"`
-	Name      string
 	UpdatedAt time.Time `dynamorm:"updated_at"`
-	Version   int       `dynamorm:"version"`
+	PK        string    `dynamorm:"pk"`
+	SK        string    `dynamorm:"sk"`
+	Email     string    `dynamorm:"index:email-index,pk"`
+	Username  string    `dynamorm:"index:username-index,pk"`
+	Name      string
+	Version   int `dynamorm:"version"`
 }
 
 func TestConsistentRead(t *testing.T) {

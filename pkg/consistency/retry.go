@@ -10,11 +10,11 @@ import (
 
 // RetryConfig configures retry behavior for eventually consistent reads
 type RetryConfig struct {
+	RetryCondition func(result any, err error) bool
 	MaxRetries     int
 	InitialDelay   time.Duration
 	MaxDelay       time.Duration
 	BackoffFactor  float64
-	RetryCondition func(result any, err error) bool
 }
 
 // DefaultRetryConfig returns a default retry configuration

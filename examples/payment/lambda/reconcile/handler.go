@@ -25,12 +25,12 @@ import (
 
 // ReconciliationRecord represents a row in the reconciliation CSV
 type ReconciliationRecord struct {
+	ProcessedDate  time.Time
+	SettlementDate time.Time
 	PaymentID      string
 	TransactionID  string
 	Status         string
 	ProcessorFee   int64
-	ProcessedDate  time.Time
-	SettlementDate time.Time
 }
 
 // ReconcileHandler handles payment reconciliation

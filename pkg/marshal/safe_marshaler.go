@@ -28,9 +28,9 @@ type safeStructMarshaler struct {
 
 // safeFieldMarshaler contains cached information for marshaling a struct field
 type safeFieldMarshaler struct {
-	fieldIndex  []int // Field index path for nested fields
-	dbName      string
 	typ         reflect.Type
+	dbName      string
+	fieldIndex  []int
 	omitEmpty   bool
 	isSet       bool
 	isCreatedAt bool

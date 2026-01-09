@@ -80,36 +80,28 @@ func TestAddKeyCondition(t *testing.T) {
 }
 
 func TestAddFilterCondition(t *testing.T) {
+	type filterCondition struct {
+		value     any
+		logicalOp string
+		field     string
+		operator  string
+	}
+
 	tests := []struct {
-		name       string
-		conditions []struct {
-			logicalOp string
-			field     string
-			operator  string
-			value     any
-		}
+		name         string
 		expectedExpr string
+		conditions   []filterCondition
 	}{
 		{
 			name: "single filter",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "=", value: "active"},
 			},
 			expectedExpr: "#STATUS = :v1",
 		},
 		{
 			name: "multiple AND filters",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "=", value: "active"},
 				{logicalOp: "AND", field: "age", operator: ">", value: 18},
 			},
@@ -117,12 +109,7 @@ func TestAddFilterCondition(t *testing.T) {
 		},
 		{
 			name: "OR filters",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "=", value: "active"},
 				{logicalOp: "OR", field: "status", operator: "=", value: "pending"},
 			},
@@ -130,36 +117,21 @@ func TestAddFilterCondition(t *testing.T) {
 		},
 		{
 			name: "IN operator",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "IN", value: []string{"active", "pending", "completed"}},
 			},
 			expectedExpr: "#STATUS IN (:v1, :v2, :v3)",
 		},
 		{
 			name: "EXISTS operator",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "email", operator: "EXISTS", value: nil},
 			},
 			expectedExpr: "attribute_exists(#n1)",
 		},
 		{
 			name: "NOT_EXISTS operator",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "deletedAt", operator: "NOT_EXISTS", value: nil},
 			},
 			expectedExpr: "attribute_not_exists(#n1)",
@@ -416,8 +388,8 @@ func TestAddAdvancedFunction(t *testing.T) {
 		name         string
 		function     string
 		field        string
-		args         []any
 		expectedExpr string
+		args         []any
 		expectedErr  bool
 	}{
 		{

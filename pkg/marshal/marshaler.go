@@ -19,14 +19,10 @@ import (
 
 // Marshaler provides high-performance marshaling to DynamoDB AttributeValues
 type Marshaler struct {
-	// Cache for struct marshalers
-	cache sync.Map // map[reflect.Type]*structMarshaler
-	// Optional custom converter registry shared with DB
-	converter *pkgTypes.Converter
-	// Naming convention for nested structs (defaults to CamelCase)
+	converter        *pkgTypes.Converter
+	cache            sync.Map
 	namingConvention naming.Convention
-	// Protects namingConvention assignment for concurrent marshaling
-	mu sync.Mutex
+	mu               sync.Mutex
 }
 
 // structMarshaler contains cached information for marshaling a specific struct type
@@ -38,17 +34,28 @@ type structMarshaler struct {
 
 // fieldMarshaler contains cached information for marshaling a struct field
 type fieldMarshaler struct {
-	index       int
-	dbName      string
-	offset      uintptr
 	typ         reflect.Type
+	marshalFunc func(unsafe.Pointer) (types.AttributeValue, error)
+	dbName      string
+	index       int
+	offset      uintptr
 	omitEmpty   bool
 	isSet       bool
 	isCreatedAt bool
 	isUpdatedAt bool
 	isVersion   bool
 	isTTL       bool
-	marshalFunc func(unsafe.Pointer) (types.AttributeValue, error)
+}
+
+func fieldOffsetForIndexPath(root reflect.Type, indexPath []int) uintptr {
+	var offset uintptr
+	t := root
+	for _, idx := range indexPath {
+		field := t.Field(idx)
+		offset += field.Offset
+		t = field.Type
+	}
+	return offset
 }
 
 // New creates a new optimized marshaler. If a converter is provided it will
@@ -195,7 +202,7 @@ func (m *Marshaler) buildStructMarshaler(typ reflect.Type, metadata *model.Metad
 		fm := fieldMarshaler{
 			index:       fieldMeta.Index,
 			dbName:      fieldMeta.DBName,
-			offset:      field.Offset,
+			offset:      fieldOffsetForIndexPath(typ, fieldMeta.IndexPath),
 			typ:         field.Type,
 			omitEmpty:   fieldMeta.OmitEmpty,
 			isSet:       fieldMeta.IsSet,

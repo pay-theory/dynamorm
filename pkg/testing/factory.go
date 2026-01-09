@@ -78,14 +78,9 @@ func (f *MockDBFactory) WithError(err error) *MockDBFactory {
 
 // FactoryConfig provides configuration options for database factories
 type FactoryConfig struct {
-	// EnableLogging enables debug logging for database operations
+	Middleware    []Middleware
 	EnableLogging bool
-
-	// EnableMetrics enables metrics collection
 	EnableMetrics bool
-
-	// Middleware allows injecting custom middleware into the database
-	Middleware []Middleware
 }
 
 // Middleware represents a database operation middleware
@@ -138,11 +133,8 @@ func (f *ConfigurableMockDBFactory) CreateDB(config session.Config) (core.Extend
 
 // TestDBFactory is a specialized factory for testing that tracks all created instances
 type TestDBFactory struct {
-	// Instances tracks all database instances created by this factory
-	Instances []core.ExtendedDB
-
-	// CreateFunc allows customizing the creation behavior
 	CreateFunc func(config session.Config) (core.ExtendedDB, error)
+	Instances  []core.ExtendedDB
 }
 
 // CreateDB creates a database instance and tracks it

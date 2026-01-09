@@ -12,17 +12,17 @@ import (
 
 // Test struct for various scenarios
 type TestStruct struct {
-	ID           string         `dynamorm:"id,pk"`
-	Name         string         `dynamorm:"attr:name"`
-	Age          int            `dynamorm:"age"`
-	Active       bool           `dynamorm:"active"`
-	Score        float64        `dynamorm:"score"`
-	Tags         []string       `dynamorm:"tags,set"`
 	CreatedAt    time.Time      `dynamorm:"created_at"`
 	UpdatedAt    time.Time      `dynamorm:"updated_at,omitempty"`
 	Metadata     map[string]any `dynamorm:"metadata"`
+	ID           string         `dynamorm:"id,pk"`
+	Name         string         `dynamorm:"attr:name"`
 	IgnoreField  string         `dynamorm:"-"`
-	privateField string         // Should be ignored
+	privateField string
+	Tags         []string `dynamorm:"tags,set"`
+	Age          int      `dynamorm:"age"`
+	Score        float64  `dynamorm:"score"`
+	Active       bool     `dynamorm:"active"`
 }
 
 // Test struct with JSON tags
@@ -33,9 +33,9 @@ type JSONStruct struct {
 
 func TestConvertToAttributeValue_BasicTypes(t *testing.T) {
 	tests := []struct {
-		name     string
 		input    any
 		expected types.AttributeValue
+		name     string
 	}{
 		{
 			name:     "string",
@@ -137,10 +137,10 @@ func TestConvertToAttributeValue_Struct(t *testing.T) {
 
 func TestConvertFromAttributeValue_BasicTypes(t *testing.T) {
 	tests := []struct {
-		name     string
 		av       types.AttributeValue
 		target   any
 		expected any
+		name     string
 	}{
 		{
 			name:     "string",

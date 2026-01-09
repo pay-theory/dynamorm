@@ -15,21 +15,21 @@ import (
 type JWTClaims struct {
 	MerchantID  string   `json:"merchant_id"`
 	Email       string   `json:"email"`
-	Permissions []string `json:"permissions,omitempty"`
 	Issuer      string   `json:"iss,omitempty"`
 	Subject     string   `json:"sub,omitempty"`
+	JWTID       string   `json:"jti,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
 	Audience    []string `json:"aud,omitempty"`
 	ExpiresAt   int64    `json:"exp,omitempty"`
 	NotBefore   int64    `json:"nbf,omitempty"`
 	IssuedAt    int64    `json:"iat,omitempty"`
-	JWTID       string   `json:"jti,omitempty"`
 }
 
 // SimpleJWTValidator handles JWT validation with HMAC
 type SimpleJWTValidator struct {
-	secretKey []byte
 	issuer    string
 	audience  string
+	secretKey []byte
 }
 
 // NewSimpleJWTValidator creates a new JWT validator with HMAC-SHA256

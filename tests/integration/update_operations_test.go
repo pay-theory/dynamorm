@@ -10,34 +10,34 @@ import (
 
 // UpdateProduct model for testing update operations
 type UpdateProduct struct {
-	ID           string    `dynamorm:"pk"`
+	LastModified time.Time `dynamorm:"updated_at"`
+	CreatedAt    time.Time `dynamorm:"created_at"`
 	Category     string    `dynamorm:"sk"`
 	Name         string    `dynamorm:"attr:productName"`
-	Price        float64   `dynamorm:"attr:price"`
-	Stock        int       `dynamorm:"attr:stockCount"`
+	ID           string    `dynamorm:"pk"`
+	Description  string    `dynamorm:"attr:description,omitempty"`
 	Tags         []string  `dynamorm:"attr:tags,set,omitempty"`
 	Features     []string  `dynamorm:"attr:features"`
 	Ratings      []float64 `dynamorm:"attr:ratings"`
-	Description  string    `dynamorm:"attr:description,omitempty"`
-	Discount     float64   `dynamorm:"attr:discount,omitempty"`
+	Price        float64   `dynamorm:"attr:price"`
 	Version      int64     `dynamorm:"version"`
+	Discount     float64   `dynamorm:"attr:discount,omitempty"`
+	Stock        int       `dynamorm:"attr:stockCount"`
 	Active       bool      `dynamorm:"attr:isActive"`
-	LastModified time.Time `dynamorm:"updated_at"`
-	CreatedAt    time.Time `dynamorm:"created_at"`
 }
 
 // UserProfile model for testing complex updates
 type UserProfile struct {
+	LastLogin    time.Time         `dynamorm:"attr:lastLogin"`
+	Settings     map[string]string `dynamorm:"attr:settings"`
 	UserID       string            `dynamorm:"pk"`
 	Email        string            `dynamorm:"sk"`
 	Username     string            `dynamorm:"attr:username"`
 	FullName     string            `dynamorm:"attr:fullName,omitempty"`
+	Achievements []string          `dynamorm:"attr:achievements"`
 	Age          int               `dynamorm:"attr:age,omitempty"`
 	Score        float64           `dynamorm:"attr:score"`
-	Achievements []string          `dynamorm:"attr:achievements"`
-	Settings     map[string]string `dynamorm:"attr:settings"`
 	LoginCount   int64             `dynamorm:"attr:loginCount"`
-	LastLogin    time.Time         `dynamorm:"attr:lastLogin"`
 	Version      int64             `dynamorm:"version"`
 }
 

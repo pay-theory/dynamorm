@@ -8,11 +8,11 @@ import (
 )
 
 type notificationRecord struct {
+	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 	PK        string    `dynamorm:"pk,attr:PK"`
 	SK        string    `dynamorm:"sk,attr:SK"`
 	Type      string    `dynamorm:"attr:type"`
 	Message   string    `dynamorm:"attr:message"`
-	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 }
 
 func (notificationRecord) TableName() string {

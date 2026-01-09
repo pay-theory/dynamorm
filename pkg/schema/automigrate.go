@@ -14,23 +14,12 @@ import (
 
 // AutoMigrateOptions holds configuration for AutoMigrate operations
 type AutoMigrateOptions struct {
-	// BackupTable specifies a table name to backup data to before migration
-	BackupTable string
-
-	// DataCopy enables copying data from source to target table
-	DataCopy bool
-
-	// TargetModel specifies a different model to migrate data to
 	TargetModel any
-
-	// Transform is a function to transform data during copy
-	Transform interface{}
-
-	// BatchSize for data copy operations
-	BatchSize int
-
-	// Context for the operation
-	Context context.Context
+	Transform   interface{}
+	Context     context.Context
+	BackupTable string
+	BatchSize   int
+	DataCopy    bool
 }
 
 // AutoMigrateOption is a function that configures AutoMigrateOptions
@@ -103,8 +92,8 @@ func (m *Manager) AutoMigrateWithOptions(sourceModel any, options ...AutoMigrate
 	targetModel := sourceModel
 	if opts.TargetModel != nil {
 		targetModel = opts.TargetModel
-		if err := m.registry.Register(targetModel); err != nil {
-			return fmt.Errorf("failed to register target model: %w", err)
+		if registerErr := m.registry.Register(targetModel); registerErr != nil {
+			return fmt.Errorf("failed to register target model: %w", registerErr)
 		}
 	}
 
@@ -115,8 +104,8 @@ func (m *Manager) AutoMigrateWithOptions(sourceModel any, options ...AutoMigrate
 
 	// Handle backup if requested
 	if opts.BackupTable != "" {
-		if err := m.createBackup(opts.Context, sourceMetadata.TableName, opts.BackupTable); err != nil {
-			return fmt.Errorf("failed to create backup: %w", err)
+		if backupErr := m.createBackup(opts.Context, sourceMetadata.TableName, opts.BackupTable); backupErr != nil {
+			return fmt.Errorf("failed to create backup: %w", backupErr)
 		}
 	}
 
@@ -205,10 +194,10 @@ func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string
 
 		// Wait for table to be deleted
 		waiter := dynamodb.NewTableNotExistsWaiter(client)
-		if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+		if waitErr := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 			TableName: &targetTable,
-		}, 2*time.Minute); err != nil {
-			return fmt.Errorf("timeout waiting for table deletion: %w", err)
+		}, 2*time.Minute); waitErr != nil {
+			return fmt.Errorf("timeout waiting for table deletion: %w", waitErr)
 		}
 	}
 

@@ -18,16 +18,16 @@ import (
 
 // BatchTestItem represents a test item for batch operations
 type BatchTestItem struct {
-	ID        string `dynamorm:"pk"`
-	SKValue   string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	SKValue   string    `dynamorm:"sk"`
 	Name      string
 	Category  string
+	Tags      []string
 	Value     int
 	Price     float64
 	Active    bool
-	Tags      []string
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 func (BatchTestItem) TableName() string {

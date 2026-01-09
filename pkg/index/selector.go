@@ -157,7 +157,7 @@ func normalizeOperator(op string) string {
 
 // Condition represents a query condition (moved from query package to avoid circular dependency)
 type Condition struct {
+	Value    any
 	Field    string
 	Operator string
-	Value    any
 }

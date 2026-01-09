@@ -257,14 +257,14 @@ func (h *PostHandler) createPost(ctx context.Context, request events.APIGatewayP
 
 	// Parse request
 	var req struct {
+		Metadata      map[string]string `json:"metadata"`
 		Title         string            `json:"title"`
 		Content       string            `json:"content"`
 		Excerpt       string            `json:"excerpt"`
 		CategoryID    string            `json:"category_id"`
-		Tags          []string          `json:"tags"`
 		Status        string            `json:"status"`
 		FeaturedImage string            `json:"featured_image"`
-		Metadata      map[string]string `json:"metadata"`
+		Tags          []string          `json:"tags"`
 	}
 
 	if err := json.Unmarshal([]byte(request.Body), &req); err != nil {
@@ -421,14 +421,14 @@ func (h *PostHandler) updatePost(ctx context.Context, request events.APIGatewayP
 
 	// Parse update request
 	var req struct {
+		Metadata      map[string]string `json:"metadata"`
 		Title         string            `json:"title"`
 		Content       string            `json:"content"`
 		Excerpt       string            `json:"excerpt"`
 		CategoryID    string            `json:"category_id"`
-		Tags          []string          `json:"tags"`
 		Status        string            `json:"status"`
 		FeaturedImage string            `json:"featured_image"`
-		Metadata      map[string]string `json:"metadata"`
+		Tags          []string          `json:"tags"`
 	}
 
 	if err := json.Unmarshal([]byte(request.Body), &req); err != nil {

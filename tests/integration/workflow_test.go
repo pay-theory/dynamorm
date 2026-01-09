@@ -15,24 +15,24 @@ import (
 
 // User model for testing
 type User struct {
-	ID        string `dynamorm:"pk"`
-	Name      string
-	Email     string `dynamorm:"index:email-index,pk"`
-	Balance   float64
-	Status    string
-	Version   int       `dynamorm:"version"`
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Name      string
+	Email     string `dynamorm:"index:email-index,pk"`
+	Status    string
+	Balance   float64
+	Version   int `dynamorm:"version"`
 }
 
 // Product model for testing with composite key
 type Product struct {
-	ProductID  string `dynamorm:"pk"`
-	CategoryID string `dynamorm:"sk"`
+	LastSold   time.Time `dynamorm:"lsi:lsi-last-sold,sk"`
+	ProductID  string    `dynamorm:"pk"`
+	CategoryID string    `dynamorm:"sk"`
 	Name       string
 	Price      float64
 	Stock      int
-	LastSold   time.Time `dynamorm:"lsi:lsi-last-sold,sk"`
 }
 
 type tableDeleter interface {
@@ -149,13 +149,13 @@ func TestCompleteWorkflow(t *testing.T) {
 			}
 			// Fetch current balances
 			var u1, u2 User
-			err := testCtx.DB.Model(&User{ID: "tx-user-1"}).First(&u1)
-			if err != nil {
-				return err
+			fetchErr := testCtx.DB.Model(&User{ID: "tx-user-1"}).First(&u1)
+			if fetchErr != nil {
+				return fetchErr
 			}
-			err = testCtx.DB.Model(&User{ID: "tx-user-2"}).First(&u2)
-			if err != nil {
-				return err
+			fetchErr = testCtx.DB.Model(&User{ID: "tx-user-2"}).First(&u2)
+			if fetchErr != nil {
+				return fetchErr
 			}
 
 			// Update balances
@@ -163,8 +163,8 @@ func TestCompleteWorkflow(t *testing.T) {
 			u2.Balance += transferAmount
 
 			// Add updates to transaction
-			if err := txTyped.Update(&u1); err != nil {
-				return err
+			if updateErr := txTyped.Update(&u1); updateErr != nil {
+				return updateErr
 			}
 			return txTyped.Update(&u2)
 		})
@@ -201,8 +201,8 @@ func TestCompleteWorkflow(t *testing.T) {
 				Balance: 999.99,
 				Status:  "pending",
 			}
-			if err := txTyped.Create(order); err != nil {
-				return err
+			if createErr := txTyped.Create(order); createErr != nil {
+				return createErr
 			}
 
 			// Update product stock
@@ -330,8 +330,8 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 		}
 
 		for _, u := range users {
-			if err := txTyped.Create(&u); err != nil {
-				return err
+			if createErr := txTyped.Create(&u); createErr != nil {
+				return createErr
 			}
 		}
 		return nil

@@ -12,32 +12,27 @@ import (
 
 // QueryOptimizer provides query optimization capabilities
 type QueryOptimizer struct {
-	// Query plan cache
-	planCache    sync.Map // map[string]*QueryPlan
-	planCacheTTL time.Duration
-
-	// Query statistics for adaptive optimization
-	queryStats sync.Map // map[string]*QueryStatistics
-
-	// Configuration
-	enableAdaptive    bool
-	enableParallel    bool
+	planCache         sync.Map
+	queryStats        sync.Map
+	planCacheTTL      time.Duration
 	maxParallelism    int
 	cacheSize         int
 	cachePlanDuration time.Duration
+	enableAdaptive    bool
+	enableParallel    bool
 }
 
 // QueryPlan represents an optimized query execution plan
 type QueryPlan struct {
-	ID                string
-	Operation         string   // Query, Scan, BatchGet
-	IndexName         string   // Which index to use
-	Projections       []string // Fields to project
-	EstimatedCost     *CostEstimate
-	OptimizationHints []string // Human-readable optimization suggestions
-	ParallelSegments  int      // For parallel scans
 	CachedAt          time.Time
+	EstimatedCost     *CostEstimate
 	Statistics        *QueryStatistics
+	ID                string
+	Operation         string
+	IndexName         string
+	Projections       []string
+	OptimizationHints []string
+	ParallelSegments  int
 }
 
 // CostEstimate represents the estimated cost of a query
@@ -52,6 +47,7 @@ type CostEstimate struct {
 
 // QueryStatistics tracks runtime statistics for queries
 type QueryStatistics struct {
+	LastExecuted      time.Time
 	ExecutionCount    int64
 	ErrorCount        int64
 	TotalDuration     time.Duration
@@ -60,7 +56,6 @@ type QueryStatistics struct {
 	MaxDuration       time.Duration
 	TotalItemsRead    int64
 	TotalItemsScanned int64
-	LastExecuted      time.Time
 	ErrorRate         float64
 }
 
@@ -463,10 +458,10 @@ func (o *QueryOptimizer) generateStatsKey(q *Query) string {
 
 // QueryExecutionResult represents the result of a query execution
 type QueryExecutionResult struct {
+	Error         error
 	Duration      time.Duration
 	ItemsReturned int64
 	ItemsScanned  int64
-	Error         error
 }
 
 // OptimizedQuery wraps a Query with optimization capabilities

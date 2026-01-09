@@ -7,11 +7,11 @@ import (
 
 // SimpleLimiter is a basic rate limiter implementation
 type SimpleLimiter struct {
-	mu         sync.Mutex
+	lastRefill time.Time
 	tokens     int
 	maxTokens  int
 	refillRate time.Duration
-	lastRefill time.Time
+	mu         sync.Mutex
 }
 
 // NewSimpleLimiter creates a new simple rate limiter

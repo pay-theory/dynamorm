@@ -53,10 +53,10 @@ var (
 
 // DynamORMError represents a detailed error with context
 type DynamORMError struct {
-	Op      string         // Operation that failed
-	Model   string         // Model type name
-	Err     error          // Underlying error
-	Context map[string]any // Additional context
+	Err     error
+	Context map[string]any
+	Op      string
+	Model   string
 }
 
 // Error implements the error interface
@@ -112,11 +112,11 @@ func IsConditionFailed(err error) bool {
 
 // TransactionError provides context for transactional failures.
 type TransactionError struct {
-	OperationIndex int
+	Err            error
 	Operation      string
 	Model          string
 	Reason         string
-	Err            error
+	OperationIndex int
 }
 
 // Error implements the error interface.

@@ -60,68 +60,53 @@ func DefaultResourceLimits() ResourceLimits {
 
 // ResourceProtector provides resource protection and monitoring
 type ResourceProtector struct {
-	config ResourceLimits
-
-	// Rate limiters
-	globalLimiter *SimpleLimiter
-	batchLimiter  *SimpleLimiter
-
-	// Concurrency controls
+	globalLimiter    *SimpleLimiter
+	batchLimiter     *SimpleLimiter
 	requestSemaphore chan struct{}
 	batchSemaphore   chan struct{}
-
-	// Memory monitoring
-	memoryMonitor *MemoryMonitor
-
-	// Statistics
-	stats *ResourceStats
-	mu    sync.RWMutex
+	memoryMonitor    *MemoryMonitor
+	stats            *ResourceStats
+	config           ResourceLimits
+	mu               sync.RWMutex
 }
 
 // ResourceStats tracks resource usage statistics
 type ResourceStats struct {
-	// Request stats
-	TotalRequests      int64 `json:"total_requests"`
-	RejectedRequests   int64 `json:"rejected_requests"`
-	ConcurrentRequests int64 `json:"concurrent_requests"`
-	MaxConcurrentReq   int64 `json:"max_concurrent_requests"`
-
-	// Batch stats
-	TotalBatchOps      int64 `json:"total_batch_operations"`
-	RejectedBatchOps   int64 `json:"rejected_batch_operations"`
-	ConcurrentBatchOps int64 `json:"concurrent_batch_operations"`
-	MaxConcurrentBatch int64 `json:"max_concurrent_batch"`
-
-	// Memory stats
-	CurrentMemoryMB int64 `json:"current_memory_mb"`
-	PeakMemoryMB    int64 `json:"peak_memory_mb"`
-	MemoryAlerts    int64 `json:"memory_alerts"`
-
-	// Rate limiting stats
-	RateLimitHits   int64     `json:"rate_limit_hits"`
-	LastStatsUpdate time.Time `json:"last_stats_update"`
+	LastStatsUpdate    time.Time `json:"last_stats_update"`
+	ConcurrentBatchOps int64     `json:"concurrent_batch_operations"`
+	ConcurrentRequests int64     `json:"concurrent_requests"`
+	MaxConcurrentReq   int64     `json:"max_concurrent_requests"`
+	TotalBatchOps      int64     `json:"total_batch_operations"`
+	RejectedBatchOps   int64     `json:"rejected_batch_operations"`
+	TotalRequests      int64     `json:"total_requests"`
+	MaxConcurrentBatch int64     `json:"max_concurrent_batch"`
+	CurrentMemoryMB    int64     `json:"current_memory_mb"`
+	PeakMemoryMB       int64     `json:"peak_memory_mb"`
+	MemoryAlerts       int64     `json:"memory_alerts"`
+	RateLimitHits      int64     `json:"rate_limit_hits"`
+	RejectedRequests   int64     `json:"rejected_requests"`
 }
 
 // MemoryMonitor monitors memory usage
 type MemoryMonitor struct {
-	limits        ResourceLimits
 	alertCallback func(MemoryAlert)
 	stopChan      chan struct{}
 	stats         *ResourceStats
-	running       int32          // Use int32 for atomic operations (0 = stopped, 1 = running)
-	mu            sync.RWMutex   // For callback access only
-	stopOnce      sync.Once      // Ensure stopChan is only closed once
-	wg            sync.WaitGroup // Wait for monitor goroutine to exit
+	limits        ResourceLimits
+	wg            sync.WaitGroup
+	mu            sync.RWMutex
+	stopOnce      sync.Once
+	running       int32
 }
 
 // MemoryAlert represents a memory usage alert
 type MemoryAlert struct {
+	Timestamp    time.Time `json:"timestamp"`
 	Type         string    `json:"type"`
+	Severity     string    `json:"severity"`
 	CurrentMB    int64     `json:"current_mb"`
 	LimitMB      int64     `json:"limit_mb"`
 	UsagePercent float64   `json:"usage_percent"`
-	Timestamp    time.Time `json:"timestamp"`
-	Severity     string    `json:"severity"`
 }
 
 // NewResourceProtector creates a new resource protector

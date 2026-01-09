@@ -12,17 +12,17 @@ import (
 
 // Test model for benchmarking
 type BenchUser struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	Metadata  map[string]string
 	ID        string `dynamorm:"pk"`
 	Email     string `dynamorm:"sk"`
 	Name      string
-	Age       int
-	IsActive  bool
-	Balance   float64
 	Tags      []string
-	Metadata  map[string]string
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
-	Version   int64     `dynamorm:"version"`
+	Age       int
+	Balance   float64
+	Version   int64 `dynamorm:"version"`
+	IsActive  bool
 }
 
 func BenchmarkMarshalItem_Current(b *testing.B) {
@@ -456,9 +456,9 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 }
 
 type BenchmarkModel struct {
+	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 	ID        string    `dynamorm:"pk,attr:id"`
 	Name      string    `dynamorm:"attr:name"`
-	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 }
 
 func (b BenchmarkModel) TableName() string {

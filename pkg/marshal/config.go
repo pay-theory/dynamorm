@@ -49,11 +49,11 @@ type Config struct {
 
 // SecurityAcknowledgment represents explicit acknowledgment of unsafe marshaler risks
 type SecurityAcknowledgment struct {
+	DeveloperSignature              string
+	Timestamp                       int64
 	AcknowledgeMemoryCorruptionRisk bool
 	AcknowledgeSecurityVulnerable   bool
 	AcknowledgeDeprecationWarning   bool
-	DeveloperSignature              string
-	Timestamp                       int64
 }
 
 var (
@@ -90,8 +90,8 @@ func GetGlobalConfig() Config {
 
 // MarshalerFactory creates marshalers with security controls
 type MarshalerFactory struct {
-	config    Config
 	converter *pkgTypes.Converter
+	config    Config
 }
 
 // NewMarshalerFactory creates a new factory with the given configuration
@@ -192,9 +192,9 @@ func GetSecurityStats() SecurityStats {
 
 // SecurityStats contains security monitoring information
 type SecurityStats struct {
+	CurrentConfig    Config
 	UnsafeUsageCount int64
 	SecurityWarnings int64
-	CurrentConfig    Config
 }
 
 // CreateSecurityAcknowledgment creates a security acknowledgment for unsafe marshaler usage

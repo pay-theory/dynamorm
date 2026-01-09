@@ -14,9 +14,9 @@ import (
 
 // MockProvider is a mock notification provider for testing
 type MockProvider struct {
+	name              string
 	sentNotifications []*Notification
 	shouldFail        bool
-	name              string
 }
 
 func NewMockProvider(name string) *MockProvider {

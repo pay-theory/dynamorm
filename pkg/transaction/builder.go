@@ -39,14 +39,13 @@ type dynamoTransactAPI interface {
 
 // Builder implements the core.TransactionBuilder interface.
 type Builder struct {
-	session   *session.Session
-	registry  *model.Registry
-	converter *pkgTypes.Converter
-	client    dynamoTransactAPI
-
+	client     dynamoTransactAPI
 	ctx        context.Context
-	operations []transactOperation
 	err        error
+	session    *session.Session
+	registry   *model.Registry
+	converter  *pkgTypes.Converter
+	operations []transactOperation
 }
 
 type operationType int
@@ -61,17 +60,17 @@ const (
 )
 
 type transactOperation struct {
-	typ        operationType
 	model      any
 	metadata   *model.Metadata
-	fields     []string
 	updateFn   func(core.UpdateBuilder) error
+	fields     []string
 	conditions []core.TransactCondition
+	typ        operationType
 }
 
 type rawCondition struct {
-	expression string
 	values     map[string]types.AttributeValue
+	expression string
 }
 
 // NewBuilder creates a new transaction builder backed by the provided session, registry, and converter.
@@ -1089,10 +1088,10 @@ func cloneTransactConditions(conds []core.TransactCondition) []core.TransactCond
 }
 
 type capturingUpdateExecutor struct {
-	compilations int
-	executed     bool
 	compiled     *core.CompiledQuery
 	key          map[string]types.AttributeValue
+	compilations int
+	executed     bool
 }
 
 func (c *capturingUpdateExecutor) ExecuteQuery(*core.CompiledQuery, any) error {

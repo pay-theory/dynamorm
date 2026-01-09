@@ -117,12 +117,12 @@ const (
 
 // TransactCondition represents a condition attached to a transactional operation
 type TransactCondition struct {
+	Value      any
+	Values     map[string]any
 	Kind       TransactConditionKind
 	Field      string
 	Operator   string
-	Value      any
 	Expression string
-	Values     map[string]any
 }
 
 // Query represents a chainable query builder interface
@@ -289,23 +289,12 @@ type UpdateBuilder interface {
 
 // PaginatedResult contains the results and pagination metadata
 type PaginatedResult struct {
-	// Items contains the retrieved items
-	Items any
-
-	// Count is the number of items returned
-	Count int
-
-	// ScannedCount is the number of items examined
-	ScannedCount int
-
-	// LastEvaluatedKey is the key of the last item evaluated
+	Items            any
 	LastEvaluatedKey map[string]types.AttributeValue
-
-	// NextCursor is a base64-encoded cursor for the next page
-	NextCursor string
-
-	// HasMore indicates if there are more results
-	HasMore bool
+	NextCursor       string
+	Count            int
+	ScannedCount     int
+	HasMore          bool
 }
 
 // Tx represents a database transaction
@@ -340,39 +329,31 @@ func (tx *Tx) Delete(model any) error {
 
 // Param represents a parameter for expressions
 type Param struct {
-	Name  string
 	Value any
+	Name  string
 }
 
 // CompiledQuery represents a compiled query ready for execution
 type CompiledQuery struct {
-	Operation string // "Query", "Scan", "GetItem", etc.
-	TableName string
-	IndexName string
-
-	// Expression components
-	KeyConditionExpression string
-	FilterExpression       string
-	ProjectionExpression   string
-	UpdateExpression       string
-	ConditionExpression    string
-
-	// Expression mappings
-	ExpressionAttributeNames  map[string]string
+	ScanIndexForward          *bool
+	Limit                     *int32
+	TotalSegments             *int32
 	ExpressionAttributeValues map[string]types.AttributeValue
-
-	// Other query parameters
-	Limit             *int32
-	ExclusiveStartKey map[string]types.AttributeValue
-	ScanIndexForward  *bool
-	Select            string // "ALL_ATTRIBUTES", "COUNT", etc.
-	Offset            *int   // For pagination handling
-	ReturnValues      string // "NONE", "ALL_OLD", "UPDATED_OLD", "ALL_NEW", "UPDATED_NEW"
-	ConsistentRead    *bool  // For strongly consistent reads
-
-	// Parallel scan parameters
-	Segment       *int32 // The segment number for parallel scan
-	TotalSegments *int32 // Total number of segments for parallel scan
+	Segment                   *int32
+	ExpressionAttributeNames  map[string]string
+	ConsistentRead            *bool
+	Offset                    *int
+	ExclusiveStartKey         map[string]types.AttributeValue
+	ProjectionExpression      string
+	KeyConditionExpression    string
+	TableName                 string
+	Operation                 string
+	Select                    string
+	ConditionExpression       string
+	ReturnValues              string
+	UpdateExpression          string
+	FilterExpression          string
+	IndexName                 string
 }
 
 // ModelMetadata provides metadata about a model
@@ -402,8 +383,8 @@ type IndexSchema struct {
 
 // AttributeMetadata provides metadata about a model attribute
 type AttributeMetadata struct {
+	Tags         map[string]string
 	Name         string
 	Type         string
 	DynamoDBName string
-	Tags         map[string]string
 }

@@ -441,67 +441,67 @@ func getTableName(model any) string {
 // Common test model definitions for reuse across tests
 
 type TestUser struct {
-	ID        string `dynamorm:"pk"`
-	Email     string `dynamorm:"index:gsi-email"`
-	Name      string
-	Active    bool
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Email     string    `dynamorm:"index:gsi-email"`
+	Name      string
+	Active    bool
 }
 
 type TestOrder struct {
-	OrderID    string `dynamorm:"pk"`
-	CustomerID string `dynamorm:"sk"`
-	Amount     float64
-	Status     string
 	CreatedAt  time.Time `dynamorm:"created_at"`
+	OrderID    string    `dynamorm:"pk"`
+	CustomerID string    `dynamorm:"sk"`
+	Status     string
+	Amount     float64
 }
 
 type TestProduct struct {
-	ProductID string `dynamorm:"pk"`
-	Name      string
-	Price     float64
-	Category  string `dynamorm:"index:gsi-category"`
-	InStock   bool
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ProductID string    `dynamorm:"pk"`
+	Name      string
+	Category  string `dynamorm:"index:gsi-category"`
+	Price     float64
+	InStock   bool
 }
 
 type TestAccount struct {
 	AccountID string `dynamorm:"pk"`
 	UserID    string `dynamorm:"sk"`
-	Balance   float64
 	Type      string
+	Balance   float64
 	Version   int64 `dynamorm:"version"`
 }
 
 type TestBlogPost struct {
-	PostID      string `dynamorm:"pk"`
+	PublishedAt time.Time
+	CreatedAt   time.Time `dynamorm:"created_at"`
+	UpdatedAt   time.Time `dynamorm:"updated_at"`
+	PostID      string    `dynamorm:"pk"`
 	Title       string
 	Content     string
 	AuthorID    string   `dynamorm:"index:gsi-author"`
 	Tags        []string `dynamorm:"set"`
-	PublishedAt time.Time
-	CreatedAt   time.Time `dynamorm:"created_at"`
-	UpdatedAt   time.Time `dynamorm:"updated_at"`
 }
 
 type TestComment struct {
-	CommentID string `dynamorm:"pk"`
-	PostID    string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	CommentID string    `dynamorm:"pk"`
+	PostID    string    `dynamorm:"sk"`
 	AuthorID  string
 	Content   string
-	CreatedAt time.Time `dynamorm:"created_at"`
 }
 
 type TestNote struct {
-	ID        string `dynamorm:"pk"`
-	Title     string
-	Content   string
-	Priority  int
-	Archived  bool
-	Tags      []string
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Title     string
+	Content   string
+	Tags      []string
+	Priority  int
+	Archived  bool
 }
 
 type TestContact struct {

@@ -145,10 +145,10 @@ func (e *BatchWriteExecutor) BatchDeleteWithResult(tableName string, keys []map[
 
 // BatchDeleteResult represents the result of a batch delete operation
 type BatchDeleteResult struct {
-	Succeeded       int
-	Failed          int
 	UnprocessedKeys []map[string]types.AttributeValue
 	Errors          []error
+	Succeeded       int
+	Failed          int
 }
 
 // ExecutorWithBatchSupport wraps an executor to add batch write support

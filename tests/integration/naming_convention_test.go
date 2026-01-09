@@ -11,12 +11,12 @@ import (
 
 // ModernUser uses default camelCase naming convention
 type ModernUser struct {
-	UserID    string `dynamorm:"pk"`
-	Email     string `dynamorm:"sk"`
-	FirstName string
-	LastName  string
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	UserID    string    `dynamorm:"pk"`
+	Email     string    `dynamorm:"sk"`
+	FirstName string
+	LastName  string
 }
 
 func (m ModernUser) TableName() string {
@@ -26,12 +26,12 @@ func (m ModernUser) TableName() string {
 // LegacyUser uses snake_case naming convention
 type LegacyUser struct {
 	_         struct{} `dynamorm:"naming:snake_case"`
-	UserId    string   `dynamorm:"pk"`
-	Email     string   `dynamorm:"sk"`
-	FirstName string
-	LastName  string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	UserId    string `dynamorm:"pk"`
+	Email     string `dynamorm:"sk"`
+	FirstName string
+	LastName  string
 }
 
 func (l LegacyUser) TableName() string {

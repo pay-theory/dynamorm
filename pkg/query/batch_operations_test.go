@@ -19,8 +19,8 @@ import (
 type TestItem struct {
 	ID        string `dynamodb:"id"`
 	Name      string `dynamodb:"name"`
-	Value     int    `dynamodb:"value"`
 	Status    string `dynamodb:"status"`
+	Value     int    `dynamodb:"value"`
 	CreatedAt int64  `dynamodb:"created_at"`
 }
 
@@ -80,11 +80,11 @@ func TestDefaultBatchOptions(t *testing.T) {
 
 func TestBatchUpdate(t *testing.T) {
 	tests := []struct {
-		name    string
 		items   any
+		name    string
+		errMsg  string
 		fields  []string
 		wantErr bool
-		errMsg  string
 	}{
 		{
 			name: "valid slice of items",
@@ -247,9 +247,9 @@ func TestPrepareBatches(t *testing.T) {
 	tests := []struct {
 		name            string
 		items           []TestItem
+		expectedSizes   []int
 		batchSize       int
 		expectedBatches int
-		expectedSizes   []int
 	}{
 		{
 			name:            "batch size 3",
@@ -368,9 +368,9 @@ func TestPrepareKeyBatches(t *testing.T) {
 
 func TestExtractKey(t *testing.T) {
 	tests := []struct {
-		name    string
 		item    any
 		wantKey map[string]any
+		name    string
 		wantErr bool
 	}{
 		{
@@ -523,8 +523,8 @@ func TestExecuteWithRetry(t *testing.T) {
 
 func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
-		name      string
 		err       error
+		name      string
 		wantRetry bool
 	}{
 		{

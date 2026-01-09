@@ -30,32 +30,32 @@ func deleteTableIfExists(t *testing.T, manager *Manager, tableName string) {
 
 // Test models
 type User struct {
-	ID        string `dynamorm:"pk"`
-	Email     string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Email     string    `dynamorm:"sk"`
 	Name      string
 	Age       int
 	Balance   float64
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
-	Version   int       `dynamorm:"version"`
+	Version   int `dynamorm:"version"`
 }
 
 type Product struct {
-	ID          string `dynamorm:"pk"`
-	CategoryID  string `dynamorm:"sk"`
-	Name        string `dynamorm:"index:name-index,pk"`
+	UpdatedTime time.Time `dynamorm:"lsi:updated-lsi,sk"`
+	ID          string    `dynamorm:"pk"`
+	CategoryID  string    `dynamorm:"sk"`
+	Name        string    `dynamorm:"index:name-index,pk"`
 	Price       float64
 	StockLevel  int
-	UpdatedTime time.Time `dynamorm:"lsi:updated-lsi,sk"`
 }
 
 type Order struct {
+	OrderDate  time.Time `dynamorm:"index:customer-index,sk"`
+	UpdatedAt  time.Time `dynamorm:"index:status-index,sk"`
 	OrderID    string    `dynamorm:"pk"`
 	CustomerID string    `dynamorm:"index:customer-index,pk"`
-	OrderDate  time.Time `dynamorm:"index:customer-index,sk"`
-	Total      float64
 	Status     string    `dynamorm:"index:status-index,pk"`
-	UpdatedAt  time.Time `dynamorm:"index:status-index,sk"`
+	Total      float64
 }
 
 func TestCreateTable(t *testing.T) {
@@ -347,15 +347,15 @@ func TestGetAttributeType(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		kind     reflect.Kind
 		expected types.ScalarAttributeType
+		kind     reflect.Kind
 	}{
-		{"String", reflect.String, types.ScalarAttributeTypeS},
-		{"Int", reflect.Int, types.ScalarAttributeTypeN},
-		{"Int64", reflect.Int64, types.ScalarAttributeTypeN},
-		{"Uint", reflect.Uint, types.ScalarAttributeTypeN},
-		{"Slice", reflect.Slice, types.ScalarAttributeTypeB},
-		{"Other", reflect.Bool, types.ScalarAttributeTypeS},
+		{"String", types.ScalarAttributeTypeS, reflect.String},
+		{"Int", types.ScalarAttributeTypeN, reflect.Int},
+		{"Int64", types.ScalarAttributeTypeN, reflect.Int64},
+		{"Uint", types.ScalarAttributeTypeN, reflect.Uint},
+		{"Slice", types.ScalarAttributeTypeB, reflect.Slice},
+		{"Other", types.ScalarAttributeTypeS, reflect.Bool},
 	}
 
 	for _, tt := range tests {

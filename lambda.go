@@ -64,10 +64,10 @@ var (
 // LambdaDB wraps DB with Lambda-specific optimizations
 type LambdaDB struct {
 	core.ExtendedDB
-	db             *DB       // Internal reference to concrete DB
-	modelCache     *sync.Map // Cache pre-registered models
-	isLambda       bool
+	db             *DB
+	modelCache     *sync.Map
 	lambdaMemoryMB int
+	isLambda       bool
 	xrayEnabled    bool
 }
 
@@ -458,8 +458,8 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 // ColdStartMetrics contains cold start performance data
 type ColdStartMetrics struct {
-	TotalDuration time.Duration
 	Phases        map[string]time.Duration
+	TotalDuration time.Duration
 	MemoryMB      int
 	IsLambda      bool
 }

@@ -13,13 +13,13 @@ import (
 
 // TestItem for testing create operations
 type TestItem struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	ID        string    `dynamorm:"pk"`
 	SK        string    `dynamorm:"sk"`
 	Name      string    `json:"name"`
 	Value     int       `json:"value"`
 	Version   int64     `dynamorm:"version"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 func (TestItem) TableName() string {

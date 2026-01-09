@@ -13,12 +13,12 @@ import (
 
 // UpdateBuilder provides a fluent API for building complex update expressions
 type UpdateBuilder struct {
+	buildErr     error
 	query        *Query
 	expr         *expr.Builder
 	keyValues    map[string]any
-	conditions   []updateCondition
 	returnValues string
-	buildErr     error // Stores first error encountered during building
+	conditions   []updateCondition
 }
 
 type updateCondition struct {

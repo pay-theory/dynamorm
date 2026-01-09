@@ -191,11 +191,11 @@ func (m *mockExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 // Test model
 type TestItem struct {
 	ID        string `dynamodb:"id"`
-	Timestamp int64  `dynamodb:"timestamp"`
 	Status    string `dynamodb:"status"`
 	UserID    string `dynamodb:"userId"`
-	CreatedAt int64  `dynamodb:"createdAt"`
 	Data      string `dynamodb:"data"`
+	Timestamp int64  `dynamodb:"timestamp"`
+	CreatedAt int64  `dynamodb:"createdAt"`
 }
 
 func TestQuery_BasicQuery(t *testing.T) {
@@ -754,9 +754,9 @@ func TestQuery_ComplexExpressions(t *testing.T) {
 
 	// Test various operators
 	testCases := []struct {
-		name     string
 		setup    func(*query.Query)
 		validate func(*testing.T, *core.CompiledQuery)
+		name     string
 	}{
 		{
 			name: "IN operator",

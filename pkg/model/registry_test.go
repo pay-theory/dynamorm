@@ -27,23 +27,23 @@ type IndexedModel struct {
 	ID       string  `dynamorm:"pk"`
 	Email    string  `dynamorm:"index:gsi-email"`
 	Category string  `dynamorm:"index:gsi-category-price,pk"`
-	Price    float64 `dynamorm:"index:gsi-category-price,sk"`
 	Status   string  `dynamorm:"lsi:lsi-status"`
+	Price    float64 `dynamorm:"index:gsi-category-price,sk"`
 }
 
 type SpecialFieldsModel struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	ID        string    `dynamorm:"pk"`
 	Version   int       `dynamorm:"version"`
 	TTL       int64     `dynamorm:"ttl"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 type CustomAttributeModel struct {
 	ID       string   `dynamorm:"pk,attr:userId"`
 	UserName string   `dynamorm:"attr:username"`
-	Tags     []string `dynamorm:"set"`
 	Optional string   `dynamorm:"omitempty"`
+	Tags     []string `dynamorm:"set"`
 }
 
 type InvalidModel struct {
@@ -51,9 +51,9 @@ type InvalidModel struct {
 }
 
 type ImplicitTimestampModel struct {
-	ID        string `dynamorm:"pk"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	ID        string `dynamorm:"pk"`
 }
 
 func TestNewRegistry(t *testing.T) {

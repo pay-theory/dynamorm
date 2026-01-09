@@ -38,36 +38,28 @@ func NewCostEstimator() *CostEstimator {
 
 // Metrics represents usage metrics for cost calculation
 type Metrics struct {
-	// Table metrics
-	ReadCapacityUnits  int     // Provisioned RCU (0 for on-demand)
-	WriteCapacityUnits int     // Provisioned WCU (0 for on-demand)
-	StorageGB          float64 // Total storage in GB
-	ItemCount          int64   // Number of items
-	AverageItemSizeKB  float64 // Average item size in KB
-
-	// Request metrics (for on-demand billing)
-	MonthlyReadRequests  int64 // Total read requests per month
-	MonthlyWriteRequests int64 // Total write requests per month
-
-	// GSI metrics
-	GSICount              int // Number of GSIs
-	GSIReadCapacityUnits  int // Total RCU across all GSIs
-	GSIWriteCapacityUnits int // Total WCU across all GSIs
-
-	// Additional features
-	StreamsEnabled     bool    // DynamoDB Streams enabled
-	StreamReadRequests int64   // Monthly stream read requests
-	BackupEnabled      bool    // Backup enabled
-	BackupStorageGB    float64 // Backup storage in GB
-
-	// Usage patterns
-	PeakHoursPerDay int  // Hours of peak usage per day
-	IsMultiRegion   bool // Multi-region replication
-	RegionCount     int  // Number of regions
+	GSIReadCapacityUnits  int
+	GSIWriteCapacityUnits int
+	StorageGB             float64
+	ItemCount             int64
+	AverageItemSizeKB     float64
+	MonthlyReadRequests   int64
+	MonthlyWriteRequests  int64
+	GSICount              int
+	WriteCapacityUnits    int
+	RegionCount           int
+	ReadCapacityUnits     int
+	StreamReadRequests    int64
+	PeakHoursPerDay       int
+	BackupStorageGB       float64
+	BackupEnabled         bool
+	IsMultiRegion         bool
+	StreamsEnabled        bool
 }
 
 // CostBreakdown provides detailed cost breakdown
 type CostBreakdown struct {
+	Details          map[string]float64 `json:"details"`
 	ReadCost         float64            `json:"read_cost"`
 	WriteCost        float64            `json:"write_cost"`
 	StorageCost      float64            `json:"storage_cost"`
@@ -78,7 +70,6 @@ type CostBreakdown struct {
 	TotalYearlyCost  float64            `json:"total_yearly_cost"`
 	CostPerItem      float64            `json:"cost_per_item"`
 	CostPerRequest   float64            `json:"cost_per_request"`
-	Details          map[string]float64 `json:"details"`
 }
 
 // EstimateMonthly calculates monthly DynamoDB costs
@@ -236,8 +227,8 @@ type Recommendation struct {
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
 	Impact      string  `json:"impact"`
-	Savings     float64 `json:"estimated_savings"`
 	Effort      string  `json:"effort"`
+	Savings     float64 `json:"estimated_savings"`
 }
 
 // GetOptimizationRecommendations analyzes metrics and provides recommendations

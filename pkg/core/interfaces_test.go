@@ -590,12 +590,15 @@ func TestParam(t *testing.T) {
 
 	// Test with different value types
 	paramInt := Param{Name: "age", Value: 30}
+	assert.Equal(t, "age", paramInt.Name)
 	assert.Equal(t, 30, paramInt.Value)
 
 	paramBool := Param{Name: "active", Value: true}
+	assert.Equal(t, "active", paramBool.Name)
 	assert.Equal(t, true, paramBool.Value)
 
 	paramNil := Param{Name: "optional", Value: nil}
+	assert.Equal(t, "optional", paramNil.Name)
 	assert.Nil(t, paramNil.Value)
 }
 

@@ -22,9 +22,9 @@ func TestToAttributeValue_BasicTypes(t *testing.T) {
 	converter := NewConverter()
 
 	tests := []struct {
-		name     string
 		input    interface{}
 		expected types.AttributeValue
+		name     string
 		wantErr  bool
 	}{
 		// String types
@@ -511,7 +511,7 @@ func TestFromAttributeValue_ComplexTypes(t *testing.T) {
 			Business    MerchantOnboardingBusiness `dynamorm:"attr:business"`
 		}
 
-		converter := NewConverter()
+		localConverter := NewConverter()
 		av := &types.AttributeValueMemberM{
 			Value: map[string]types.AttributeValue{
 				"merchantUid": &types.AttributeValueMemberS{Value: "merchant-123"},
@@ -534,7 +534,7 @@ func TestFromAttributeValue_ComplexTypes(t *testing.T) {
 		}
 
 		var dest MerchantOnboardingData
-		err := converter.FromAttributeValue(av, &dest)
+		err := localConverter.FromAttributeValue(av, &dest)
 		require.NoError(t, err)
 		assert.Equal(t, "merchant-123", dest.MerchantUID)
 		assert.Equal(t, "Example LLC", dest.Business.UnderwritingData.BusinessName)
@@ -869,10 +869,10 @@ func BenchmarkToAttributeValue(b *testing.B) {
 
 	b.Run("ComplexTypes", func(b *testing.B) {
 		type Person struct {
-			Name   string
-			Age    int
-			Tags   []string
 			Scores map[string]float64
+			Name   string
+			Tags   []string
+			Age    int
 		}
 
 		person := Person{

@@ -17,35 +17,16 @@ var configLoadFunc = config.LoadDefaultConfig
 
 // Config holds the configuration for DynamORM
 type Config struct {
-	// AWS region
-	Region string
-
-	// Optional endpoint for local development (e.g., DynamoDB Local)
-	Endpoint string
-
-	// Maximum number of retries for failed requests
-	MaxRetries int
-
-	// Default read capacity units for table creation
-	DefaultRCU int64
-
-	// Default write capacity units for table creation
-	DefaultWCU int64
-
-	// Whether to automatically create tables if they don't exist
-	AutoMigrate bool
-
-	// Whether to enable metrics collection
-	EnableMetrics bool
-
-	// Custom AWS config options
-	AWSConfigOptions []func(*config.LoadOptions) error
-
-	// Custom DynamoDB client options
-	DynamoDBOptions []func(*dynamodb.Options)
-
-	// Credentials provider
 	CredentialsProvider aws.CredentialsProvider
+	Region              string
+	Endpoint            string
+	AWSConfigOptions    []func(*config.LoadOptions) error
+	DynamoDBOptions     []func(*dynamodb.Options)
+	MaxRetries          int
+	DefaultRCU          int64
+	DefaultWCU          int64
+	AutoMigrate         bool
+	EnableMetrics       bool
 }
 
 // DefaultConfig returns the default configuration
@@ -63,8 +44,8 @@ func DefaultConfig() *Config {
 // Session manages the AWS session and DynamoDB client
 type Session struct {
 	config    *Config
-	awsConfig aws.Config
 	client    *dynamodb.Client
+	awsConfig aws.Config
 }
 
 // NewSession creates a new session with the given configuration

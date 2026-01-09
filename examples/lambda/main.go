@@ -15,13 +15,13 @@ import (
 
 // Payment model
 type Payment struct {
-	ID        string    `dynamodb:"id,hash"`
-	PartnerID string    `dynamodb:"partner_id" index:"partner-index,hash"`
-	Amount    int64     `dynamodb:"amount"`
-	Currency  string    `dynamodb:"currency"`
-	Status    string    `dynamodb:"status"`
 	CreatedAt time.Time `dynamodb:"created_at"`
 	UpdatedAt time.Time `dynamodb:"updated_at"`
+	ID        string    `dynamodb:"id,hash"`
+	PartnerID string    `dynamodb:"partner_id" index:"partner-index,hash"`
+	Currency  string    `dynamodb:"currency"`
+	Status    string    `dynamodb:"status"`
+	Amount    int64     `dynamodb:"amount"`
 }
 
 var (
@@ -72,16 +72,16 @@ func init() {
 
 // Event structure for Lambda input
 type Event struct {
+	Data      map[string]any `json:"data"`
 	PartnerID string         `json:"partnerId"`
 	Action    string         `json:"action"`
-	Data      map[string]any `json:"data"`
 }
 
 // Response structure for Lambda output
 type Response struct {
-	Success bool   `json:"success"`
 	Data    any    `json:"data,omitempty"`
 	Error   string `json:"error,omitempty"`
+	Success bool   `json:"success"`
 }
 
 // Main Lambda handler

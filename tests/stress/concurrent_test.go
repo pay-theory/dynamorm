@@ -216,14 +216,14 @@ func TestLargeItemHandling(t *testing.T) {
 
 		// Using a custom type with Description field
 		type LargeUser struct {
+			CreatedAt   time.Time `dynamorm:"sk"`
 			ID          string    `dynamorm:"pk"`
 			Email       string    `dynamorm:"index:gsi-email"`
-			CreatedAt   time.Time `dynamorm:"sk"`
-			Age         int       `dynamorm:""`
 			Status      string    `dynamorm:""`
-			Tags        []string  `dynamorm:""`
 			Name        string    `dynamorm:""`
 			Description string    `dynamorm:""`
+			Tags        []string  `dynamorm:""`
+			Age         int       `dynamorm:""`
 		}
 
 		// Create table for LargeUser
@@ -265,8 +265,8 @@ func TestLargeItemHandling(t *testing.T) {
 	t.Run("Many Attributes", func(t *testing.T) {
 		// Create item with 100+ attributes (using a map)
 		type FlexibleItem struct {
-			ID         string            `dynamorm:"pk"`
 			Attributes map[string]string `dynamorm:""`
+			ID         string            `dynamorm:"pk"`
 		}
 
 		// Create table for FlexibleItem

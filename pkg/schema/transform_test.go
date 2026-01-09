@@ -26,20 +26,20 @@ type UserV1 struct {
 	ID       string `dynamorm:"pk"`
 	Email    string `dynamorm:"sk"`
 	Name     string `dynamorm:"attr:fullName"`
-	Age      int    `dynamorm:"attr:age"`
 	Status   string `dynamorm:"attr:status"`
 	Settings string `dynamorm:"attr:settings"`
+	Age      int    `dynamorm:"attr:age"`
 }
 
 type UserV2 struct {
+	CreatedAt time.Time         `dynamorm:"attr:createdAt"`
+	Settings  map[string]string `dynamorm:"attr:settings"`
 	ID        string            `dynamorm:"pk"`
 	Email     string            `dynamorm:"sk"`
 	FirstName string            `dynamorm:"attr:firstName"`
 	LastName  string            `dynamorm:"attr:lastName"`
 	Age       int               `dynamorm:"attr:age"`
 	Active    bool              `dynamorm:"attr:active"`
-	Settings  map[string]string `dynamorm:"attr:settings"`
-	CreatedAt time.Time         `dynamorm:"attr:createdAt"`
 }
 
 func TestTransformValidator(t *testing.T) {

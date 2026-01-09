@@ -16,9 +16,9 @@ type TestOrder struct {
 	SK         string   `dynamorm:"SK" dynamodb:"SK"`
 	OrderID    string   `dynamorm:"order_id" dynamodb:"order_id"`
 	CustomerID string   `dynamorm:"customer_id" dynamodb:"customer_id"`
-	Total      float64  `dynamorm:"total" dynamodb:"total"`
 	Status     string   `dynamorm:"status" dynamodb:"status"`
 	Items      []string `dynamorm:"items" dynamodb:"items"`
+	Total      float64  `dynamorm:"total" dynamodb:"total"`
 }
 
 func TestUnmarshalStreamImage(t *testing.T) {
@@ -134,11 +134,11 @@ func TestUnmarshalStreamImage_JSONString(t *testing.T) {
 // TestUnmarshalStreamImage_TimeFields tests unmarshaling time fields
 func TestUnmarshalStreamImage_TimeFields(t *testing.T) {
 	type Event struct {
-		PK        string    `dynamorm:"PK"`
-		SK        string    `dynamorm:"SK"`
 		CreatedAt time.Time `dynamorm:"created_at"`
 		UpdatedAt time.Time `dynamorm:"updated_at"`
 		ExpiresAt time.Time `dynamorm:"expires_at"`
+		PK        string    `dynamorm:"PK"`
+		SK        string    `dynamorm:"SK"`
 	}
 
 	now := time.Now().UTC().Truncate(time.Second) // Truncate to match RFC3339 precision

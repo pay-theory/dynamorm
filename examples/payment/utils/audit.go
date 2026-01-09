@@ -13,6 +13,10 @@ import (
 
 // AuditLog represents an audit log entry
 type AuditLog struct {
+	Timestamp  time.Time      `dynamorm:"created_at" json:"timestamp"`
+	Before     map[string]any `dynamorm:"json" json:"before,omitempty"`
+	After      map[string]any `dynamorm:"json" json:"after,omitempty"`
+	Metadata   map[string]any `dynamorm:"json" json:"metadata,omitempty"`
 	ID         string         `dynamorm:"pk" json:"id"`
 	EntityType string         `dynamorm:"index:gsi-entity,pk" json:"entity_type"`
 	EntityID   string         `dynamorm:"index:gsi-entity,sk" json:"entity_id"`
@@ -21,10 +25,6 @@ type AuditLog struct {
 	MerchantID string         `dynamorm:"index:gsi-merchant" json:"merchant_id"`
 	IPAddress  string         `json:"ip_address,omitempty"`
 	UserAgent  string         `json:"user_agent,omitempty"`
-	Before     map[string]any `dynamorm:"json" json:"before,omitempty"`
-	After      map[string]any `dynamorm:"json" json:"after,omitempty"`
-	Metadata   map[string]any `dynamorm:"json" json:"metadata,omitempty"`
-	Timestamp  time.Time      `dynamorm:"created_at" json:"timestamp"`
 }
 
 // AuditTracker provides audit trail functionality
@@ -86,6 +86,9 @@ func (a *AuditTracker) TrackChange(ctx context.Context, req TrackChangeRequest) 
 
 // TrackChangeRequest contains details for tracking a change
 type TrackChangeRequest struct {
+	Before     map[string]any `json:"before,omitempty"`
+	After      map[string]any `json:"after,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 	EntityType string         `json:"entity_type"`
 	EntityID   string         `json:"entity_id"`
 	Action     string         `json:"action"`
@@ -93,9 +96,6 @@ type TrackChangeRequest struct {
 	MerchantID string         `json:"merchant_id"`
 	IPAddress  string         `json:"ip_address,omitempty"`
 	UserAgent  string         `json:"user_agent,omitempty"`
-	Before     map[string]any `json:"before,omitempty"`
-	After      map[string]any `json:"after,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // GetAuditHistory retrieves audit history for an entity
@@ -133,14 +133,14 @@ func (a *AuditTracker) GetMerchantAuditLogs(ctx context.Context, merchantID stri
 
 // ComplianceReport generates a compliance report
 type ComplianceReport struct {
-	MerchantID   string              `json:"merchant_id"`
 	StartDate    time.Time           `json:"start_date"`
 	EndDate      time.Time           `json:"end_date"`
-	TotalEvents  int                 `json:"total_events"`
+	Generated    time.Time           `json:"generated"`
 	EventsByType map[string]int      `json:"events_by_type"`
 	UserActivity map[string]int      `json:"user_activity"`
+	MerchantID   string              `json:"merchant_id"`
 	Anomalies    []ComplianceAnomaly `json:"anomalies,omitempty"`
-	Generated    time.Time           `json:"generated"`
+	TotalEvents  int                 `json:"total_events"`
 }
 
 // ComplianceAnomaly represents a potential compliance issue

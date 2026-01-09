@@ -32,18 +32,18 @@ const (
 
 // Notification represents a notification to be sent
 type Notification struct {
-	ID          string                `json:"id"`
-	Type        NotificationType      `json:"type"`
-	Recipient   NotificationRecipient `json:"recipient"`
-	Subject     string                `json:"subject"`
-	Content     string                `json:"content"`
-	Data        map[string]any        `json:"data"`
-	Status      NotificationStatus    `json:"status"`
-	Attempts    int                   `json:"attempts"`
 	LastAttempt time.Time             `json:"last_attempt,omitempty"`
-	Error       string                `json:"error,omitempty"`
 	CreatedAt   time.Time             `json:"created_at"`
 	SentAt      time.Time             `json:"sent_at,omitempty"`
+	Data        map[string]any        `json:"data"`
+	Recipient   NotificationRecipient `json:"recipient"`
+	ID          string                `json:"id"`
+	Type        NotificationType      `json:"type"`
+	Subject     string                `json:"subject"`
+	Content     string                `json:"content"`
+	Status      NotificationStatus    `json:"status"`
+	Error       string                `json:"error,omitempty"`
+	Attempts    int                   `json:"attempts"`
 }
 
 // NotificationRecipient represents the recipient of a notification
@@ -63,13 +63,13 @@ type NotificationProvider interface {
 
 // NotificationService handles sending notifications
 type NotificationService struct {
-	providers   []NotificationProvider
-	providersMu sync.RWMutex // Add mutex for providers slice
-	queue       chan *Notification
-	workers     int
-	wg          sync.WaitGroup
 	ctx         context.Context
+	queue       chan *Notification
 	cancel      context.CancelFunc
+	providers   []NotificationProvider
+	wg          sync.WaitGroup
+	workers     int
+	providersMu sync.RWMutex
 }
 
 // NewNotificationService creates a new notification service

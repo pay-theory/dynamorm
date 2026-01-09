@@ -10,12 +10,12 @@ import (
 
 // TestModel for testing slice of pointers
 type TestModel struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	PK        string    `dynamorm:"pk"`
 	SK        string    `dynamorm:"sk"`
 	Name      string    `json:"name"`
 	Version   int64     `dynamorm:"version"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 func (t *TestModel) SetKeys() {

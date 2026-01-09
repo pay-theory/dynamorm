@@ -10,11 +10,11 @@ import (
 
 // AggregateResult holds the result of an aggregate operation
 type AggregateResult struct {
+	Min     any
+	Max     any
 	Count   int64
 	Sum     float64
 	Average float64
-	Min     any
-	Max     any
 }
 
 // Sum calculates the sum of a numeric field
@@ -210,9 +210,9 @@ func (q *Query) Aggregate(fields ...string) (*AggregateResult, error) {
 // GroupBy groups results by a field and performs aggregate operations
 type GroupedResult struct {
 	Key        any
-	Count      int64
-	Items      []any
 	Aggregates map[string]*AggregateResult
+	Items      []any
+	Count      int64
 }
 
 // GroupBy groups items by a field
@@ -234,13 +234,13 @@ func (q *Query) GroupBy(field string) *GroupByQuery {
 
 // GroupByQuery enables chaining aggregate operations on grouped data
 type GroupByQuery struct {
+	err           error
 	query         *Query
-	items         []any
-	groupBy       string
 	groups        map[string]*GroupedResult
+	groupBy       string
+	items         []any
 	aggregates    []aggregateOp
 	havingClauses []havingClause
-	err           error
 }
 
 type aggregateOp struct {
@@ -250,9 +250,9 @@ type aggregateOp struct {
 }
 
 type havingClause struct {
-	aggregate string // e.g., "COUNT(*)", "SUM(price)"
-	operator  string
 	value     any
+	aggregate string
+	operator  string
 }
 
 // Count adds a COUNT aggregate

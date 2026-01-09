@@ -70,9 +70,9 @@ func (c TestPayloadJSONConverter) FromAttributeValue(av types.AttributeValue, ta
 
 // TestAsyncRequest model for testing
 type TestAsyncRequest struct {
+	Payload TestPayloadJSON `dynamorm:"attr:payload"`
 	ID      string          `dynamorm:"pk"`
 	Name    string          `dynamorm:"attr:name"`
-	Payload TestPayloadJSON `dynamorm:"attr:payload"`
 }
 
 // TestCustomID is a simple custom type for regression testing
@@ -120,9 +120,9 @@ func (c TestCustomIDConverter) FromAttributeValue(av types.AttributeValue, targe
 
 // TestModelWithCustomID for regression testing
 type TestModelWithCustomID struct {
+	_        struct{}     `dynamorm:"naming:snake_case"`
 	ID       string       `dynamorm:"pk"`
 	CustomID TestCustomID `dynamorm:"attr:custom_id"`
-	_        struct{}     `dynamorm:"naming:snake_case"`
 }
 
 func setupPayloadConverterTestDB(t *testing.T) (*DB, *capturingHTTPClient) {

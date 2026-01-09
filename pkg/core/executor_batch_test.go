@@ -23,17 +23,17 @@ import (
 type testContextKey string
 
 type httpStubResponse struct {
-	target   string
-	status   int
-	body     string
 	err      error
 	validate func(*http.Request)
+	target   string
+	body     string
+	status   int
 }
 
 type httpClientStub struct {
 	t         *testing.T
-	mu        sync.Mutex
 	responses []httpStubResponse
+	mu        sync.Mutex
 }
 
 func newHTTPClientStub(t *testing.T, responses []httpStubResponse) *httpClientStub {

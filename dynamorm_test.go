@@ -69,22 +69,22 @@ func mustDB(t *testing.T, dbAny any) *DB {
 }
 
 type capturedRequest struct {
-	Target  string
 	Payload map[string]any
+	Target  string
 }
 
 type stubbedResponse struct {
-	status  int
-	body    string
-	headers map[string]string
 	err     error
+	headers map[string]string
+	body    string
+	status  int
 }
 
 type capturingHTTPClient struct {
-	mu        sync.Mutex
-	requests  []capturedRequest
 	responses map[string][]stubbedResponse
 	callCount map[string]int
+	requests  []capturedRequest
+	mu        sync.Mutex
 }
 
 func newCapturingHTTPClient(responses map[string]string) *capturingHTTPClient {
@@ -223,11 +223,11 @@ type testOrderModel struct {
 }
 
 type auditOrderModel struct {
+	CreatedAt time.Time `dynamorm:"created_at,attr:createdAt"`
+	UpdatedAt time.Time `dynamorm:"updated_at,attr:updatedAt"`
 	TenantID  string    `dynamorm:"pk,attr:tenantId"`
 	OrderID   string    `dynamorm:"sk,attr:orderId"`
 	Status    string    `dynamorm:"attr:status"`
-	CreatedAt time.Time `dynamorm:"created_at,attr:createdAt"`
-	UpdatedAt time.Time `dynamorm:"updated_at,attr:updatedAt"`
 }
 
 func (auditOrderModel) TableName() string {

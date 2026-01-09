@@ -13,11 +13,11 @@ import (
 
 func TestRetryWithVerification(t *testing.T) {
 	tests := []struct {
-		name          string
 		setupMock     func(q *mocks.MockQuery)
 		verifyFunc    func(any) bool
-		expectedError bool
+		name          string
 		expectedCalls int
+		expectedError bool
 	}{
 		{
 			name: "Success on first attempt",
@@ -85,8 +85,8 @@ func TestRetryWithVerification(t *testing.T) {
 
 func TestWithRetry(t *testing.T) {
 	tests := []struct {
-		name          string
 		config        *RetryConfig
+		name          string
 		expectedDelay time.Duration
 	}{
 		{

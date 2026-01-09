@@ -18,48 +18,39 @@ import (
 
 // Query represents a DynamoDB query builder
 type Query struct {
-	model                   any
-	conditions              []Condition
-	writeConditions         []Condition
-	rawConditionExpressions []conditionExpression
-	filters                 []Filter
-	rawFilters              []RawFilter
-	index                   string
-	limit                   int
-	offset                  *int
-	projection              []string
-	orderBy                 OrderBy
-	exclusive               map[string]types.AttributeValue
+	builderErr              error
+	executor                QueryExecutor
+	metadata                core.ModelMetadata
 	ctx                     context.Context
-
-	// Internal state
-	metadata core.ModelMetadata
-	executor QueryExecutor
-	builder  *expr.Builder
-	// builderErr captures any expression builder errors encountered while composing filters
-	builderErr error
-
-	// Parallel scan configuration
-	segment       *int32
-	totalSegments *int32
-
-	// Consistency options
-	consistentRead bool
-
-	// Retry configuration
-	retryConfig *RetryConfig
+	model                   any
+	exclusive               map[string]types.AttributeValue
+	retryConfig             *RetryConfig
+	totalSegments           *int32
+	segment                 *int32
+	builder                 *expr.Builder
+	offset                  *int
+	orderBy                 OrderBy
+	index                   string
+	projection              []string
+	rawFilters              []RawFilter
+	filters                 []Filter
+	rawConditionExpressions []conditionExpression
+	writeConditions         []Condition
+	conditions              []Condition
+	limit                   int
+	consistentRead          bool
 }
 
 // Condition represents a query condition
 type Condition struct {
+	Value    any
 	Field    string
 	Operator string
-	Value    any
 }
 
 type conditionExpression struct {
-	Expression string
 	Values     map[string]any
+	Expression string
 }
 
 // normalizeCondition resolves a condition's field to its canonical DynamoDB attribute name
@@ -257,8 +248,8 @@ func (q *Query) isKeyField(schema core.KeySchema, goField, attrName string) bool
 
 // Filter represents a filter expression
 type Filter struct {
-	Expression string
 	Params     map[string]any
+	Expression string
 }
 
 // RawFilter represents a raw filter with parameters
@@ -888,8 +879,8 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 
 	// Create a channel to collect results from each segment
 	type segmentResult struct {
-		items []any
 		err   error
+		items []any
 	}
 
 	results := make(chan segmentResult, totalSegments)
@@ -924,7 +915,7 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 			// Execute scan for this segment
 			err := segmentQuery.Scan(segmentDest.Interface())
 			if err != nil {
-				results <- segmentResult{nil, err}
+				results <- segmentResult{err: err}
 				return
 			}
 
@@ -935,7 +926,7 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 				items[j] = segmentSlice.Index(j).Interface()
 			}
 
-			results <- segmentResult{items, nil}
+			results <- segmentResult{items: items}
 		}(i)
 	}
 

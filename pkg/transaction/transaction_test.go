@@ -22,30 +22,30 @@ import (
 
 // Test models
 type User struct {
-	ID        string `dynamorm:"pk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
 	Email     string
 	Name      string
 	Balance   float64
-	Version   int       `dynamorm:"version"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
+	Version   int `dynamorm:"version"`
 }
 
 type Account struct {
-	AccountID   string `dynamorm:"pk"`
-	UserID      string `dynamorm:"sk"`
+	UpdatedAt   time.Time `dynamorm:"updated_at"`
+	AccountID   string    `dynamorm:"pk"`
+	UserID      string    `dynamorm:"sk"`
 	AccountType string
 	Balance     float64
-	Version     int       `dynamorm:"version"`
-	UpdatedAt   time.Time `dynamorm:"updated_at"`
+	Version     int `dynamorm:"version"`
 }
 
 type Order struct {
-	OrderID    string `dynamorm:"pk"`
-	CustomerID string
-	Total      float64
-	Status     string
 	CreatedAt  time.Time `dynamorm:"created_at"`
+	OrderID    string    `dynamorm:"pk"`
+	CustomerID string
+	Status     string
+	Total      float64
 }
 
 func setupTest(t *testing.T) (*Transaction, *model.Registry) {
@@ -563,8 +563,8 @@ func TestTransactionBuilderUpdateWithBuilder(t *testing.T) {
 type mockTransactClient struct {
 	t         *testing.T
 	responses []error
-	callCount int
 	inputs    []*dynamodb.TransactWriteItemsInput
+	callCount int
 }
 
 func newMockTransactClient(t *testing.T, responses ...error) *mockTransactClient {

@@ -17,18 +17,12 @@ import (
 
 // BatchUpdateOptions configures batch update operations
 type BatchUpdateOptions struct {
-	// MaxBatchSize limits items per batch (max 25 for DynamoDB)
-	MaxBatchSize int
-	// Parallel enables parallel batch execution
-	Parallel bool
-	// MaxConcurrency limits concurrent batches
-	MaxConcurrency int
-	// ProgressCallback is called after each batch
 	ProgressCallback func(processed, total int)
-	// ErrorHandler handles individual item errors
-	ErrorHandler func(item any, err error) error
-	// RetryPolicy defines retry behavior
-	RetryPolicy *RetryPolicy
+	ErrorHandler     func(item any, err error) error
+	RetryPolicy      *RetryPolicy
+	MaxBatchSize     int
+	MaxConcurrency   int
+	Parallel         bool
 }
 
 // RetryPolicy is an alias to core.RetryPolicy for backwards compatibility.
@@ -492,10 +486,10 @@ func contains(s, substr string) bool {
 
 // BatchResult represents the result of a batch operation
 type BatchResult struct {
-	Succeeded       int
-	Failed          int
 	UnprocessedKeys []any
 	Errors          []error
+	Succeeded       int
+	Failed          int
 }
 
 // BatchCreateWithResult creates multiple items and returns detailed results

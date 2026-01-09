@@ -20,13 +20,13 @@ import (
 
 // Transaction represents a DynamoDB transaction
 type Transaction struct {
+	ctx       context.Context
 	session   *session.Session
 	registry  *model.Registry
 	converter *pkgTypes.Converter
+	results   map[string]map[string]types.AttributeValue
 	writes    []types.TransactWriteItem
 	reads     []types.TransactGetItem
-	results   map[string]map[string]types.AttributeValue
-	ctx       context.Context
 }
 
 // NewTransaction creates a new transaction

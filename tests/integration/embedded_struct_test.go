@@ -11,37 +11,28 @@ import (
 
 // BaseModel represents common fields for single-table design
 type BaseModel struct {
-	// Primary composite keys
-	PK string `dynamorm:"pk"`
-	SK string `dynamorm:"sk"`
-
-	// Global Secondary Indexes
-	GSI1PK string `dynamorm:"index:gsi1,pk"`
-	GSI1SK string `dynamorm:"index:gsi1,sk"`
-	GSI2PK string `dynamorm:"index:gsi2,pk"`
-	GSI2SK string `dynamorm:"index:gsi2,sk"`
-
-	// Common metadata fields
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	DeletedAt time.Time `json:"-" dynamorm:"attr:deletedAt"`
+	PK        string    `dynamorm:"pk"`
+	SK        string    `dynamorm:"sk"`
+	GSI1PK    string    `dynamorm:"index:gsi1,pk"`
+	GSI1SK    string    `dynamorm:"index:gsi1,sk"`
+	GSI2PK    string    `dynamorm:"index:gsi2,pk"`
+	GSI2SK    string    `dynamorm:"index:gsi2,sk"`
 	Type      string    `dynamorm:"attr:type"`
 	AccountID string    `dynamorm:"attr:accountId"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 	Version   int       `dynamorm:"version"`
-
-	// Soft delete support
 	Deleted   bool      `json:"deleted,omitempty" dynamorm:"attr:deleted"`
-	DeletedAt time.Time `json:"-" dynamorm:"attr:deletedAt"`
 }
 
 // EmbeddedCustomer model with embedded BaseModel
 type EmbeddedCustomer struct {
-	BaseModel // Embedded struct
-
-	// Customer-specific fields
-	ID      string `json:"id" dynamorm:"attr:id"`
-	Object  string `json:"object" dynamorm:"attr:object"`
-	Created int64  `json:"created" dynamorm:"attr:created"`
-	Email   string `json:"email" dynamorm:"attr:email"`
-	Name    string `json:"name" dynamorm:"attr:name"`
+	ID     string `json:"id" dynamorm:"attr:id"`
+	Object string `json:"object" dynamorm:"attr:object"`
+	Email  string `json:"email" dynamorm:"attr:email"`
+	Name   string `json:"name" dynamorm:"attr:name"`
+	BaseModel
+	Created int64 `json:"created" dynamorm:"attr:created"`
 }
 
 func (c *EmbeddedCustomer) TableName() string {
@@ -50,14 +41,12 @@ func (c *EmbeddedCustomer) TableName() string {
 
 // EmbeddedProduct model also using embedded BaseModel
 type EmbeddedProduct struct {
-	BaseModel // Embedded struct
-
-	// Product-specific fields
-	ID          string  `json:"id" dynamorm:"attr:id"`
-	Name        string  `json:"name" dynamorm:"attr:name"`
-	Description string  `json:"description" dynamorm:"attr:description"`
-	Price       float64 `json:"price" dynamorm:"attr:price"`
-	Stock       int     `json:"stock" dynamorm:"attr:stock"`
+	ID          string `json:"id" dynamorm:"attr:id"`
+	Name        string `json:"name" dynamorm:"attr:name"`
+	Description string `json:"description" dynamorm:"attr:description"`
+	BaseModel
+	Price float64 `json:"price" dynamorm:"attr:price"`
+	Stock int     `json:"stock" dynamorm:"attr:stock"`
 }
 
 func (p *EmbeddedProduct) TableName() string {

@@ -22,8 +22,8 @@ type User struct {
 	ID        string `dynamorm:"pk"`
 	Email     string `dynamorm:"sk"`
 	Name      string
-	Active    bool
 	CreatedAt string `dynamorm:"created_at"`
+	Active    bool
 }
 
 func main() {

@@ -13,9 +13,9 @@ import (
 
 // Registry manages registered models and their metadata
 type Registry struct {
-	mu     sync.RWMutex
 	models map[reflect.Type]*Metadata
 	tables map[string]*Metadata
+	mu     sync.RWMutex
 }
 
 // NewRegistry creates a new model registry
@@ -92,16 +92,16 @@ func (r *Registry) GetMetadataByTable(tableName string) (*Metadata, error) {
 // Metadata holds all metadata for a model
 type Metadata struct {
 	Type             reflect.Type
-	TableName        string
-	NamingConvention naming.Convention
 	PrimaryKey       *KeySchema
-	Indexes          []IndexSchema
 	Fields           map[string]*FieldMetadata
 	FieldsByDBName   map[string]*FieldMetadata
 	VersionField     *FieldMetadata
 	TTLField         *FieldMetadata
 	CreatedAtField   *FieldMetadata
 	UpdatedAtField   *FieldMetadata
+	TableName        string
+	Indexes          []IndexSchema
+	NamingConvention naming.Convention
 }
 
 // KeySchema represents a primary key or index key schema
@@ -131,21 +131,21 @@ const (
 
 // FieldMetadata holds metadata for a single field
 type FieldMetadata struct {
-	Name        string               // Go field name
-	Type        reflect.Type         // Go type
-	DBName      string               // DynamoDB attribute name
-	Index       int                  // Field index in struct (deprecated, use IndexPath)
-	IndexPath   []int                // Field index path for nested/embedded structs
-	Tags        map[string]string    // Parsed tags
-	IsPK        bool                 // Is partition key
-	IsSK        bool                 // Is sort key
-	IsVersion   bool                 // Is version field
-	IsTTL       bool                 // Is TTL field
-	IsCreatedAt bool                 // Is created_at field
-	IsUpdatedAt bool                 // Is updated_at field
-	IsSet       bool                 // Should be stored as DynamoDB set
-	OmitEmpty   bool                 // Omit if empty
-	IndexInfo   map[string]IndexRole // Index participation
+	Type        reflect.Type
+	IndexInfo   map[string]IndexRole
+	Tags        map[string]string
+	DBName      string
+	Name        string
+	IndexPath   []int
+	Index       int
+	IsPK        bool
+	IsVersion   bool
+	IsTTL       bool
+	IsCreatedAt bool
+	IsUpdatedAt bool
+	IsSet       bool
+	OmitEmpty   bool
+	IsSK        bool
 }
 
 // IndexRole represents a field's role in an index
@@ -397,22 +397,22 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int, convention n
 				}
 			case "lsi":
 				// Parse LSI tag similar to index tag to support modifiers
-				parts := strings.Split(value, ",")
-				indexName := strings.TrimSpace(parts[0])
+				lsiParts := strings.Split(value, ",")
+				indexName := strings.TrimSpace(lsiParts[0])
 
 				role := IndexRole{IndexName: indexName}
 
 				// LSI fields are sort keys by default
-				if len(parts) == 1 {
+				if len(lsiParts) == 1 {
 					role.IsSK = true
 				} else {
-					for i := 1; i < len(parts); i++ {
-						part := strings.TrimSpace(parts[i])
-						switch part {
+					for i := 1; i < len(lsiParts); i++ {
+						modifier := strings.TrimSpace(lsiParts[i])
+						switch modifier {
 						case "sk":
 							role.IsSK = true
 						default:
-							return nil, fmt.Errorf("%w: unknown lsi tag modifier '%s'", errors.ErrInvalidTag, part)
+							return nil, fmt.Errorf("%w: unknown lsi tag modifier '%s'", errors.ErrInvalidTag, modifier)
 						}
 					}
 				}

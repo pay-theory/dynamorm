@@ -24,11 +24,11 @@ type UserV1 struct {
 }
 
 type UserV2 struct {
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	ID        string    `dynamorm:"pk"`
 	Email     string    `dynamorm:""`
 	FirstName string    `dynamorm:""`
 	LastName  string    `dynamorm:""`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 type tableDeleter interface {

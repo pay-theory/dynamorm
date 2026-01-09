@@ -146,25 +146,18 @@ type ConverterLookup interface {
 
 // Builder compiles expressions for DynamoDB operations
 type Builder struct {
-	// Expression components
+	converter          ConverterLookup
+	updateExpressions  map[string][]string
+	names              map[string]string
+	values             map[string]types.AttributeValue
 	keyConditions      []string
 	filterConditions   []string
-	updateExpressions  map[string][]string // SET, ADD, REMOVE, DELETE
 	conditions         []string
 	projections        []string
-	filterOperators    []string // "AND", "OR"
-	conditionOperators []string // "AND", "OR"
-
-	// Attribute mappings
-	names  map[string]string
-	values map[string]types.AttributeValue
-
-	// Counters for placeholder generation
-	nameCounter  int
-	valueCounter int
-
-	// Custom converter support
-	converter ConverterLookup
+	filterOperators    []string
+	conditionOperators []string
+	nameCounter        int
+	valueCounter       int
 }
 
 // NewBuilder creates a new expression builder without custom converter support
@@ -688,13 +681,13 @@ func ConvertToAttributeValueSecure(value any) (types.AttributeValue, error) {
 
 // ExpressionComponents holds all expression components
 type ExpressionComponents struct {
+	ExpressionAttributeNames  map[string]string
+	ExpressionAttributeValues map[string]types.AttributeValue
 	KeyConditionExpression    string
 	FilterExpression          string
 	ProjectionExpression      string
 	UpdateExpression          string
 	ConditionExpression       string
-	ExpressionAttributeNames  map[string]string
-	ExpressionAttributeValues map[string]types.AttributeValue
 }
 
 // AddAdvancedFunction adds support for DynamoDB functions

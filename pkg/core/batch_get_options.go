@@ -8,20 +8,13 @@ type BatchChunkErrorHandler func(chunk []any, err error) error
 
 // BatchGetOptions tune the behavior of BatchGet operations.
 type BatchGetOptions struct {
-	// ChunkSize limits how many keys are sent per BatchGetItem request (max 100).
-	ChunkSize int
-	// ConsistentRead enables strongly consistent reads.
-	ConsistentRead bool
-	// Parallel toggles concurrent chunk execution.
-	Parallel bool
-	// MaxConcurrency caps the number of concurrent BatchGetItem requests when Parallel is true.
-	MaxConcurrency int
-	// RetryPolicy controls handling of UnprocessedKeys and throttling responses.
-	RetryPolicy *RetryPolicy
-	// ProgressCallback receives updates after each chunk finishes.
+	RetryPolicy      *RetryPolicy
 	ProgressCallback BatchProgressCallback
-	// OnChunkError is invoked when a chunk fails permanently.
-	OnChunkError BatchChunkErrorHandler
+	OnChunkError     BatchChunkErrorHandler
+	ChunkSize        int
+	MaxConcurrency   int
+	ConsistentRead   bool
+	Parallel         bool
 }
 
 // DefaultBatchGetOptions returns a sensible baseline configuration.
