@@ -68,6 +68,9 @@ Tracking document: `docs/development/planning/dynamorm-lint-green-roadmap.md`
 
 Tracking document: `docs/development/planning/dynamorm-coverage-roadmap.md`
 
+**Prerequisite**
+- M1 is complete (lint is green). During the coverage push, treat `make lint` as a regression gate and keep it green after every coverage pass.
+
 **Acceptance criteria**
 - `make test-unit` is green.
 - `make integration` is green (DynamoDB Local).

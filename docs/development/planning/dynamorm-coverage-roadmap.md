@@ -2,6 +2,8 @@
 
 Goal: raise DynamORM “library coverage” to **≥ 90%** as measured by `bash scripts/verify-coverage.sh` (which uses `bash scripts/coverage.sh` and excludes `examples/` + `tests/` from the denominator).
 
+Prerequisite: `make lint` is green (finish the lint roadmap first). Once coverage work starts, keep `make lint` green after every coverage pass so tests do not accumulate unreviewed lint debt.
+
 ## Current state (baseline)
 
 Snapshot (2026-01-09):
@@ -13,6 +15,7 @@ Snapshot (2026-01-09):
 - Do not reduce the measurement surface by excluding additional production packages from `scripts/coverage.sh`.
 - Do not claim coverage progress by moving logic into `examples/` or `tests/`.
 - Keep `COVERAGE_THRESHOLD` as a *raise-only* override (the verifier rejects lowering below default).
+- Keep formatting and lint green after each pass: `bash scripts/fmt-check.sh` and `make lint`.
 
 ## How we measure
 
@@ -26,6 +29,13 @@ Final rubric gate (overall threshold, default 90%):
 
 ```bash
 bash scripts/verify-coverage.sh
+```
+
+Regression checks (run after each coverage change set):
+
+```bash
+bash scripts/fmt-check.sh
+make lint
 ```
 
 ## Workstreams
@@ -63,4 +73,3 @@ This repo currently has a single hard gate at 90%. To make progress reviewable, 
 - COV-6: finish line (90%+ + pass `bash scripts/verify-coverage.sh`)
 
 Implementation note: to enforce package-level floors, add a targets-based verifier + targets files under `docs/development/planning/coverage-targets/` (same pattern as K3) rather than weakening the global gate.
-
