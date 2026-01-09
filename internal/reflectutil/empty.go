@@ -19,12 +19,7 @@ func IsEmpty(v reflect.Value) bool {
 
 	switch v.Kind() {
 	case reflect.Array:
-		for i := 0; i < v.Len(); i++ {
-			if !IsEmpty(v.Index(i)) {
-				return false
-			}
-		}
-		return true
+		return isEmptyArray(v)
 
 	case reflect.Map, reflect.Slice, reflect.String:
 		return v.Len() == 0
@@ -45,22 +40,36 @@ func IsEmpty(v reflect.Value) bool {
 		return v.IsNil()
 
 	case reflect.Struct:
-		if v.Type() == timeType {
-			if v.CanInterface() {
-				if t, ok := v.Interface().(time.Time); ok {
-					return t.IsZero()
-				}
-			}
-			return v.IsZero()
-		}
-		for i := 0; i < v.NumField(); i++ {
-			if !IsEmpty(v.Field(i)) {
-				return false
-			}
-		}
-		return true
+		return isEmptyStruct(v)
 
 	default:
 		return v.IsZero()
 	}
+}
+
+func isEmptyArray(v reflect.Value) bool {
+	for i := 0; i < v.Len(); i++ {
+		if !IsEmpty(v.Index(i)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isEmptyStruct(v reflect.Value) bool {
+	if v.Type() == timeType {
+		if v.CanInterface() {
+			if t, ok := v.Interface().(time.Time); ok {
+				return t.IsZero()
+			}
+		}
+		return v.IsZero()
+	}
+
+	for i := 0; i < v.NumField(); i++ {
+		if !IsEmpty(v.Field(i)) {
+			return false
+		}
+	}
+	return true
 }

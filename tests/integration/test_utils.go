@@ -19,7 +19,6 @@ import (
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
-	"github.com/pay-theory/dynamorm/tests/models"
 )
 
 // TestContext holds test database and cleanup functions
@@ -373,69 +372,69 @@ func isTableExistsError(err error) bool {
 			strings.Contains(err.Error(), "already exists"))
 }
 
+var testModelTableNames = map[string]string{
+	"TestUser":     "TestUsers",
+	"TestOrder":    "TestOrders",
+	"TestProduct":  "TestProducts",
+	"TestAccount":  "TestAccounts",
+	"TestBlogPost": "TestBlogPosts",
+	"TestComment":  "TestComments",
+	"TestNote":     "TestNotes",
+	"TestContact":  "TestContacts",
+}
+
 func getTableName(model any) string {
 	// First try to call TableName() method if it exists
 	if tableNamer, ok := model.(interface{ TableName() string }); ok {
 		return tableNamer.TableName()
 	}
 
-	// Fallback to type-based mapping
-	switch model.(type) {
-	// Handle models from models package
-	case *models.TestUser, models.TestUser:
-		return "TestUsers"
-	case *models.TestOrder, models.TestOrder:
-		return "TestOrders"
-	case *models.TestProduct, models.TestProduct:
-		return "TestProducts"
-	// Handle local test models
-	case *TestUser, TestUser:
-		return "TestUsers"
-	case *TestOrder, TestOrder:
-		return "TestOrders"
-	case *TestProduct, TestProduct:
-		return "TestProducts"
-	case *TestAccount, TestAccount:
-		return "TestAccounts"
-	case *TestBlogPost, TestBlogPost:
-		return "TestBlogPosts"
-	case *TestComment, TestComment:
-		return "TestComments"
-	case *TestNote, TestNote:
-		return "TestNotes"
-	case *TestContact, TestContact:
-		return "TestContacts"
-	default:
-		// Fallback: Extract base type name from reflect.Type
-		typ := reflect.TypeOf(model)
-		if typ.Kind() == reflect.Ptr {
-			typ = typ.Elem()
-		}
+	baseName := extractBaseTypeName(model)
+	if baseName == "" {
+		return ""
+	}
 
-		baseName := typ.Name()
-		if baseName == "" {
-			// Last resort: use full type name and clean it up
-			fullName := typ.String()
-			// Remove package prefix if present
-			if lastDot := strings.LastIndex(fullName, "."); lastDot != -1 {
-				baseName = fullName[lastDot+1:]
-			} else {
-				baseName = fullName
-			}
-		}
+	if tableName, ok := testModelTableNames[baseName]; ok {
+		return tableName
+	}
 
-		// Ensure valid DynamoDB table name
-		baseName = strings.ReplaceAll(baseName, "*", "")
-		baseName = strings.ReplaceAll(baseName, ".", "_")
-		baseName = strings.ReplaceAll(baseName, "/", "_")
+	return pluralizeTableName(sanitizeTableName(baseName))
+}
 
-		// Add 's' suffix if not present
-		if !strings.HasSuffix(baseName, "s") {
-			baseName += "s"
-		}
+func extractBaseTypeName(model any) string {
+	typ := reflect.TypeOf(model)
+	if typ == nil {
+		return ""
+	}
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
 
+	baseName := typ.Name()
+	if baseName != "" {
 		return baseName
 	}
+
+	// Last resort: use full type name and clean it up
+	fullName := typ.String()
+	if lastDot := strings.LastIndex(fullName, "."); lastDot != -1 {
+		return fullName[lastDot+1:]
+	}
+	return fullName
+}
+
+func sanitizeTableName(name string) string {
+	name = strings.ReplaceAll(name, "*", "")
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.ReplaceAll(name, "/", "_")
+	return name
+}
+
+func pluralizeTableName(name string) string {
+	if strings.HasSuffix(name, "s") {
+		return name
+	}
+	return name + "s"
 }
 
 // Common test model definitions for reuse across tests

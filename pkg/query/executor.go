@@ -38,6 +38,162 @@ type MainExecutor struct {
 	ctx    context.Context
 }
 
+func applyCompiledQueryReadFields(
+	input *core.CompiledQuery,
+	indexName **string,
+	filterExpression **string,
+	projectionExpression **string,
+	expressionAttributeNames *map[string]string,
+	expressionAttributeValues *map[string]types.AttributeValue,
+	limit **int32,
+	exclusiveStartKey *map[string]types.AttributeValue,
+	consistentRead **bool,
+) {
+	if input.IndexName != "" {
+		*indexName = &input.IndexName
+	}
+	if input.FilterExpression != "" {
+		*filterExpression = &input.FilterExpression
+	}
+	if input.ProjectionExpression != "" {
+		*projectionExpression = &input.ProjectionExpression
+	}
+	if len(input.ExpressionAttributeNames) > 0 {
+		*expressionAttributeNames = input.ExpressionAttributeNames
+	}
+	if len(input.ExpressionAttributeValues) > 0 {
+		*expressionAttributeValues = input.ExpressionAttributeValues
+	}
+	if input.Limit != nil {
+		*limit = input.Limit
+	}
+	if len(input.ExclusiveStartKey) > 0 {
+		*exclusiveStartKey = input.ExclusiveStartKey
+	}
+	if input.ConsistentRead != nil {
+		*consistentRead = input.ConsistentRead
+	}
+}
+
+func buildDynamoQueryInput(input *core.CompiledQuery) *dynamodb.QueryInput {
+	queryInput := &dynamodb.QueryInput{
+		TableName: &input.TableName,
+	}
+
+	applyCompiledQueryReadFields(
+		input,
+		&queryInput.IndexName,
+		&queryInput.FilterExpression,
+		&queryInput.ProjectionExpression,
+		&queryInput.ExpressionAttributeNames,
+		&queryInput.ExpressionAttributeValues,
+		&queryInput.Limit,
+		&queryInput.ExclusiveStartKey,
+		&queryInput.ConsistentRead,
+	)
+
+	// Set key condition expression
+	if input.KeyConditionExpression != "" {
+		queryInput.KeyConditionExpression = &input.KeyConditionExpression
+	}
+
+	// Set scan index forward
+	if input.ScanIndexForward != nil {
+		queryInput.ScanIndexForward = input.ScanIndexForward
+	}
+
+	return queryInput
+}
+
+func buildDynamoScanInput(input *core.CompiledQuery) *dynamodb.ScanInput {
+	scanInput := &dynamodb.ScanInput{
+		TableName: &input.TableName,
+	}
+
+	applyCompiledQueryReadFields(
+		input,
+		&scanInput.IndexName,
+		&scanInput.FilterExpression,
+		&scanInput.ProjectionExpression,
+		&scanInput.ExpressionAttributeNames,
+		&scanInput.ExpressionAttributeValues,
+		&scanInput.Limit,
+		&scanInput.ExclusiveStartKey,
+		&scanInput.ConsistentRead,
+	)
+
+	// Set segment and total segments for parallel scan
+	if input.Segment != nil {
+		scanInput.Segment = input.Segment
+	}
+	if input.TotalSegments != nil {
+		scanInput.TotalSegments = input.TotalSegments
+	}
+
+	return scanInput
+}
+
+type pagedReadExecutor interface {
+	fetch(exclusiveStartKey map[string]types.AttributeValue) ([]map[string]types.AttributeValue, map[string]types.AttributeValue, error)
+}
+
+type queryPager struct {
+	client DynamoDBAPI
+	ctx    context.Context
+	input  *dynamodb.QueryInput
+}
+
+func (p queryPager) fetch(exclusiveStartKey map[string]types.AttributeValue) ([]map[string]types.AttributeValue, map[string]types.AttributeValue, error) {
+	if exclusiveStartKey != nil {
+		p.input.ExclusiveStartKey = exclusiveStartKey
+	}
+
+	output, err := p.client.Query(p.ctx, p.input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+	return output.Items, output.LastEvaluatedKey, nil
+}
+
+type scanPager struct {
+	client DynamoDBAPI
+	ctx    context.Context
+	input  *dynamodb.ScanInput
+}
+
+func (p scanPager) fetch(exclusiveStartKey map[string]types.AttributeValue) ([]map[string]types.AttributeValue, map[string]types.AttributeValue, error) {
+	if exclusiveStartKey != nil {
+		p.input.ExclusiveStartKey = exclusiveStartKey
+	}
+
+	output, err := p.client.Scan(p.ctx, p.input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to execute scan: %w", err)
+	}
+	return output.Items, output.LastEvaluatedKey, nil
+}
+
+func executePagedItems(limit *int32, pager pagedReadExecutor) ([]map[string]types.AttributeValue, error) {
+	var allItems []map[string]types.AttributeValue
+	var lastEvaluatedKey map[string]types.AttributeValue
+
+	for {
+		items, nextKey, err := pager.fetch(lastEvaluatedKey)
+		if err != nil {
+			return nil, err
+		}
+
+		allItems = append(allItems, items...)
+
+		if nextKey == nil || (limit != nil && int64(len(allItems)) >= int64(*limit)) {
+			break
+		}
+		lastEvaluatedKey = nextKey
+	}
+
+	return allItems, nil
+}
+
 // NewExecutor creates a new MainExecutor instance
 func NewExecutor(client DynamoDBAPI, ctx context.Context) *MainExecutor { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &MainExecutor{
@@ -52,83 +208,14 @@ func (e *MainExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 		return fmt.Errorf("compiled query cannot be nil")
 	}
 
-	// Build QueryInput
-	queryInput := &dynamodb.QueryInput{
-		TableName: &input.TableName,
+	pager := queryPager{
+		client: e.client,
+		ctx:    e.ctx,
+		input:  buildDynamoQueryInput(input),
 	}
-
-	// Set index name if specified
-	if input.IndexName != "" {
-		queryInput.IndexName = &input.IndexName
-	}
-
-	// Set key condition expression
-	if input.KeyConditionExpression != "" {
-		queryInput.KeyConditionExpression = &input.KeyConditionExpression
-	}
-
-	// Set filter expression
-	if input.FilterExpression != "" {
-		queryInput.FilterExpression = &input.FilterExpression
-	}
-
-	// Set projection expression
-	if input.ProjectionExpression != "" {
-		queryInput.ProjectionExpression = &input.ProjectionExpression
-	}
-
-	// Set expression attribute names
-	if len(input.ExpressionAttributeNames) > 0 {
-		queryInput.ExpressionAttributeNames = input.ExpressionAttributeNames
-	}
-
-	// Set expression attribute values
-	if len(input.ExpressionAttributeValues) > 0 {
-		queryInput.ExpressionAttributeValues = input.ExpressionAttributeValues
-	}
-
-	// Set limit
-	if input.Limit != nil {
-		queryInput.Limit = input.Limit
-	}
-
-	// Set exclusive start key
-	if len(input.ExclusiveStartKey) > 0 {
-		queryInput.ExclusiveStartKey = input.ExclusiveStartKey
-	}
-
-	// Set scan index forward
-	if input.ScanIndexForward != nil {
-		queryInput.ScanIndexForward = input.ScanIndexForward
-	}
-
-	// Set consistent read
-	if input.ConsistentRead != nil {
-		queryInput.ConsistentRead = input.ConsistentRead
-	}
-
-	// Execute the query
-	var allItems []map[string]types.AttributeValue
-	var lastEvaluatedKey map[string]types.AttributeValue
-
-	for {
-		if lastEvaluatedKey != nil {
-			queryInput.ExclusiveStartKey = lastEvaluatedKey
-		}
-
-		output, err := e.client.Query(e.ctx, queryInput)
-		if err != nil {
-			return fmt.Errorf("failed to execute query: %w", err)
-		}
-
-		allItems = append(allItems, output.Items...)
-
-		// Check if we need to paginate
-		if output.LastEvaluatedKey == nil || (input.Limit != nil && int64(len(allItems)) >= int64(*input.Limit)) {
-			break
-		}
-
-		lastEvaluatedKey = output.LastEvaluatedKey
+	allItems, err := executePagedItems(input.Limit, pager)
+	if err != nil {
+		return err
 	}
 
 	// Unmarshal the results into dest
@@ -141,81 +228,14 @@ func (e *MainExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 		return fmt.Errorf("compiled query cannot be nil")
 	}
 
-	// Build ScanInput
-	scanInput := &dynamodb.ScanInput{
-		TableName: &input.TableName,
+	pager := scanPager{
+		client: e.client,
+		ctx:    e.ctx,
+		input:  buildDynamoScanInput(input),
 	}
-
-	// Set index name if specified
-	if input.IndexName != "" {
-		scanInput.IndexName = &input.IndexName
-	}
-
-	// Set filter expression
-	if input.FilterExpression != "" {
-		scanInput.FilterExpression = &input.FilterExpression
-	}
-
-	// Set projection expression
-	if input.ProjectionExpression != "" {
-		scanInput.ProjectionExpression = &input.ProjectionExpression
-	}
-
-	// Set expression attribute names
-	if len(input.ExpressionAttributeNames) > 0 {
-		scanInput.ExpressionAttributeNames = input.ExpressionAttributeNames
-	}
-
-	// Set expression attribute values
-	if len(input.ExpressionAttributeValues) > 0 {
-		scanInput.ExpressionAttributeValues = input.ExpressionAttributeValues
-	}
-
-	// Set limit
-	if input.Limit != nil {
-		scanInput.Limit = input.Limit
-	}
-
-	// Set exclusive start key
-	if len(input.ExclusiveStartKey) > 0 {
-		scanInput.ExclusiveStartKey = input.ExclusiveStartKey
-	}
-
-	// Set segment and total segments for parallel scan
-	if input.Segment != nil {
-		scanInput.Segment = input.Segment
-	}
-	if input.TotalSegments != nil {
-		scanInput.TotalSegments = input.TotalSegments
-	}
-
-	// Set consistent read
-	if input.ConsistentRead != nil {
-		scanInput.ConsistentRead = input.ConsistentRead
-	}
-
-	// Execute the scan
-	var allItems []map[string]types.AttributeValue
-	var lastEvaluatedKey map[string]types.AttributeValue
-
-	for {
-		if lastEvaluatedKey != nil {
-			scanInput.ExclusiveStartKey = lastEvaluatedKey
-		}
-
-		output, err := e.client.Scan(e.ctx, scanInput)
-		if err != nil {
-			return fmt.Errorf("failed to execute scan: %w", err)
-		}
-
-		allItems = append(allItems, output.Items...)
-
-		// Check if we need to paginate
-		if output.LastEvaluatedKey == nil || (input.Limit != nil && int64(len(allItems)) >= int64(*input.Limit)) {
-			break
-		}
-
-		lastEvaluatedKey = output.LastEvaluatedKey
+	allItems, err := executePagedItems(input.Limit, pager)
+	if err != nil {
+		return err
 	}
 
 	// Unmarshal the results into dest
@@ -836,141 +856,264 @@ func unmarshalAttributeValue(av types.AttributeValue, dest reflect.Value) error 
 		return fmt.Errorf("cannot set value")
 	}
 
-	switch v := av.(type) {
-	case *types.AttributeValueMemberS:
-		// Handle string attribute based on destination type
-		switch dest.Kind() {
-		case reflect.String:
-			dest.SetString(v.Value)
-		case reflect.Struct:
-			// Special handling for time.Time
-			if dest.Type() == reflect.TypeOf(time.Time{}) {
-				// Try parsing as RFC3339 first (most common in DynamoDB)
-				t, err := time.Parse(time.RFC3339, v.Value)
-				if err != nil {
-					// Try parsing as RFC3339Nano
-					t, err = time.Parse(time.RFC3339Nano, v.Value)
-					if err != nil {
-						// Try Unix timestamp
-						var unix int64
-						if _, err := fmt.Sscanf(v.Value, "%d", &unix); err == nil {
-							t = time.Unix(unix, 0)
-						} else {
-							return fmt.Errorf("failed to parse time from string %q: %w", v.Value, err)
-						}
-					}
-				}
-				dest.Set(reflect.ValueOf(t))
-			} else {
-				// Try to unmarshal JSON string into struct
-				if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
-					return fmt.Errorf("failed to unmarshal JSON string into struct: %w", err)
-				}
-			}
-		case reflect.Map:
-			// Try to unmarshal JSON string into map
-			if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
-				return fmt.Errorf("failed to unmarshal JSON string into map: %w", err)
-			}
-		case reflect.Slice:
-			// Try to unmarshal JSON string into slice
-			if err := json.Unmarshal([]byte(v.Value), dest.Addr().Interface()); err != nil {
-				return fmt.Errorf("failed to unmarshal JSON string into slice: %w", err)
-			}
-		default:
-			return fmt.Errorf("cannot unmarshal string into %v", dest.Kind())
-		}
-	case *types.AttributeValueMemberN:
-		// Handle numeric types
-		switch dest.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			var n int64
-			_, err := fmt.Sscanf(v.Value, "%d", &n)
-			if err != nil {
-				return err
-			}
-			dest.SetInt(n)
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			var n uint64
-			_, err := fmt.Sscanf(v.Value, "%d", &n)
-			if err != nil {
-				return err
-			}
-			dest.SetUint(n)
-		case reflect.Float32, reflect.Float64:
-			var f float64
-			_, err := fmt.Sscanf(v.Value, "%f", &f)
-			if err != nil {
-				return err
-			}
-			dest.SetFloat(f)
-		}
-	case *types.AttributeValueMemberBOOL:
-		if dest.Kind() == reflect.Bool {
-			dest.SetBool(v.Value)
-		} else {
-			return fmt.Errorf("cannot unmarshal bool into %v", dest.Kind())
-		}
-	case *types.AttributeValueMemberNULL:
-		// Set to zero value
-		dest.Set(reflect.Zero(dest.Type()))
-	case *types.AttributeValueMemberL:
-		// Handle list
-		if dest.Kind() != reflect.Slice {
-			return fmt.Errorf("cannot unmarshal list into non-slice type")
-		}
-		sliceType := dest.Type()
-		newSlice := reflect.MakeSlice(sliceType, len(v.Value), len(v.Value))
-		for i, item := range v.Value {
-			if err := unmarshalAttributeValue(item, newSlice.Index(i)); err != nil {
-				return err
-			}
-		}
-		dest.Set(newSlice)
-	case *types.AttributeValueMemberM:
-		// Handle map
-		if dest.Kind() == reflect.Map {
-			mapType := dest.Type()
-			keyType := mapType.Key()
-			elemType := mapType.Elem()
-			newMap := reflect.MakeMap(mapType)
-
-			for k, mapVal := range v.Value {
-				keyValue := reflect.New(keyType).Elem()
-				keyValue.SetString(k)
-
-				// Special handling for map[string]interface{}
-				if elemType.Kind() == reflect.Interface && elemType.NumMethod() == 0 {
-					// Convert AttributeValue to interface{}
-					interfaceValue, err := attributeValueToInterface(mapVal)
-					if err != nil {
-						return err
-					}
-					newMap.SetMapIndex(keyValue, reflect.ValueOf(interfaceValue))
-				} else {
-					// Regular typed map
-					elemValue := reflect.New(elemType).Elem()
-					if err := unmarshalAttributeValue(mapVal, elemValue); err != nil {
-						return err
-					}
-					newMap.SetMapIndex(keyValue, elemValue)
-				}
-			}
-			dest.Set(newMap)
-		} else if dest.Kind() == reflect.Struct {
-			// Unmarshal into struct
-			for k, structVal := range v.Value {
-				// Find field by name
-				field := dest.FieldByName(k)
-				if field.IsValid() && field.CanSet() {
-					if err := unmarshalAttributeValue(structVal, field); err != nil {
-						return err
-					}
-				}
-			}
-		}
+	if dest.Kind() == reflect.Ptr {
+		return unmarshalPointerAttributeValue(av, dest)
 	}
 
+	if dest.Kind() == reflect.Interface && dest.Type().NumMethod() == 0 {
+		return unmarshalAnyAttributeValue(av, dest)
+	}
+
+	switch v := av.(type) {
+	case *types.AttributeValueMemberS:
+		return unmarshalStringAttribute(v.Value, dest)
+	case *types.AttributeValueMemberN:
+		return unmarshalNumberAttribute(v.Value, dest)
+	case *types.AttributeValueMemberBOOL:
+		return unmarshalBoolAttribute(v.Value, dest)
+	case *types.AttributeValueMemberNULL:
+		dest.Set(reflect.Zero(dest.Type()))
+		return nil
+	case *types.AttributeValueMemberL:
+		return unmarshalListAttribute(v.Value, dest)
+	case *types.AttributeValueMemberM:
+		return unmarshalMapAttribute(v.Value, dest)
+	case *types.AttributeValueMemberSS:
+		return unmarshalStringSetAttribute(v.Value, dest)
+	case *types.AttributeValueMemberNS:
+		return unmarshalNumberSetAttribute(v.Value, dest)
+	case *types.AttributeValueMemberBS:
+		return unmarshalBinarySetAttribute(v.Value, dest)
+	case *types.AttributeValueMemberB:
+		return unmarshalBinaryAttribute(v.Value, dest)
+	default:
+		return fmt.Errorf("unsupported attribute value type: %T", av)
+	}
+}
+
+func unmarshalPointerAttributeValue(av types.AttributeValue, dest reflect.Value) error {
+	if av == nil {
+		dest.Set(reflect.Zero(dest.Type()))
+		return nil
+	}
+	if _, ok := av.(*types.AttributeValueMemberNULL); ok {
+		dest.Set(reflect.Zero(dest.Type()))
+		return nil
+	}
+	if dest.IsNil() {
+		dest.Set(reflect.New(dest.Type().Elem()))
+	}
+	return unmarshalAttributeValue(av, dest.Elem())
+}
+
+func unmarshalAnyAttributeValue(av types.AttributeValue, dest reflect.Value) error {
+	value, err := attributeValueToInterface(av)
+	if err != nil {
+		return err
+	}
+	if value == nil {
+		dest.Set(reflect.Zero(dest.Type()))
+		return nil
+	}
+	dest.Set(reflect.ValueOf(value))
+	return nil
+}
+
+func unmarshalStringAttribute(value string, dest reflect.Value) error {
+	switch dest.Kind() {
+	case reflect.String:
+		dest.SetString(value)
+		return nil
+	case reflect.Struct:
+		return unmarshalStringToStruct(value, dest)
+	case reflect.Map, reflect.Slice:
+		return unmarshalJSONString(value, dest)
+	default:
+		return fmt.Errorf("cannot unmarshal string into %v", dest.Kind())
+	}
+}
+
+func unmarshalStringToStruct(value string, dest reflect.Value) error {
+	if dest.Type() == reflect.TypeOf(time.Time{}) {
+		t, err := parseTimeString(value)
+		if err != nil {
+			return err
+		}
+		dest.Set(reflect.ValueOf(t))
+		return nil
+	}
+	return unmarshalJSONString(value, dest)
+}
+
+func parseTimeString(value string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, value)
+	if err == nil {
+		return t, nil
+	}
+
+	t, err = time.Parse(time.RFC3339Nano, value)
+	if err == nil {
+		return t, nil
+	}
+
+	unix, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse time from string %q: %w", value, err)
+	}
+	return time.Unix(unix, 0), nil
+}
+
+func unmarshalJSONString(value string, dest reflect.Value) error {
+	if !dest.CanAddr() {
+		return fmt.Errorf("cannot unmarshal JSON string into %v", dest.Kind())
+	}
+	if err := json.Unmarshal([]byte(value), dest.Addr().Interface()); err != nil {
+		return fmt.Errorf("failed to unmarshal JSON string: %w", err)
+	}
+	return nil
+}
+
+func unmarshalNumberAttribute(value string, dest reflect.Value) error {
+	switch dest.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		dest.SetInt(n)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return err
+		}
+		dest.SetUint(n)
+	case reflect.Float32, reflect.Float64:
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return err
+		}
+		dest.SetFloat(f)
+	}
+	return nil
+}
+
+func unmarshalBoolAttribute(value bool, dest reflect.Value) error {
+	if dest.Kind() != reflect.Bool {
+		return fmt.Errorf("cannot unmarshal bool into %v", dest.Kind())
+	}
+	dest.SetBool(value)
+	return nil
+}
+
+func unmarshalListAttribute(values []types.AttributeValue, dest reflect.Value) error {
+	if dest.Kind() != reflect.Slice {
+		return fmt.Errorf("cannot unmarshal list into non-slice type")
+	}
+
+	sliceType := dest.Type()
+	newSlice := reflect.MakeSlice(sliceType, len(values), len(values))
+	for i, item := range values {
+		if err := unmarshalAttributeValue(item, newSlice.Index(i)); err != nil {
+			return err
+		}
+	}
+	dest.Set(newSlice)
+	return nil
+}
+
+func unmarshalMapAttribute(values map[string]types.AttributeValue, dest reflect.Value) error {
+	switch dest.Kind() {
+	case reflect.Map:
+		return unmarshalMapIntoMap(values, dest)
+	case reflect.Struct:
+		return unmarshalMapIntoStruct(values, dest)
+	default:
+		return nil
+	}
+}
+
+func unmarshalMapIntoMap(values map[string]types.AttributeValue, dest reflect.Value) error {
+	mapType := dest.Type()
+	keyType := mapType.Key()
+	if keyType.Kind() != reflect.String {
+		return fmt.Errorf("cannot unmarshal map into %v", dest.Kind())
+	}
+
+	elemType := mapType.Elem()
+	newMap := reflect.MakeMap(mapType)
+	for key, mapVal := range values {
+		keyValue := reflect.New(keyType).Elem()
+		keyValue.SetString(key)
+
+		elemValue := reflect.New(elemType).Elem()
+		if err := unmarshalAttributeValue(mapVal, elemValue); err != nil {
+			return err
+		}
+		newMap.SetMapIndex(keyValue, elemValue)
+	}
+	dest.Set(newMap)
+	return nil
+}
+
+func unmarshalMapIntoStruct(values map[string]types.AttributeValue, dest reflect.Value) error {
+	for key, structVal := range values {
+		field := dest.FieldByName(key)
+		if !field.IsValid() || !field.CanSet() {
+			continue
+		}
+		if err := unmarshalAttributeValue(structVal, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func unmarshalStringSetAttribute(values []string, dest reflect.Value) error {
+	if dest.Kind() != reflect.Slice || dest.Type().Elem().Kind() != reflect.String {
+		return fmt.Errorf("cannot unmarshal string set into %v", dest.Kind())
+	}
+
+	slice := reflect.MakeSlice(dest.Type(), len(values), len(values))
+	for i, value := range values {
+		slice.Index(i).SetString(value)
+	}
+	dest.Set(slice)
+	return nil
+}
+
+func unmarshalNumberSetAttribute(values []string, dest reflect.Value) error {
+	if dest.Kind() != reflect.Slice {
+		return fmt.Errorf("cannot unmarshal number set into %v", dest.Kind())
+	}
+
+	slice := reflect.MakeSlice(dest.Type(), len(values), len(values))
+	for i, value := range values {
+		if err := unmarshalNumberAttribute(value, slice.Index(i)); err != nil {
+			return err
+		}
+	}
+	dest.Set(slice)
+	return nil
+}
+
+func unmarshalBinarySetAttribute(values [][]byte, dest reflect.Value) error {
+	if dest.Kind() != reflect.Slice || dest.Type().Elem().Kind() != reflect.Slice || dest.Type().Elem().Elem().Kind() != reflect.Uint8 {
+		return fmt.Errorf("cannot unmarshal binary set into %v", dest.Kind())
+	}
+
+	slice := reflect.MakeSlice(dest.Type(), len(values), len(values))
+	for i, value := range values {
+		slice.Index(i).SetBytes(value)
+	}
+	dest.Set(slice)
+	return nil
+}
+
+func unmarshalBinaryAttribute(value []byte, dest reflect.Value) error {
+	if dest.Kind() != reflect.Slice || dest.Type().Elem().Kind() != reflect.Uint8 {
+		return fmt.Errorf("cannot unmarshal binary into %v", dest.Kind())
+	}
+	dest.SetBytes(value)
 	return nil
 }
 
@@ -984,68 +1127,78 @@ func parseAttributeName(tag string) string {
 	return strings.TrimSpace(parts[0])
 }
 
-// attributeValueToInterface converts a DynamoDB AttributeValue to a Go interface{} value
+// attributeValueToInterface converts a DynamoDB AttributeValue to a Go interface{} value.
 func attributeValueToInterface(av types.AttributeValue) (interface{}, error) {
 	switch v := av.(type) {
 	case *types.AttributeValueMemberS:
 		return v.Value, nil
 	case *types.AttributeValueMemberN:
-		if intVal, err := strconv.ParseInt(v.Value, 10, 64); err == nil {
-			return intVal, nil
-		}
-		if floatVal, err := strconv.ParseFloat(v.Value, 64); err == nil {
-			return floatVal, nil
-		}
-		return nil, fmt.Errorf("invalid number format: %s", v.Value)
+		return parseNumberToInterface(v.Value)
 	case *types.AttributeValueMemberBOOL:
 		return v.Value, nil
 	case *types.AttributeValueMemberNULL:
 		return nil, nil
 	case *types.AttributeValueMemberL:
-		// Convert list to []interface{}
-		result := make([]interface{}, len(v.Value))
-		for i, item := range v.Value {
-			val, err := attributeValueToInterface(item)
-			if err != nil {
-				return nil, err
-			}
-			result[i] = val
-		}
-		return result, nil
+		return attributeValueListToInterface(v.Value)
 	case *types.AttributeValueMemberM:
-		// Convert map to map[string]interface{}
-		result := make(map[string]interface{})
-		for k, val := range v.Value {
-			converted, err := attributeValueToInterface(val)
-			if err != nil {
-				return nil, err
-			}
-			result[k] = converted
-		}
-		return result, nil
+		return attributeValueMapToInterface(v.Value)
 	case *types.AttributeValueMemberSS:
-		// String set
 		return v.Value, nil
 	case *types.AttributeValueMemberNS:
-		// Number set - convert to []float64
-		result := make([]float64, len(v.Value))
-		for i, numStr := range v.Value {
-			var f float64
-			if _, err := fmt.Sscanf(numStr, "%f", &f); err != nil {
-				return nil, err
-			}
-			result[i] = f
-		}
-		return result, nil
+		return attributeValueNumberSetToFloat64(v.Value)
 	case *types.AttributeValueMemberBS:
-		// Binary set
 		return v.Value, nil
 	case *types.AttributeValueMemberB:
-		// Binary
 		return v.Value, nil
 	default:
 		return nil, fmt.Errorf("unsupported attribute value type: %T", av)
 	}
+}
+
+func parseNumberToInterface(value string) (interface{}, error) {
+	if intVal, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return intVal, nil
+	}
+	if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
+		return floatVal, nil
+	}
+	return nil, fmt.Errorf("invalid number format: %s", value)
+}
+
+func attributeValueListToInterface(values []types.AttributeValue) ([]interface{}, error) {
+	result := make([]interface{}, len(values))
+	for i, item := range values {
+		val, err := attributeValueToInterface(item)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = val
+	}
+	return result, nil
+}
+
+func attributeValueMapToInterface(values map[string]types.AttributeValue) (map[string]interface{}, error) {
+	result := make(map[string]interface{}, len(values))
+	for k, val := range values {
+		converted, err := attributeValueToInterface(val)
+		if err != nil {
+			return nil, err
+		}
+		result[k] = converted
+	}
+	return result, nil
+}
+
+func attributeValueNumberSetToFloat64(values []string) ([]float64, error) {
+	result := make([]float64, len(values))
+	for i, numStr := range values {
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = f
+	}
+	return result, nil
 }
 
 // Verify that MainExecutor implements all required interfaces
