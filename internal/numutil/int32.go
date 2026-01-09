@@ -12,4 +12,3 @@ func ClampIntToInt32(n int) int32 {
 	}
 	return int32(n)
 }
-
