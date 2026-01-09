@@ -47,20 +47,18 @@ func NewSafeMarshaler() *SafeMarshaler {
 // MarshalItem safely marshals a model to DynamoDB AttributeValues using only reflection
 // This implementation prioritizes security over performance but is still highly optimized
 func (m *SafeMarshaler) MarshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
-	v := reflect.ValueOf(model)
-	if v.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return nil, fmt.Errorf("cannot marshal nil pointer")
-		}
-		v = v.Elem()
+	v, err := derefStructValue(model)
+	if err != nil {
+		return nil, err
 	}
 
-	if v.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("model must be a struct or pointer to struct")
-	}
+	sm := m.getOrBuildSafeStructMarshaler(v.Type(), metadata)
+	nowStr := nowTimestampIfSafeNeeded(sm.fields)
 
-	// Get or create cached marshaler
-	typ := v.Type()
+	return m.marshalSafeStructFields(v, sm.fields, sm.minFields, nowStr)
+}
+
+func (m *SafeMarshaler) getOrBuildSafeStructMarshaler(typ reflect.Type, metadata *model.Metadata) *safeStructMarshaler {
 	cached, ok := m.cache.Load(typ)
 	if !ok {
 		sm := m.buildSafeStructMarshaler(typ, metadata)
@@ -68,59 +66,54 @@ func (m *SafeMarshaler) MarshalItem(model any, metadata *model.Metadata) (map[st
 	}
 
 	sm, ok := cached.(*safeStructMarshaler)
-	if !ok {
-		m.cache.Delete(typ)
-		sm = m.buildSafeStructMarshaler(typ, metadata)
-		m.cache.Store(typ, sm)
+	if ok && sm != nil {
+		return sm
 	}
 
-	// Pre-allocate result map with estimated size
-	result := make(map[string]types.AttributeValue, sm.minFields)
+	m.cache.Delete(typ)
+	sm = m.buildSafeStructMarshaler(typ, metadata)
+	m.cache.Store(typ, sm)
+	return sm
+}
 
-	// Pre-calculate timestamps once if needed
-	var nowStr string
-	hasTimestamps := false
-	for _, fm := range sm.fields {
+func nowTimestampIfSafeNeeded(fields []safeFieldMarshaler) string {
+	for _, fm := range fields {
 		if fm.isCreatedAt || fm.isUpdatedAt {
-			hasTimestamps = true
-			break
+			return time.Now().Format(time.RFC3339Nano)
 		}
 	}
-	if hasTimestamps {
-		nowStr = time.Now().Format(time.RFC3339Nano)
-	}
+	return ""
+}
 
-	// Marshal each field using safe reflection
-	for _, fm := range sm.fields {
-		// Handle special fields that don't require field access
+func (m *SafeMarshaler) marshalSafeStructFields(
+	v reflect.Value,
+	fields []safeFieldMarshaler,
+	minFields int,
+	nowStr string,
+) (map[string]types.AttributeValue, error) {
+	result := make(map[string]types.AttributeValue, minFields)
+
+	for i := range fields {
+		fm := &fields[i]
+
 		if fm.isCreatedAt || fm.isUpdatedAt {
 			result[fm.dbName] = &types.AttributeValueMemberS{Value: nowStr}
 			continue
 		}
 
-		// Get field value safely using reflection
 		field := v.FieldByIndex(fm.fieldIndex)
-
-		// Handle version field specially
 		if fm.isVersion {
 			if field.Kind() == reflect.Int64 {
-				val := field.Int()
-				if val == 0 {
-					result[fm.dbName] = &types.AttributeValueMemberN{Value: "0"}
-				} else {
-					result[fm.dbName] = &types.AttributeValueMemberN{Value: strconv.FormatInt(val, 10)}
-				}
+				result[fm.dbName] = marshalVersionNumber(field.Int())
 			}
 			continue
 		}
 
-		// Marshal the field value safely
-		av, err := m.marshalValue(field, &fm)
+		av, err := m.marshalValue(field, fm)
 		if err != nil {
 			return nil, fmt.Errorf("field %s: %w", fm.dbName, err)
 		}
 
-		// Skip NULL values if omitempty
 		if _, isNull := av.(*types.AttributeValueMemberNULL); isNull && fm.omitEmpty {
 			continue
 		}
@@ -175,7 +168,6 @@ func (m *SafeMarshaler) buildSafeStructMarshaler(typ reflect.Type, metadata *mod
 
 // marshalValue safely marshals a reflect.Value to AttributeValue
 func (m *SafeMarshaler) marshalValue(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, error) {
-	// Handle nil pointers
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
 			return &types.AttributeValueMemberNULL{Value: true}, nil
@@ -183,7 +175,6 @@ func (m *SafeMarshaler) marshalValue(v reflect.Value, fieldMeta *safeFieldMarsha
 		v = v.Elem()
 	}
 
-	// Check for zero values with omitempty
 	if fieldMeta.omitEmpty && v.IsZero() {
 		return &types.AttributeValueMemberNULL{Value: true}, nil
 	}
@@ -191,64 +182,70 @@ func (m *SafeMarshaler) marshalValue(v reflect.Value, fieldMeta *safeFieldMarsha
 	switch v.Kind() {
 	case reflect.String:
 		return &types.AttributeValueMemberS{Value: v.String()}, nil
-
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return &types.AttributeValueMemberN{Value: strconv.FormatInt(v.Int(), 10)}, nil
-
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		return &types.AttributeValueMemberN{Value: strconv.FormatUint(v.Uint(), 10)}, nil
-
 	case reflect.Float32, reflect.Float64:
 		return &types.AttributeValueMemberN{Value: strconv.FormatFloat(v.Float(), 'f', -1, 64)}, nil
-
 	case reflect.Bool:
 		return &types.AttributeValueMemberBOOL{Value: v.Bool()}, nil
-
 	case reflect.Struct:
-		// Special handling for time.Time
-		if v.Type() == reflect.TypeOf(time.Time{}) {
-			t, ok := v.Interface().(time.Time)
-			if !ok {
-				return nil, fmt.Errorf("expected time.Time, got %T", v.Interface())
-			}
-			if fieldMeta.isTTL {
-				return &types.AttributeValueMemberN{Value: strconv.FormatInt(t.Unix(), 10)}, nil
-			}
-			return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
-		}
-		// For other structs, marshal as a map
-		return m.marshalStruct(v)
-
+		return m.marshalStructValue(v, fieldMeta)
 	case reflect.Slice:
-		if v.IsNil() {
-			return &types.AttributeValueMemberNULL{Value: true}, nil
-		}
-		// Handle string sets
-		if v.Type().Elem().Kind() == reflect.String && fieldMeta.isSet {
-			strings := make([]string, v.Len())
-			for i := 0; i < v.Len(); i++ {
-				strings[i] = v.Index(i).String()
-			}
-			return &types.AttributeValueMemberSS{Value: strings}, nil
-		}
-		// Handle regular lists
-		return m.marshalSlice(v)
-
+		return m.marshalSliceValue(v, fieldMeta)
 	case reflect.Map:
-		if v.IsNil() {
-			return &types.AttributeValueMemberNULL{Value: true}, nil
-		}
-		return m.marshalMap(v)
-
+		return m.marshalMapValue(v)
 	case reflect.Interface:
-		if v.IsNil() {
-			return &types.AttributeValueMemberNULL{Value: true}, nil
-		}
-		return m.marshalValue(v.Elem(), fieldMeta)
-
+		return m.marshalInterfaceValue(v, fieldMeta)
 	default:
 		return nil, fmt.Errorf("unsupported type: %v", v.Kind())
 	}
+}
+
+func (m *SafeMarshaler) marshalStructValue(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, error) {
+	if v.Type() == timeType {
+		t, ok := v.Interface().(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("expected time.Time, got %T", v.Interface())
+		}
+		if fieldMeta.isTTL {
+			return &types.AttributeValueMemberN{Value: strconv.FormatInt(t.Unix(), 10)}, nil
+		}
+		return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
+	}
+
+	return m.marshalStruct(v)
+}
+
+func (m *SafeMarshaler) marshalSliceValue(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, error) {
+	if v.IsNil() {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
+	}
+
+	if v.Type().Elem().Kind() == reflect.String && fieldMeta.isSet {
+		values := make([]string, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			values[i] = v.Index(i).String()
+		}
+		return &types.AttributeValueMemberSS{Value: values}, nil
+	}
+
+	return m.marshalSlice(v)
+}
+
+func (m *SafeMarshaler) marshalMapValue(v reflect.Value) (types.AttributeValue, error) {
+	if v.IsNil() {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
+	}
+	return m.marshalMap(v)
+}
+
+func (m *SafeMarshaler) marshalInterfaceValue(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, error) {
+	if v.IsNil() {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
+	}
+	return m.marshalValue(v.Elem(), fieldMeta)
 }
 
 // marshalSlice safely marshals a slice
