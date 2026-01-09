@@ -29,6 +29,11 @@ import (
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
+const (
+	operatorBeginsWith = "BEGINS_WITH"
+	operatorBetween    = "BETWEEN"
+)
+
 // DB is the main DynamORM database instance
 type DB struct {
 	lambdaDeadline      time.Time
@@ -873,6 +878,52 @@ func (q *query) All(dest any) error {
 	return q.allInternal(dest)
 }
 
+func (q *query) partitionConditions(metadata *model.Metadata) (bool, []condition, []condition) {
+	useQuery := false
+	var keyConditions []condition
+	var filterConditions []condition
+
+	for _, cond := range q.conditions {
+		normalizedCond := condition{
+			field: cond.field,
+			op:    normalizeOperator(cond.op),
+			value: cond.value,
+		}
+
+		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
+		if !exists {
+			filterConditions = append(filterConditions, normalizedCond)
+			continue
+		}
+
+		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
+
+		if isPK || isSK {
+			// DynamoDB supports these operators for key conditions:
+			// Partition key: = (equality only)
+			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
+			if normalizedCond.op == "=" || normalizedCond.op == operatorBeginsWith ||
+				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
+				normalizedCond.op == operatorBetween {
+				// Partition keys still require equality. If a non-equality comparison is attempted
+				// against the partition key, treat it as a filter to surface the correct Dynamo error.
+				if isPK && normalizedCond.op != "=" {
+					filterConditions = append(filterConditions, normalizedCond)
+				} else {
+					keyConditions = append(keyConditions, normalizedCond)
+					useQuery = true
+				}
+			} else {
+				filterConditions = append(filterConditions, normalizedCond)
+			}
+		} else {
+			filterConditions = append(filterConditions, normalizedCond)
+		}
+	}
+
+	return useQuery, keyConditions, filterConditions
+}
+
 // allInternal is the actual implementation of All
 func (q *query) allInternal(dest any) error {
 	if err := q.checkBuilderError(); err != nil {
@@ -896,48 +947,7 @@ func (q *query) allInternal(dest any) error {
 	}
 
 	// Determine if we should use Query or Scan
-	useQuery := false
-	var keyConditions []condition
-	var filterConditions []condition
-
-	// Check if we have partition key condition
-	for _, cond := range q.conditions {
-		normalizedCond := condition{
-			field: cond.field,
-			op:    normalizeOperator(cond.op),
-			value: cond.value,
-		}
-
-		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
-		if !exists {
-			filterConditions = append(filterConditions, normalizedCond)
-			continue
-		}
-
-		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
-
-		if isPK || isSK {
-			// DynamoDB supports these operators for key conditions:
-			// Partition key: = (equality only)
-			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
-			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
-				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
-				normalizedCond.op == "BETWEEN" {
-				// Partition keys still require equality. If a non-equality comparison is attempted
-				// against the partition key, treat it as a filter to surface the correct Dynamo error.
-				if isPK && normalizedCond.op != "=" {
-					filterConditions = append(filterConditions, normalizedCond)
-				} else {
-					keyConditions = append(keyConditions, normalizedCond)
-					useQuery = true
-				}
-			} else {
-				filterConditions = append(filterConditions, normalizedCond)
-			}
-		} else {
-			filterConditions = append(filterConditions, normalizedCond)
-		}
-	}
+	useQuery, keyConditions, filterConditions := q.partitionConditions(metadata)
 
 	// Execute Query or Scan
 	var items []map[string]types.AttributeValue
@@ -1026,46 +1036,7 @@ func (q *query) Count() (int64, error) {
 	}
 
 	// Determine if we should use Query or Scan
-	useQuery := false
-	var keyConditions []condition
-	var filterConditions []condition
-
-	// Check if we have partition key condition
-	for _, cond := range q.conditions {
-		normalizedCond := condition{
-			field: cond.field,
-			op:    normalizeOperator(cond.op),
-			value: cond.value,
-		}
-
-		fieldMeta, exists := lookupField(metadata, normalizedCond.field)
-		if !exists {
-			filterConditions = append(filterConditions, normalizedCond)
-			continue
-		}
-
-		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
-
-		if isPK || isSK {
-			// DynamoDB supports these operators for key conditions:
-			// Partition key: = (equality only)
-			// Sort key: =, <, <=, >, >=, BETWEEN, BEGINS_WITH
-			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
-				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
-				normalizedCond.op == "BETWEEN" {
-				if isPK && normalizedCond.op != "=" {
-					filterConditions = append(filterConditions, normalizedCond)
-				} else {
-					keyConditions = append(keyConditions, normalizedCond)
-					useQuery = true
-				}
-			} else {
-				filterConditions = append(filterConditions, normalizedCond)
-			}
-		} else {
-			filterConditions = append(filterConditions, normalizedCond)
-		}
-	}
+	useQuery, keyConditions, filterConditions := q.partitionConditions(metadata)
 
 	// Execute count operation
 	if useQuery {
@@ -1984,16 +1955,17 @@ func (q *query) marshalItem(model any, metadata *model.Metadata) (map[string]typ
 		}
 
 		// Handle special fields
-		if fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt {
+		switch {
+		case fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt:
 			// Set to current time
 			now := time.Now()
 			fieldValue = reflect.ValueOf(now)
-		} else if fieldMeta.IsVersion {
+		case fieldMeta.IsVersion:
 			// Initialize version to 0 for new items
 			if fieldValue.IsZero() {
 				fieldValue = reflect.ValueOf(int64(0))
 			}
-		} else if fieldMeta.IsTTL {
+		case fieldMeta.IsTTL:
 			// Convert TTL to Unix timestamp if it's a time.Time
 			if fieldValue.Type() == reflect.TypeOf(time.Time{}) && !fieldValue.IsZero() {
 				ttlTime, ok := fieldValue.Interface().(time.Time)
@@ -2531,16 +2503,16 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
 
 		// Handle special fields
-		if fieldMeta.IsUpdatedAt {
+		switch {
+		case fieldMeta.IsUpdatedAt:
 			// Always update to current time
 			builder.AddUpdateSet(fieldMeta.DBName, time.Now())
-		} else if fieldMeta.IsVersion {
+		case fieldMeta.IsVersion:
 			// Increment version
 			builder.AddUpdateAdd(fieldMeta.DBName, int64(1))
-		} else {
+		default:
 			// Regular field update
-			value := fieldValue.Interface()
-			builder.AddUpdateSet(fieldMeta.DBName, value)
+			builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface())
 		}
 	}
 
@@ -2863,9 +2835,9 @@ func (q *query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 		isPK, isSK := q.determineKeyRoles(fieldMeta, metadata)
 		if isPK || isSK {
-			if normalizedCond.op == "=" || normalizedCond.op == "BEGINS_WITH" ||
+			if normalizedCond.op == "=" || normalizedCond.op == operatorBeginsWith ||
 				normalizedCond.op == "<" || normalizedCond.op == "<=" || normalizedCond.op == ">" || normalizedCond.op == ">=" ||
-				normalizedCond.op == "BETWEEN" {
+				normalizedCond.op == operatorBetween {
 				if isPK && normalizedCond.op != "=" {
 					filterConditions = append(filterConditions, normalizedCond)
 				} else {

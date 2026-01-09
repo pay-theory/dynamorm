@@ -629,7 +629,7 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 	}
 
 	// Prepare write requests
-	var allRequests []types.WriteRequest
+	allRequests := make([]types.WriteRequest, 0, totalItems)
 
 	// Add put requests
 	for _, item := range putItems {

@@ -472,7 +472,7 @@ func (m ColdStartMetrics) String() string {
 	result.WriteString("Phases:\n")
 
 	// Sort phases for consistent output
-	var phases []string
+	phases := make([]string, 0, len(m.Phases))
 	for phase := range m.Phases {
 		phases = append(phases, phase)
 	}

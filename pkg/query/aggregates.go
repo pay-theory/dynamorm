@@ -67,8 +67,7 @@ func (q *Query) Average(field string) (float64, error) {
 	return sum / float64(count), nil
 }
 
-// Min finds the minimum value of a field
-func (q *Query) Min(field string) (any, error) {
+func (q *Query) extremeValue(field string, direction int) (any, error) {
 	// Get all items
 	items, err := q.getAllItems()
 	if err != nil {
@@ -79,7 +78,7 @@ func (q *Query) Min(field string) (any, error) {
 		return nil, fmt.Errorf("no items found")
 	}
 
-	var minValue any
+	var extremeValue any
 	first := true
 
 	for _, item := range items {
@@ -89,60 +88,32 @@ func (q *Query) Min(field string) (any, error) {
 		}
 
 		if first {
-			minValue = value
+			extremeValue = value
 			first = false
 			continue
 		}
 
-		if compareValues(value, minValue) < 0 {
-			minValue = value
+		comparison := compareValues(value, extremeValue)
+		if (direction < 0 && comparison < 0) || (direction > 0 && comparison > 0) {
+			extremeValue = value
 		}
 	}
 
-	if minValue == nil {
+	if extremeValue == nil {
 		return nil, fmt.Errorf("no valid values found for field %s", field)
 	}
 
-	return minValue, nil
+	return extremeValue, nil
+}
+
+// Min finds the minimum value of a field
+func (q *Query) Min(field string) (any, error) {
+	return q.extremeValue(field, -1)
 }
 
 // Max finds the maximum value of a field
 func (q *Query) Max(field string) (any, error) {
-	// Get all items
-	items, err := q.getAllItems()
-	if err != nil {
-		return nil, err
-	}
-
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no items found")
-	}
-
-	var maxValue any
-	first := true
-
-	for _, item := range items {
-		value := extractFieldValue(item, field)
-		if value == nil {
-			continue
-		}
-
-		if first {
-			maxValue = value
-			first = false
-			continue
-		}
-
-		if compareValues(value, maxValue) > 0 {
-			maxValue = value
-		}
-	}
-
-	if maxValue == nil {
-		return nil, fmt.Errorf("no valid values found for field %s", field)
-	}
-
-	return maxValue, nil
+	return q.extremeValue(field, 1)
 }
 
 // Aggregate performs multiple aggregate operations in a single pass

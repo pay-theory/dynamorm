@@ -11,6 +11,8 @@ import (
 	"github.com/pay-theory/dynamorm/pkg/naming"
 )
 
+const tagValueTrue = "true"
+
 // Registry manages registered models and their metadata
 type Registry struct {
 	models map[reflect.Type]*Metadata
@@ -232,7 +234,9 @@ func parseMetadata(modelType reflect.Type) (*Metadata, error) {
 func parseFields(modelType reflect.Type, metadata *Metadata, indexMap map[string]*IndexSchema, indexPath []int) error {
 	for i := 0; i < modelType.NumField(); i++ {
 		field := modelType.Field(i)
-		currentPath := append(indexPath, i)
+		currentPath := make([]int, len(indexPath)+1)
+		copy(currentPath, indexPath)
+		currentPath[len(indexPath)] = i
 
 		// Skip unexported fields
 		if !field.IsExported() {
@@ -419,7 +423,7 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int, convention n
 
 				meta.IndexInfo[indexName] = role
 				// Mark this index as LSI explicitly
-				meta.Tags["lsi:"+indexName] = "true"
+				meta.Tags["lsi:"+indexName] = tagValueTrue
 			case "project":
 				meta.Tags["project"] = value
 			default:
@@ -447,7 +451,7 @@ func parseFieldMetadata(field reflect.StructField, indexPath []int, convention n
 			case "omitempty":
 				meta.OmitEmpty = true
 			case "binary", "json", "encrypted":
-				meta.Tags[part] = "true"
+				meta.Tags[part] = tagValueTrue
 			default:
 				return nil, fmt.Errorf("%w: unknown tag '%s'", errors.ErrInvalidTag, part)
 			}
@@ -488,7 +492,7 @@ func parseIndexTag(meta *FieldMetadata, value string) error {
 			case "sk":
 				role.IsSK = true
 			case "sparse":
-				meta.Tags["sparse:"+indexName] = "true"
+				meta.Tags["sparse:"+indexName] = tagValueTrue
 			default:
 				return fmt.Errorf("%w: unknown index tag modifier '%s'", errors.ErrInvalidTag, part)
 			}
@@ -560,8 +564,8 @@ func determineIndexType(indexName string) IndexType {
 
 // splitTags splits struct tags while keeping index/LSI modifiers attached to the index tag
 func splitTags(tag string) []string {
-	var parts []string
 	tokens := strings.Split(tag, ",")
+	parts := make([]string, 0, len(tokens))
 
 	var current strings.Builder
 	inIndexClause := false

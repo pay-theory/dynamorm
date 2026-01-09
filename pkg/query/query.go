@@ -409,7 +409,7 @@ func (q *Query) First(dest any) error {
 		return err
 	}
 
-	if compiled.Operation == "Query" {
+	if compiled.Operation == operationQuery {
 		return q.executor.ExecuteQuery(compiled, dest)
 	}
 	return q.executor.ExecuteScan(compiled, dest)
@@ -425,7 +425,7 @@ func (q *Query) All(dest any) error {
 		return err
 	}
 
-	if compiled.Operation == "Query" {
+	if compiled.Operation == operationQuery {
 		return q.executor.ExecuteQuery(compiled, dest)
 	}
 	return q.executor.ExecuteScan(compiled, dest)
@@ -449,7 +449,7 @@ func (q *Query) Count() (int64, error) {
 		ScannedCount int64
 	}
 
-	if compiled.Operation == "Query" {
+	if compiled.Operation == operationQuery {
 		err = q.executor.ExecuteQuery(compiled, &result)
 	} else {
 		err = q.executor.ExecuteScan(compiled, &result)
@@ -1109,7 +1109,7 @@ func (q *Query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 
 	// Execute the query
 	var result any
-	if compiled.Operation == "Query" {
+	if compiled.Operation == operationQuery {
 		result, err = q.executePaginatedQuery(compiled, dest)
 	} else {
 		result, err = q.executePaginatedScan(compiled, dest)
@@ -1181,66 +1181,76 @@ func (q *Query) Cursor(cursor string) core.Query {
 	return q
 }
 
-// executePaginatedQuery executes a query with pagination support
-func (q *Query) executePaginatedQuery(compiled *core.CompiledQuery, dest any) (any, error) {
-	// Check if executor supports pagination
-	if paginatedExecutor, ok := q.executor.(PaginatedQueryExecutor); ok {
-		result, err := paginatedExecutor.ExecuteQueryWithPagination(compiled, dest)
-		if err != nil {
-			return nil, err
-		}
-
-		// Return the actual pagination info
-		return map[string]any{
-			"Count":            result.Count,
-			"ScannedCount":     result.ScannedCount,
-			"LastEvaluatedKey": result.LastEvaluatedKey,
-		}, nil
+func paginationInfoMap(count int64, scannedCount int64, lastEvaluatedKey map[string]types.AttributeValue) map[string]any {
+	return map[string]any{
+		"Count":            count,
+		"ScannedCount":     scannedCount,
+		"LastEvaluatedKey": lastEvaluatedKey,
 	}
+}
 
-	// Fall back to regular query without pagination info
-	err := q.executor.ExecuteQuery(compiled, dest)
-	if err != nil {
-		return nil, err
-	}
-
-	// Return mock result for backward compatibility
+func emptyPaginationInfoMap() map[string]any {
 	return map[string]any{
 		"Count":            0,
 		"ScannedCount":     0,
 		"LastEvaluatedKey": nil,
-	}, nil
+	}
+}
+
+func (q *Query) executeWithOptionalPagination(
+	compiled *core.CompiledQuery,
+	dest any,
+	execPaginated func(PaginatedQueryExecutor, *core.CompiledQuery, any) (int64, int64, map[string]types.AttributeValue, error),
+	exec func(*core.CompiledQuery, any) error,
+) (any, error) {
+	// Check if executor supports pagination
+	if paginatedExecutor, ok := q.executor.(PaginatedQueryExecutor); ok {
+		count, scannedCount, lastEvaluatedKey, err := execPaginated(paginatedExecutor, compiled, dest)
+		if err != nil {
+			return nil, err
+		}
+		return paginationInfoMap(count, scannedCount, lastEvaluatedKey), nil
+	}
+
+	// Fall back to regular execution without pagination info
+	if err := exec(compiled, dest); err != nil {
+		return nil, err
+	}
+
+	// Return mock result for backward compatibility
+	return emptyPaginationInfoMap(), nil
+}
+
+// executePaginatedQuery executes a query with pagination support
+func (q *Query) executePaginatedQuery(compiled *core.CompiledQuery, dest any) (any, error) {
+	return q.executeWithOptionalPagination(
+		compiled,
+		dest,
+		func(exec PaginatedQueryExecutor, compiled *core.CompiledQuery, dest any) (int64, int64, map[string]types.AttributeValue, error) {
+			result, err := exec.ExecuteQueryWithPagination(compiled, dest)
+			if err != nil {
+				return 0, 0, nil, err
+			}
+			return result.Count, result.ScannedCount, result.LastEvaluatedKey, nil
+		},
+		q.executor.ExecuteQuery,
+	)
 }
 
 // executePaginatedScan executes a scan with pagination support
 func (q *Query) executePaginatedScan(compiled *core.CompiledQuery, dest any) (any, error) {
-	// Check if executor supports pagination
-	if paginatedExecutor, ok := q.executor.(PaginatedQueryExecutor); ok {
-		result, err := paginatedExecutor.ExecuteScanWithPagination(compiled, dest)
-		if err != nil {
-			return nil, err
-		}
-
-		// Return the actual pagination info
-		return map[string]any{
-			"Count":            result.Count,
-			"ScannedCount":     result.ScannedCount,
-			"LastEvaluatedKey": result.LastEvaluatedKey,
-		}, nil
-	}
-
-	// Fall back to regular scan without pagination info
-	err := q.executor.ExecuteScan(compiled, dest)
-	if err != nil {
-		return nil, err
-	}
-
-	// Return mock result for backward compatibility
-	return map[string]any{
-		"Count":            0,
-		"ScannedCount":     0,
-		"LastEvaluatedKey": nil,
-	}, nil
+	return q.executeWithOptionalPagination(
+		compiled,
+		dest,
+		func(exec PaginatedQueryExecutor, compiled *core.CompiledQuery, dest any) (int64, int64, map[string]types.AttributeValue, error) {
+			result, err := exec.ExecuteScanWithPagination(compiled, dest)
+			if err != nil {
+				return 0, 0, nil, err
+			}
+			return result.Count, result.ScannedCount, result.LastEvaluatedKey, nil
+		},
+		q.executor.ExecuteScan,
+	)
 }
 
 // encodeCursor encodes the LastEvaluatedKey as a cursor string
@@ -1322,7 +1332,7 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 
 	// If we have a suitable index, use Query operation
 	if bestIndex != nil {
-		compiled.Operation = "Query"
+		compiled.Operation = operationQuery
 		if bestIndex.Name != "" {
 			compiled.IndexName = bestIndex.Name
 		}
@@ -1437,7 +1447,7 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		}
 	} else {
 		// Must use Scan
-		compiled.Operation = "Scan"
+		compiled.Operation = operationScan
 
 		// All conditions become filters
 		for _, original := range q.conditions {
@@ -1500,7 +1510,7 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 
 	compiled := &core.CompiledQuery{
 		TableName: q.metadata.TableName(),
-		Operation: "Scan",
+		Operation: operationScan,
 	}
 
 	// Add filter conditions from Where clauses
@@ -1583,8 +1593,7 @@ func (q *Query) OrFilter(field string, op string, value any) core.Query {
 	return q
 }
 
-// FilterGroup adds a grouped AND filter condition
-func (q *Query) FilterGroup(fn func(core.Query)) core.Query {
+func (q *Query) addFilterGroup(groupOperator string, fn func(core.Query)) core.Query {
 	// Initialize builder if not already done
 	if q.builder == nil {
 		q.builder = expr.NewBuilder()
@@ -1610,39 +1619,18 @@ func (q *Query) FilterGroup(fn func(core.Query)) core.Query {
 	components := subBuilder.Build()
 
 	// Add the built group to the main builder
-	q.builder.AddGroupFilter("AND", components)
+	q.builder.AddGroupFilter(groupOperator, components)
 	return q
+}
+
+// FilterGroup adds a grouped AND filter condition
+func (q *Query) FilterGroup(fn func(core.Query)) core.Query {
+	return q.addFilterGroup("AND", fn)
 }
 
 // OrFilterGroup adds a grouped OR filter condition
 func (q *Query) OrFilterGroup(fn func(core.Query)) core.Query {
-	// Initialize builder if not already done
-	if q.builder == nil {
-		q.builder = expr.NewBuilder()
-	}
-
-	// Create a new sub-query and builder for the group
-	subBuilder := expr.NewBuilder()
-	subQuery := &Query{
-		model:    q.model,
-		metadata: q.metadata,
-		executor: q.executor,
-		ctx:      q.ctx,
-		builder:  subBuilder,
-	}
-
-	// Execute the user's function to build the sub-query
-	fn(subQuery)
-	if err := subQuery.checkBuilderError(); err != nil {
-		q.recordBuilderError(err)
-	}
-
-	// Build the components from the sub-query
-	components := subBuilder.Build()
-
-	// Add the built group to the main builder
-	q.builder.AddGroupFilter("OR", components)
-	return q
+	return q.addFilterGroup("OR", fn)
 }
 
 // IfNotExists ensures the primary key does not exist prior to write

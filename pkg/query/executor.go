@@ -222,47 +222,123 @@ func (e *MainExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 	return UnmarshalItems(allItems, dest)
 }
 
-// ExecutePutItem implements PutItemExecutor.ExecutePutItem
-func (e *MainExecutor) ExecutePutItem(input *core.CompiledQuery, item map[string]types.AttributeValue) error {
+func applyCompiledQueryWriteConditions(
+	input *core.CompiledQuery,
+	conditionExpression **string,
+	expressionAttributeNames *map[string]string,
+	expressionAttributeValues *map[string]types.AttributeValue,
+) {
+	if input.ConditionExpression != "" {
+		*conditionExpression = &input.ConditionExpression
+	}
+	if len(input.ExpressionAttributeNames) > 0 {
+		*expressionAttributeNames = input.ExpressionAttributeNames
+	}
+	if len(input.ExpressionAttributeValues) > 0 {
+		*expressionAttributeValues = input.ExpressionAttributeValues
+	}
+}
+
+type conditionalWriteRequest interface {
+	applyCompiledQuery(input *core.CompiledQuery)
+	setAttributes(attributes map[string]types.AttributeValue)
+	execute(ctx context.Context, client DynamoDBAPI) error
+}
+
+type putItemRequest struct {
+	input *dynamodb.PutItemInput
+}
+
+func newPutItemRequest(tableName *string) conditionalWriteRequest {
+	return &putItemRequest{
+		input: &dynamodb.PutItemInput{
+			TableName: tableName,
+		},
+	}
+}
+
+func (r *putItemRequest) applyCompiledQuery(input *core.CompiledQuery) {
+	applyCompiledQueryWriteConditions(input, &r.input.ConditionExpression, &r.input.ExpressionAttributeNames, &r.input.ExpressionAttributeValues)
+}
+
+func (r *putItemRequest) setAttributes(attributes map[string]types.AttributeValue) {
+	r.input.Item = attributes
+}
+
+func (r *putItemRequest) execute(ctx context.Context, client DynamoDBAPI) error {
+	_, err := client.PutItem(ctx, r.input)
+	return err
+}
+
+type deleteItemRequest struct {
+	input *dynamodb.DeleteItemInput
+}
+
+func newDeleteItemRequest(tableName *string) conditionalWriteRequest {
+	return &deleteItemRequest{
+		input: &dynamodb.DeleteItemInput{
+			TableName: tableName,
+		},
+	}
+}
+
+func (r *deleteItemRequest) applyCompiledQuery(input *core.CompiledQuery) {
+	applyCompiledQueryWriteConditions(input, &r.input.ConditionExpression, &r.input.ExpressionAttributeNames, &r.input.ExpressionAttributeValues)
+}
+
+func (r *deleteItemRequest) setAttributes(attributes map[string]types.AttributeValue) {
+	r.input.Key = attributes
+}
+
+func (r *deleteItemRequest) execute(ctx context.Context, client DynamoDBAPI) error {
+	_, err := client.DeleteItem(ctx, r.input)
+	return err
+}
+
+func (e *MainExecutor) executeConditionalWrite(
+	input *core.CompiledQuery,
+	attributes map[string]types.AttributeValue,
+	emptyWhat string,
+	operation string,
+	exec func(context.Context, *core.CompiledQuery, map[string]types.AttributeValue) error,
+) error {
 	if input == nil {
 		return fmt.Errorf("compiled query cannot be nil")
 	}
 
-	if len(item) == 0 {
-		return fmt.Errorf("item cannot be empty")
+	if len(attributes) == 0 {
+		return fmt.Errorf("%s cannot be empty", emptyWhat)
 	}
 
-	// Build PutItem input
-	putInput := &dynamodb.PutItemInput{
-		TableName: &input.TableName,
-		Item:      item,
+	err := exec(e.ctx, input, attributes)
+	if err == nil {
+		return nil
 	}
 
-	// Set condition expression if present
-	if input.ConditionExpression != "" {
-		putInput.ConditionExpression = &input.ConditionExpression
+	if isConditionalCheckFailed(err) {
+		return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
 	}
+	return fmt.Errorf("failed to %s item: %w", operation, err)
+}
 
-	// Set expression attribute names
-	if len(input.ExpressionAttributeNames) > 0 {
-		putInput.ExpressionAttributeNames = input.ExpressionAttributeNames
-	}
+func (e *MainExecutor) executeConditionalWriteRequest(
+	input *core.CompiledQuery,
+	attributes map[string]types.AttributeValue,
+	emptyWhat string,
+	operation string,
+	newRequest func(*string) conditionalWriteRequest,
+) error {
+	return e.executeConditionalWrite(input, attributes, emptyWhat, operation, func(ctx context.Context, input *core.CompiledQuery, attributes map[string]types.AttributeValue) error {
+		req := newRequest(&input.TableName)
+		req.setAttributes(attributes)
+		req.applyCompiledQuery(input)
+		return req.execute(ctx, e.client)
+	})
+}
 
-	// Set expression attribute values
-	if len(input.ExpressionAttributeValues) > 0 {
-		putInput.ExpressionAttributeValues = input.ExpressionAttributeValues
-	}
-
-	// Execute the put
-	_, err := e.client.PutItem(e.ctx, putInput)
-	if err != nil {
-		if isConditionalCheckFailed(err) {
-			return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
-		}
-		return fmt.Errorf("failed to put item: %w", err)
-	}
-
-	return nil
+// ExecutePutItem implements PutItemExecutor.ExecutePutItem
+func (e *MainExecutor) ExecutePutItem(input *core.CompiledQuery, item map[string]types.AttributeValue) error {
+	return e.executeConditionalWriteRequest(input, item, "item", "put", newPutItemRequest)
 }
 
 // ExecuteUpdateItem implements UpdateItemExecutor.ExecuteUpdateItem
@@ -281,45 +357,7 @@ func (e *MainExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, ke
 
 // ExecuteDeleteItem implements DeleteItemExecutor.ExecuteDeleteItem
 func (e *MainExecutor) ExecuteDeleteItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
-	if input == nil {
-		return fmt.Errorf("compiled query cannot be nil")
-	}
-
-	if len(key) == 0 {
-		return fmt.Errorf("key cannot be empty")
-	}
-
-	// Build DeleteItem input
-	deleteInput := &dynamodb.DeleteItemInput{
-		TableName: &input.TableName,
-		Key:       key,
-	}
-
-	// Set condition expression if present
-	if input.ConditionExpression != "" {
-		deleteInput.ConditionExpression = &input.ConditionExpression
-	}
-
-	// Set expression attribute names
-	if len(input.ExpressionAttributeNames) > 0 {
-		deleteInput.ExpressionAttributeNames = input.ExpressionAttributeNames
-	}
-
-	// Set expression attribute values
-	if len(input.ExpressionAttributeValues) > 0 {
-		deleteInput.ExpressionAttributeValues = input.ExpressionAttributeValues
-	}
-
-	// Execute the delete
-	_, err := e.client.DeleteItem(e.ctx, deleteInput)
-	if err != nil {
-		if isConditionalCheckFailed(err) {
-			return fmt.Errorf("%w: %v", customerrors.ErrConditionFailed, err)
-		}
-		return fmt.Errorf("failed to delete item: %w", err)
-	}
-
-	return nil
+	return e.executeConditionalWriteRequest(input, key, "key", "delete", newDeleteItemRequest)
 }
 
 // ExecuteQueryWithPagination implements PaginatedQueryExecutor.ExecuteQueryWithPagination

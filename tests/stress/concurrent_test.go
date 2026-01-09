@@ -525,13 +525,14 @@ drainLoop:
 		// Calculate memory growth with safety checks
 		var memGrowth float64
 
-		if firstSample == 0 {
+		switch {
+		case firstSample == 0:
 			t.Logf("Warning: Initial memory sample was 0, cannot calculate growth percentage")
 			memGrowth = 0
-		} else if firstSample < 100*1024 { // Less than 100KB seems too small for a realistic baseline
+		case firstSample < 100*1024: // Less than 100KB seems too small for a realistic baseline
 			t.Logf("Warning: Initial memory sample too small (%d bytes = %.2f KB), growth calculation may be unreliable", firstSample, float64(firstSample)/1024)
 			memGrowth = 0
-		} else {
+		default:
 			memGrowth = float64(lastSample-firstSample) / float64(firstSample) * 100
 
 			// Sanity check: if growth is over 1000%, something is likely wrong

@@ -48,14 +48,13 @@ func WithRetry(query core.Query, config *RetryConfig) *RetryableQuery {
 	}
 }
 
-// First executes the query with retries
-func (r *RetryableQuery) First(dest any) error {
+func (r *RetryableQuery) executeWithRetry(dest any, exec func(any) error) error {
 	var lastErr error
 	delay := r.config.InitialDelay
 
 	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
 		// Execute the query
-		err := r.query.First(dest)
+		err := exec(dest)
 
 		// Check if we should retry
 		if !r.config.RetryCondition(dest, err) {
@@ -82,38 +81,14 @@ func (r *RetryableQuery) First(dest any) error {
 	return fmt.Errorf("query returned no results after %d retries", r.config.MaxRetries)
 }
 
+// First executes the query with retries
+func (r *RetryableQuery) First(dest any) error {
+	return r.executeWithRetry(dest, r.query.First)
+}
+
 // All executes the query with retries
 func (r *RetryableQuery) All(dest any) error {
-	var lastErr error
-	delay := r.config.InitialDelay
-
-	for attempt := 0; attempt <= r.config.MaxRetries; attempt++ {
-		// Execute the query
-		err := r.query.All(dest)
-
-		// Check if we should retry
-		if !r.config.RetryCondition(dest, err) {
-			return err
-		}
-
-		lastErr = err
-
-		// Don't sleep on the last attempt
-		if attempt < r.config.MaxRetries {
-			time.Sleep(delay)
-
-			// Calculate next delay with exponential backoff
-			delay = time.Duration(float64(delay) * r.config.BackoffFactor)
-			if delay > r.config.MaxDelay {
-				delay = r.config.MaxDelay
-			}
-		}
-	}
-
-	if lastErr != nil {
-		return fmt.Errorf("query failed after %d retries: %w", r.config.MaxRetries, lastErr)
-	}
-	return fmt.Errorf("query returned no results after %d retries", r.config.MaxRetries)
+	return r.executeWithRetry(dest, r.query.All)
 }
 
 // RetryWithVerification retries a query until a verification function returns true

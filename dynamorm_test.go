@@ -133,11 +133,12 @@ func (c *capturingHTTPClient) Do(req *http.Request) (*http.Response, error) {
 
 	respSeq, ok := c.responses[target]
 	var stub stubbedResponse
-	if !ok || len(respSeq) == 0 {
+	switch {
+	case !ok || len(respSeq) == 0:
 		stub = stubbedResponse{}
-	} else if callIndex < len(respSeq) {
+	case callIndex < len(respSeq):
 		stub = respSeq[callIndex]
-	} else {
+	default:
 		stub = respSeq[len(respSeq)-1]
 	}
 	c.mu.Unlock()
@@ -415,15 +416,16 @@ func TestQueryBuilderAllBuildsExpressions(t *testing.T) {
 	var sawTenantValue bool
 	var sawStatusValue bool
 	for _, v := range valuesMapRaw {
-		switch attr := v.(type) {
-		case map[string]any:
-			if s, ok := attr["S"].(string); ok {
-				if s == "tenant#123" || s == "2024-03-01T00:00:00Z" {
-					sawTenantValue = true
-				}
-				if s == "ACTIVE" {
-					sawStatusValue = true
-				}
+		if attr, ok := v.(map[string]any); ok {
+			s, ok := attr["S"].(string)
+			if !ok {
+				continue
+			}
+			if s == "tenant#123" || s == "2024-03-01T00:00:00Z" {
+				sawTenantValue = true
+			}
+			if s == "ACTIVE" {
+				sawStatusValue = true
 			}
 		}
 	}

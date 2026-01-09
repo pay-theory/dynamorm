@@ -114,10 +114,10 @@ func (o *QueryOptimizer) OptimizeQuery(q *Query) (*QueryPlan, error) {
 
 	// Determine operation type and analyze
 	if len(q.conditions) > 0 {
-		plan.Operation = "Query"
+		plan.Operation = operationQuery
 		o.analyzeQueryConditions(q, plan)
 	} else {
-		plan.Operation = "Scan"
+		plan.Operation = operationScan
 		o.analyzeScanOperation(q, plan)
 	}
 
@@ -220,16 +220,14 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 		queryStats, ok := stats.(*QueryStatistics)
 		if !ok {
 			o.queryStats.Delete(statsKey)
-		} else {
+		} else if queryStats.ExecutionCount > 10 {
 			// Use historical data for more accurate estimates
-			if queryStats.ExecutionCount > 10 {
-				estimate.ConfidenceLevel = 0.8
-				estimate.EstimatedDuration = queryStats.AverageDuration
-				avgItemsPerExecution := queryStats.TotalItemsRead / queryStats.ExecutionCount
-				estimate.EstimatedItemCount = avgItemsPerExecution
-				avgScannedPerExecution := queryStats.TotalItemsScanned / queryStats.ExecutionCount
-				estimate.EstimatedScanCount = avgScannedPerExecution
-			}
+			estimate.ConfidenceLevel = 0.8
+			estimate.EstimatedDuration = queryStats.AverageDuration
+			avgItemsPerExecution := queryStats.TotalItemsRead / queryStats.ExecutionCount
+			estimate.EstimatedItemCount = avgItemsPerExecution
+			avgScannedPerExecution := queryStats.TotalItemsScanned / queryStats.ExecutionCount
+			estimate.EstimatedScanCount = avgScannedPerExecution
 		}
 	}
 
@@ -239,7 +237,7 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 	}
 
 	// Calculate capacity units
-	if plan.Operation == "Query" {
+	if plan.Operation == operationQuery {
 		// Queries are more efficient
 		estimate.ReadCapacityUnits = float64(estimate.EstimatedItemCount) * 0.5 / 4.0 // 4KB per RCU
 	} else {
@@ -253,7 +251,7 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 // applyHeuristicEstimates applies rule-based estimates when no historical data exists
 func (o *QueryOptimizer) applyHeuristicEstimates(q *Query, plan *QueryPlan, estimate *CostEstimate) {
 	// Base estimates
-	if plan.Operation == "Query" {
+	if plan.Operation == operationQuery {
 		estimate.EstimatedItemCount = 100
 		estimate.EstimatedScanCount = 100
 		estimate.EstimatedDuration = 50 * time.Millisecond
@@ -272,7 +270,7 @@ func (o *QueryOptimizer) applyHeuristicEstimates(q *Query, plan *QueryPlan, esti
 
 	// Adjust for parallel scan
 	if plan.ParallelSegments > 1 {
-		estimate.EstimatedDuration = estimate.EstimatedDuration / time.Duration(plan.ParallelSegments)
+		estimate.EstimatedDuration /= time.Duration(plan.ParallelSegments)
 	}
 }
 
@@ -346,18 +344,15 @@ func (o *QueryOptimizer) RecordExecution(q *Query, result *QueryExecutionResult)
 		existingStats, ok := existing.(*QueryStatistics)
 		if !ok {
 			o.queryStats.Delete(statsKey)
-		} else {
-			stats = existingStats
+		} else if existingStats.MinDuration == 0 {
+			existingStats.MinDuration = result.Duration
 		}
+		stats = existingStats
 	}
 
 	if stats == nil {
 		stats = &QueryStatistics{
 			MinDuration: result.Duration,
-		}
-	} else {
-		if stats.MinDuration == 0 {
-			stats.MinDuration = result.Duration
 		}
 	}
 
@@ -499,9 +494,9 @@ func (oq *OptimizedQuery) Execute(dest any) error {
 	var itemsReturned, itemsScanned int64
 
 	switch oq.plan.Operation {
-	case "Query":
+	case operationQuery:
 		err = oq.All(dest)
-	case "Scan":
+	case operationScan:
 		if oq.plan.ParallelSegments > 1 {
 			err = oq.ScanAllSegments(dest, numutil.ClampIntToInt32(oq.plan.ParallelSegments))
 		} else {
