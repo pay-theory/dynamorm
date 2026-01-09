@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/pay-theory/dynamorm/internal/reflectutil"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
@@ -108,8 +109,8 @@ func (tx *Transaction) Update(model any) error {
 			continue
 		}
 
-		fieldValue := modelValue.Field(fieldMeta.Index)
-		if !fieldValue.IsValid() || (fieldMeta.OmitEmpty && fieldValue.IsZero()) {
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if !fieldValue.IsValid() || (fieldMeta.OmitEmpty && reflectutil.IsEmpty(fieldValue)) {
 			continue
 		}
 
@@ -134,7 +135,7 @@ func (tx *Transaction) Update(model any) error {
 	// Handle version field for optimistic locking
 	var conditionExpression string
 	if metadata.VersionField != nil {
-		versionValue := modelValue.Field(metadata.VersionField.Index)
+		versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
 		if versionValue.IsValid() && !versionValue.IsZero() {
 			currentVersion := versionValue.Int()
 			conditionExpression = "#ver = :currentVer"
@@ -162,8 +163,8 @@ func (tx *Transaction) Update(model any) error {
 		alreadyUpdated := false
 		for _, fieldMeta := range metadata.Fields {
 			if fieldMeta.DBName == metadata.UpdatedAtField.DBName {
-				fieldValue := modelValue.Field(fieldMeta.Index)
-				if fieldValue.IsValid() && !fieldValue.IsZero() {
+				fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+				if fieldValue.IsValid() && !reflectutil.IsEmpty(fieldValue) {
 					alreadyUpdated = true
 					break
 				}

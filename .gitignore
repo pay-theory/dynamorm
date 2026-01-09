@@ -81,6 +81,7 @@ Thumbs.db
 .cursor/
 
 # Project specific
+/docs/development/notes/
 /dynamorm
 /main
 main
