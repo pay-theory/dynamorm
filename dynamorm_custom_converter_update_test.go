@@ -134,7 +134,7 @@ func setupPayloadConverterTestDB(t *testing.T) (*DB, *capturingHTTPClient) {
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
 
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 	err = db.RegisterTypeConverter(reflect.TypeOf(TestPayloadJSON{}), TestPayloadJSONConverter{})
 	require.NoError(t, err)
 
@@ -150,7 +150,7 @@ func setupCustomIDConverterTestDB(t *testing.T) (*DB, *capturingHTTPClient) {
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
 
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 	err = db.RegisterTypeConverter(reflect.TypeOf(TestCustomID("")), TestCustomIDConverter{})
 	require.NoError(t, err)
 
@@ -163,7 +163,10 @@ func attrString(value string) map[string]any {
 
 func buildGetItemBody(attrs map[string]map[string]any) string {
 	body := map[string]any{"Item": attrs}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
 	return string(data)
 }
 
@@ -173,7 +176,10 @@ func buildScanBody(items []map[string]map[string]any) string {
 		"Count":        len(items),
 		"ScannedCount": len(items),
 	}
-	data, _ := json.Marshal(body)
+	data, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
 	return string(data)
 }
 
@@ -370,12 +376,17 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 
 		updateReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.UpdateItem")
 		require.NotNil(t, updateReq)
-		names := updateReq.Payload["ExpressionAttributeNames"].(map[string]any)
+		names, ok := updateReq.Payload["ExpressionAttributeNames"].(map[string]any)
+		require.True(t, ok)
 		assert.Contains(t, names, "#n1")
 		assert.Equal(t, "payload", names["#n1"])
-		values := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
-		valAttr := values[":v1"].(map[string]any)
-		assert.True(t, json.Valid([]byte(valAttr["S"].(string))))
+		values, ok := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
+		require.True(t, ok)
+		valAttr, ok := values[":v1"].(map[string]any)
+		require.True(t, ok)
+		valString, ok := valAttr["S"].(string)
+		require.True(t, ok)
+		assert.True(t, json.Valid([]byte(valString)))
 	})
 
 	t.Run("CreateOrUpdate uses custom converter", func(t *testing.T) {
@@ -424,9 +435,13 @@ func TestCustomConverterWithUpdate(t *testing.T) {
 
 		putReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.PutItem")
 		require.NotNil(t, putReq)
-		item := putReq.Payload["Item"].(map[string]any)
-		payloadAttr := item["payload"].(map[string]any)
-		assert.True(t, json.Valid([]byte(payloadAttr["S"].(string))))
+		item, ok := putReq.Payload["Item"].(map[string]any)
+		require.True(t, ok)
+		payloadAttr, ok := item["payload"].(map[string]any)
+		require.True(t, ok)
+		payloadString, ok := payloadAttr["S"].(string)
+		require.True(t, ok)
+		assert.True(t, json.Valid([]byte(payloadString)))
 	})
 
 	t.Run("Filter with custom type uses converter", func(t *testing.T) {
@@ -527,13 +542,18 @@ func TestCustomConverterRegressionGuard(t *testing.T) {
 
 		putReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.PutItem")
 		require.NotNil(t, putReq)
-		item := putReq.Payload["Item"].(map[string]any)
-		customAttr := item["custom_id"].(map[string]any)
-		assert.True(t, strings.HasPrefix(customAttr["S"].(string), "CUSTOM-"))
+		item, ok := putReq.Payload["Item"].(map[string]any)
+		require.True(t, ok)
+		customAttr, ok := item["custom_id"].(map[string]any)
+		require.True(t, ok)
+		customString, ok := customAttr["S"].(string)
+		require.True(t, ok)
+		assert.True(t, strings.HasPrefix(customString, "CUSTOM-"))
 
 		updateReq := findRequestByTarget(client.Requests(), "DynamoDB_20120810.UpdateItem")
 		require.NotNil(t, updateReq)
-		values := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
+		values, ok := updateReq.Payload["ExpressionAttributeValues"].(map[string]any)
+		require.True(t, ok)
 		found := false
 		for _, v := range values {
 			if attr, ok := v.(map[string]any); ok {

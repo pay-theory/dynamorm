@@ -114,7 +114,10 @@ func (t *TestDB) ExpectCount(count int64) *TestDB {
 func (t *TestDB) ExpectTransaction(setupFunc func(tx *core.Tx)) *TestDB {
 	t.MockDB.On("Transaction", mock.AnythingOfType("func(*core.Tx) error")).
 		Run(func(args mock.Arguments) {
-			txFn := args.Get(0).(func(*core.Tx) error)
+			txFn, ok := args.Get(0).(func(*core.Tx) error)
+			if !ok {
+				panic("unexpected Transaction callback type")
+			}
 
 			// Create a mock transaction
 			mockTx := &core.Tx{}

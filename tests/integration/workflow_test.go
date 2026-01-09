@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -34,6 +35,21 @@ type Product struct {
 	LastSold   time.Time `dynamorm:"lsi:lsi-last-sold,sk"`
 }
 
+type tableDeleter interface {
+	DeleteTable(model any) error
+}
+
+func deleteTableIfExists(t *testing.T, db tableDeleter, model any) {
+	t.Helper()
+	if err := db.DeleteTable(model); err != nil {
+		var notFoundErr *types.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
+			return
+		}
+		require.NoError(t, err)
+	}
+}
+
 func TestCompleteWorkflow(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
@@ -50,11 +66,15 @@ func TestCompleteWorkflow(t *testing.T) {
 		// Verify tables exist
 		desc, err := testCtx.DB.DescribeTable(&User{})
 		assert.NoError(t, err)
-		assert.Equal(t, types.TableStatusActive, desc.(*types.TableDescription).TableStatus)
+		userDesc, ok := desc.(*types.TableDescription)
+		require.True(t, ok)
+		assert.Equal(t, types.TableStatusActive, userDesc.TableStatus)
 
 		desc, err = testCtx.DB.DescribeTable(&Product{})
 		assert.NoError(t, err)
-		assert.Equal(t, types.TableStatusActive, desc.(*types.TableDescription).TableStatus)
+		productDesc, ok := desc.(*types.TableDescription)
+		require.True(t, ok)
+		assert.Equal(t, types.TableStatusActive, productDesc.TableStatus)
 	})
 
 	t.Run("BasicCRUDOperations", func(t *testing.T) {
@@ -123,7 +143,10 @@ func TestCompleteWorkflow(t *testing.T) {
 		// Perform atomic fund transfer
 		transferAmount := 25.0
 		err = testCtx.DB.TransactionFunc(func(tx any) error {
-			txTyped := tx.(*transaction.Transaction)
+			txTyped, ok := tx.(*transaction.Transaction)
+			if !ok {
+				return errors.New("expected *transaction.Transaction")
+			}
 			// Fetch current balances
 			var u1, u2 User
 			err := testCtx.DB.Model(&User{ID: "tx-user-1"}).First(&u1)
@@ -166,7 +189,10 @@ func TestCompleteWorkflow(t *testing.T) {
 
 		// Create order and update inventory atomically
 		err = testCtx.DB.TransactionFunc(func(tx any) error {
-			txTyped := tx.(*transaction.Transaction)
+			txTyped, ok := tx.(*transaction.Transaction)
+			if !ok {
+				return errors.New("expected *transaction.Transaction")
+			}
 			// Create a new order
 			order := &User{
 				ID:      "order-1",
@@ -203,7 +229,10 @@ func TestCompleteWorkflow(t *testing.T) {
 	t.Run("ConditionalTransactionFailure", func(t *testing.T) {
 		// Try to create a user that already exists
 		err := testCtx.DB.TransactionFunc(func(tx any) error {
-			txTyped := tx.(*transaction.Transaction)
+			txTyped, ok := tx.(*transaction.Transaction)
+			if !ok {
+				return errors.New("expected *transaction.Transaction")
+			}
 			duplicate := &User{
 				ID:   "user-1",
 				Name: "Duplicate User",
@@ -247,8 +276,8 @@ func TestCompleteWorkflow(t *testing.T) {
 
 	// Cleanup
 	t.Cleanup(func() {
-		_ = testCtx.DB.DeleteTable(&User{})
-		_ = testCtx.DB.DeleteTable(&Product{})
+		deleteTableIfExists(t, testCtx.DB, &User{})
+		deleteTableIfExists(t, testCtx.DB, &Product{})
 	})
 }
 
@@ -272,7 +301,7 @@ func TestEnsureTable(t *testing.T) {
 	assert.NotNil(t, desc)
 
 	// Cleanup
-	_ = testCtx.DB.DeleteTable(&User{})
+	deleteTableIfExists(t, testCtx.DB, &User{})
 }
 
 func TestBatchOperationsWithTransaction(t *testing.T) {
@@ -282,13 +311,16 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 	testCtx := InitTestDB(t)
 
 	// Ensure table exists
-	_ = testCtx.DB.DeleteTable(&User{})
+	deleteTableIfExists(t, testCtx.DB, &User{})
 	err := testCtx.DB.CreateTable(&User{})
 	require.NoError(t, err)
 
 	// Create multiple users in a transaction
 	err = testCtx.DB.TransactionFunc(func(tx any) error {
-		txTyped := tx.(*transaction.Transaction)
+		txTyped, ok := tx.(*transaction.Transaction)
+		if !ok {
+			return errors.New("expected *transaction.Transaction")
+		}
 		users := []User{
 			{ID: "batch-1", Name: "User 1", Email: "user1@example.com", Balance: 100},
 			{ID: "batch-2", Name: "User 2", Email: "user2@example.com", Balance: 200},
@@ -313,5 +345,5 @@ func TestBatchOperationsWithTransaction(t *testing.T) {
 	assert.GreaterOrEqual(t, len(allUsers), 5)
 
 	// Cleanup
-	_ = testCtx.DB.DeleteTable(&User{})
+	deleteTableIfExists(t, testCtx.DB, &User{})
 }

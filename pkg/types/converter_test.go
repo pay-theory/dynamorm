@@ -852,10 +852,18 @@ func BenchmarkToAttributeValue(b *testing.B) {
 
 	b.Run("BasicTypes", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _ = converter.ToAttributeValue("test string")
-			_, _ = converter.ToAttributeValue(42)
-			_, _ = converter.ToAttributeValue(3.14)
-			_, _ = converter.ToAttributeValue(true)
+			if _, err := converter.ToAttributeValue("test string"); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := converter.ToAttributeValue(42); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := converter.ToAttributeValue(3.14); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := converter.ToAttributeValue(true); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
@@ -879,7 +887,9 @@ func BenchmarkToAttributeValue(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _ = converter.ToAttributeValue(person)
+			if _, err := converter.ToAttributeValue(person); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }
@@ -905,6 +915,8 @@ func BenchmarkFromAttributeValue(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result Person
-		_ = converter.FromAttributeValue(av, &result)
+		if err := converter.FromAttributeValue(av, &result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

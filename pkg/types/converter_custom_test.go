@@ -39,12 +39,22 @@ func TestConverterHasCustomConverterAndPointerLookup(t *testing.T) {
 	convType := reflect.TypeOf(customPayload{})
 	fake := fakeCustomConverter{
 		to: func(value any) (types.AttributeValue, error) {
-			payload := value.(customPayload)
+			payload, ok := value.(customPayload)
+			if !ok {
+				panic("unexpected type: expected customPayload")
+			}
 			return &types.AttributeValueMemberS{Value: strings.ToUpper(payload.Raw)}, nil
 		},
 		from: func(av types.AttributeValue, target any) error {
-			out := target.(*customPayload)
-			strVal := av.(*types.AttributeValueMemberS).Value
+			out, ok := target.(*customPayload)
+			if !ok {
+				panic("unexpected type: expected *customPayload")
+			}
+			strAV, ok := av.(*types.AttributeValueMemberS)
+			if !ok {
+				panic("unexpected type: expected *types.AttributeValueMemberS")
+			}
+			strVal := strAV.Value
 			out.Raw = strings.ToLower(strVal)
 			return nil
 		},
@@ -68,8 +78,9 @@ func TestConverterHasCustomConverterAndPointerLookup(t *testing.T) {
 
 		av, err := conv.ToAttributeValue(customPayload{Raw: "pointer"})
 		require.NoError(t, err)
-		str := av.(*types.AttributeValueMemberS)
-		assert.Equal(t, "POINTER", str.Value)
+		strVal, ok := av.(*types.AttributeValueMemberS)
+		require.True(t, ok)
+		assert.Equal(t, "POINTER", strVal.Value)
 	})
 
 	t.Run("custom converter used in ToAttributeValue and FromAttributeValue", func(t *testing.T) {

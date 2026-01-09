@@ -122,6 +122,55 @@ func createMetadata(fields ...*model.FieldMetadata) *model.Metadata {
 	return metadata
 }
 
+func requireAVS(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberS {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberS)
+	require.True(t, ok, "expected *types.AttributeValueMemberS, got %T", av)
+	return member
+}
+
+func requireAVN(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberN {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberN)
+	require.True(t, ok, "expected *types.AttributeValueMemberN, got %T", av)
+	return member
+}
+
+func requireAVBOOL(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberBOOL {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberBOOL)
+	require.True(t, ok, "expected *types.AttributeValueMemberBOOL, got %T", av)
+	return member
+}
+
+func requireAVL(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberL {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberL)
+	require.True(t, ok, "expected *types.AttributeValueMemberL, got %T", av)
+	return member
+}
+
+func requireAVM(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberM {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberM)
+	require.True(t, ok, "expected *types.AttributeValueMemberM, got %T", av)
+	return member
+}
+
+func requireAVSS(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberSS {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberSS)
+	require.True(t, ok, "expected *types.AttributeValueMemberSS, got %T", av)
+	return member
+}
+
+func requireAVNULL(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberNULL {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberNULL)
+	require.True(t, ok, "expected *types.AttributeValueMemberNULL, got %T", av)
+	return member
+}
+
 func TestNew(t *testing.T) {
 	marshaler := New(nil)
 	assert.NotNil(t, marshaler)
@@ -205,36 +254,36 @@ func TestMarshalItem_ComplexTypes(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check regular fields
-	assert.Equal(t, "complex-id", result["id"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "complex-id", requireAVS(t, result["id"]).Value)
 
 	// Check list
-	tagsList := result["tags"].(*types.AttributeValueMemberL).Value
+	tagsList := requireAVL(t, result["tags"]).Value
 	assert.Len(t, tagsList, 3)
-	assert.Equal(t, "tag1", tagsList[0].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "tag1", requireAVS(t, tagsList[0]).Value)
 
 	// Check map
-	attrMap := result["attributes"].(*types.AttributeValueMemberM).Value
+	attrMap := requireAVM(t, result["attributes"]).Value
 	assert.Len(t, attrMap, 2)
-	assert.Equal(t, "value1", attrMap["key1"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "value1", requireAVS(t, attrMap["key1"]).Value)
 
 	// Check timestamps (should be current time)
-	createdAt := result["created_at"].(*types.AttributeValueMemberS).Value
-	updatedAt := result["updated_at"].(*types.AttributeValueMemberS).Value
+	createdAt := requireAVS(t, result["created_at"]).Value
+	updatedAt := requireAVS(t, result["updated_at"]).Value
 	assert.NotEmpty(t, createdAt)
 	assert.NotEmpty(t, updatedAt)
 
 	// Check version
-	assert.Equal(t, "1", result["version"].(*types.AttributeValueMemberN).Value)
+	assert.Equal(t, "1", requireAVN(t, result["version"]).Value)
 
 	// Check TTL (should be Unix timestamp)
-	ttl := result["ttl"].(*types.AttributeValueMemberN).Value
+	ttl := requireAVN(t, result["ttl"]).Value
 	assert.NotEmpty(t, ttl)
 
 	// Check optional field
-	assert.Equal(t, "optional-value", result["optional"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "optional-value", requireAVS(t, result["optional"]).Value)
 
 	// Check string set
-	stringSet := result["string_set"].(*types.AttributeValueMemberSS).Value
+	stringSet := requireAVSS(t, result["string_set"]).Value
 	assert.ElementsMatch(t, []string{"set1", "set2"}, stringSet)
 }
 
@@ -264,10 +313,10 @@ func TestMarshalItem_PointerTypes(t *testing.T) {
 	result, err := marshaler.MarshalItem(input, metadata)
 	require.NoError(t, err)
 
-	assert.Equal(t, "test-string", result["string_ptr"].(*types.AttributeValueMemberS).Value)
-	assert.Equal(t, "42", result["int_ptr"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, "3.14", result["float64_ptr"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, true, result["bool_ptr"].(*types.AttributeValueMemberBOOL).Value)
+	assert.Equal(t, "test-string", requireAVS(t, result["string_ptr"]).Value)
+	assert.Equal(t, "42", requireAVN(t, result["int_ptr"]).Value)
+	assert.Equal(t, "3.14", requireAVN(t, result["float64_ptr"]).Value)
+	assert.Equal(t, true, requireAVBOOL(t, result["bool_ptr"]).Value)
 
 	// Test with nil pointers
 	input2 := PointerStruct{}
@@ -276,8 +325,8 @@ func TestMarshalItem_PointerTypes(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, key := range []string{"string_ptr", "int_ptr", "float64_ptr", "bool_ptr"} {
-		assert.IsType(t, &types.AttributeValueMemberNULL{}, result2[key])
-		assert.True(t, result2[key].(*types.AttributeValueMemberNULL).Value)
+		nullMember := requireAVNULL(t, result2[key])
+		assert.True(t, nullMember.Value)
 	}
 }
 
@@ -303,7 +352,7 @@ func TestMarshalItem_OmitEmpty(t *testing.T) {
 	require.NoError(t, err)
 
 	// Required field should be present
-	assert.Equal(t, "required-value", result["required"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "required-value", requireAVS(t, result["required"]).Value)
 
 	// OmitEmpty fields should not be present
 	assert.Len(t, result, 1) // Only required field should be in result
@@ -376,22 +425,22 @@ func TestMarshalItem_AllTypesSupport(t *testing.T) {
 	result, err := marshaler.MarshalItem(input, metadata)
 	require.NoError(t, err)
 
-	assert.Equal(t, "test", result["string"].(*types.AttributeValueMemberS).Value)
-	assert.Equal(t, "42", result["int"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, "9223372036854775807", result["int64"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, "3.14159", result["float64"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, true, result["bool"].(*types.AttributeValueMemberBOOL).Value)
-	assert.Equal(t, now.Format(time.RFC3339Nano), result["time"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "test", requireAVS(t, result["string"]).Value)
+	assert.Equal(t, "42", requireAVN(t, result["int"]).Value)
+	assert.Equal(t, "9223372036854775807", requireAVN(t, result["int64"]).Value)
+	assert.Equal(t, "3.14159", requireAVN(t, result["float64"]).Value)
+	assert.Equal(t, true, requireAVBOOL(t, result["bool"]).Value)
+	assert.Equal(t, now.Format(time.RFC3339Nano), requireAVS(t, result["time"]).Value)
 
 	// Check slice
-	sliceVal := result["str_slice"].(*types.AttributeValueMemberL).Value
+	sliceVal := requireAVL(t, result["str_slice"]).Value
 	assert.Len(t, sliceVal, 3)
-	assert.Equal(t, "a", sliceVal[0].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "a", requireAVS(t, sliceVal[0]).Value)
 
 	// Check map
-	mapVal := result["str_map"].(*types.AttributeValueMemberM).Value
+	mapVal := requireAVM(t, result["str_map"]).Value
 	assert.Len(t, mapVal, 1)
-	assert.Equal(t, "value", mapVal["key"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "value", requireAVS(t, mapVal["key"]).Value)
 }
 
 func TestMarshalItem_VersionField(t *testing.T) {
@@ -406,13 +455,13 @@ func TestMarshalItem_VersionField(t *testing.T) {
 
 	result1, err := marshaler.MarshalItem(input1, metadata)
 	require.NoError(t, err)
-	assert.Equal(t, "0", result1["version"].(*types.AttributeValueMemberN).Value)
+	assert.Equal(t, "0", requireAVN(t, result1["version"]).Value)
 
 	// Test with non-zero version
 	input2 := VersionedStruct{ID: "test-id", Version: 5}
 	result2, err := marshaler.MarshalItem(input2, metadata)
 	require.NoError(t, err)
-	assert.Equal(t, "5", result2["version"].(*types.AttributeValueMemberN).Value)
+	assert.Equal(t, "5", requireAVN(t, result2["version"]).Value)
 }
 
 func TestMarshalItem_ConcurrentAccess(t *testing.T) {
@@ -501,7 +550,7 @@ func TestMarshalComplexValue_EdgeCases(t *testing.T) {
 	v3 := reflect.ValueOf(emptySlice)
 	result3, err := marshaler.marshalComplexValue(v3)
 	require.NoError(t, err)
-	list := result3.(*types.AttributeValueMemberL).Value
+	list := requireAVL(t, result3).Value
 	assert.Len(t, list, 0)
 
 	// Test empty map
@@ -509,7 +558,7 @@ func TestMarshalComplexValue_EdgeCases(t *testing.T) {
 	v4 := reflect.ValueOf(emptyMap)
 	result4, err := marshaler.marshalComplexValue(v4)
 	require.NoError(t, err)
-	mapVal := result4.(*types.AttributeValueMemberM).Value
+	mapVal := requireAVM(t, result4).Value
 	assert.Len(t, mapVal, 0)
 }
 
@@ -537,7 +586,7 @@ func TestMarshalValue_AllNumericTypes(t *testing.T) {
 			v := reflect.ValueOf(tt.value)
 			result, err := marshaler.marshalValue(v)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, result.(*types.AttributeValueMemberN).Value)
+			assert.Equal(t, tt.expected, requireAVN(t, result).Value)
 		})
 	}
 }
@@ -563,7 +612,9 @@ func BenchmarkMarshalItem_Simple(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = marshaler.MarshalItem(input, metadata)
+		if _, err := marshaler.MarshalItem(input, metadata); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -595,7 +646,9 @@ func BenchmarkMarshalItem_Complex(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = marshaler.MarshalItem(input, metadata)
+		if _, err := marshaler.MarshalItem(input, metadata); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

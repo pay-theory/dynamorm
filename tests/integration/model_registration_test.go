@@ -51,12 +51,14 @@ func TestModelWithContext(t *testing.T) {
 
 		// Clean up any existing data first
 		var existing []ModelRegTest
-		_ = testCtx.DB.Model(&ModelRegTest{}).All(&existing)
+		err := testCtx.DB.Model(&ModelRegTest{}).All(&existing)
+		require.NoError(t, err)
 		for _, item := range existing {
-			_ = testCtx.DB.Model(&ModelRegTest{}).
+			err := testCtx.DB.Model(&ModelRegTest{}).
 				Where("ID", "=", item.ID).
 				Where("Name", "=", item.Name).
 				Delete()
+			require.NoError(t, err)
 		}
 
 		// Create a record using WithContext
@@ -66,7 +68,7 @@ func TestModelWithContext(t *testing.T) {
 		}
 
 		// This should work - the model should be registered correctly
-		err := testCtx.DB.WithContext(ctx).Model(model).Create()
+		err = testCtx.DB.WithContext(ctx).Model(model).Create()
 		require.NoError(t, err, "Model registration should work with WithContext")
 
 		// Verify the record was created

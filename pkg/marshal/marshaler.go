@@ -103,7 +103,11 @@ func (m *Marshaler) MarshalItem(model any, metadata *model.Metadata) (map[string
 		cached, _ = m.cache.LoadOrStore(typ, sm)
 	}
 
-	sm := cached.(*structMarshaler)
+	sm, ok := cached.(*structMarshaler)
+	if !ok || sm == nil {
+		sm = m.buildStructMarshaler(typ, metadata)
+		m.cache.Store(typ, sm)
+	}
 
 	// Pre-allocate result map with estimated size
 	result := make(map[string]types.AttributeValue, sm.minFields)
@@ -413,7 +417,10 @@ func (m *Marshaler) marshalComplexValue(v reflect.Value) (types.AttributeValue, 
 	case reflect.Struct:
 		// Special handling for time.Time
 		if v.Type() == reflect.TypeOf(time.Time{}) {
-			t := v.Interface().(time.Time)
+			t, ok := v.Interface().(time.Time)
+			if !ok {
+				return nil, fmt.Errorf("expected time.Time, got %T", v.Interface())
+			}
 			if t.IsZero() {
 				return &types.AttributeValueMemberNULL{Value: true}, nil
 			}

@@ -2,6 +2,7 @@ package benchmarks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -81,9 +82,15 @@ func createBenchTable(b *testing.B) {
 	ctx := context.TODO()
 
 	// Delete existing table if it exists
-	_, _ = benchDynamoDB.DeleteTable(ctx, &dynamodb.DeleteTableInput{
+	_, err := benchDynamoDB.DeleteTable(ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(benchTableName),
 	})
+	if err != nil {
+		var notFound *types.ResourceNotFoundException
+		if !errors.As(err, &notFound) {
+			b.Fatalf("delete table %s: %v", benchTableName, err)
+		}
+	}
 
 	// Wait a bit for deletion
 	time.Sleep(2 * time.Second)
@@ -140,7 +147,7 @@ func createBenchTable(b *testing.B) {
 		},
 	}
 
-	_, err := benchDynamoDB.CreateTable(ctx, input)
+	_, err = benchDynamoDB.CreateTable(ctx, input)
 	if err != nil {
 		b.Fatal(err)
 	}

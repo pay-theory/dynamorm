@@ -440,19 +440,22 @@ func TestEncodeDecode_RoundTrip(t *testing.T) {
 	// Verify string values
 	pkResult, ok := resultKey["pk"].(*types.AttributeValueMemberS)
 	require.True(t, ok)
-	pkOriginal, _ := originalKey["pk"].(*types.AttributeValueMemberS)
+	pkOriginal, ok := originalKey["pk"].(*types.AttributeValueMemberS)
+	require.True(t, ok)
 	assert.Equal(t, pkOriginal.Value, pkResult.Value)
 
 	// Verify number values
 	tsResult, ok := resultKey["timestamp"].(*types.AttributeValueMemberN)
 	require.True(t, ok)
-	tsOriginal, _ := originalKey["timestamp"].(*types.AttributeValueMemberN)
+	tsOriginal, ok := originalKey["timestamp"].(*types.AttributeValueMemberN)
+	require.True(t, ok)
 	assert.Equal(t, tsOriginal.Value, tsResult.Value)
 
 	// Verify boolean values
 	activeResult, ok := resultKey["active"].(*types.AttributeValueMemberBOOL)
 	require.True(t, ok)
-	activeOriginal, _ := originalKey["active"].(*types.AttributeValueMemberBOOL)
+	activeOriginal, ok := originalKey["active"].(*types.AttributeValueMemberBOOL)
+	require.True(t, ok)
 	assert.Equal(t, activeOriginal.Value, activeResult.Value)
 }
 

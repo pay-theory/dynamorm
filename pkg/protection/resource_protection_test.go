@@ -397,12 +397,20 @@ func TestHealthCheck(t *testing.T) {
 	assert.NotNil(t, health)
 	assert.Equal(t, "healthy", health["status"])
 
-	checks := health["checks"].(map[string]any)
+	checks, ok := health["checks"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
 	assert.Contains(t, checks, "memory")
 	assert.Contains(t, checks, "concurrency")
 	assert.Contains(t, checks, "rate_limiting")
 
-	memoryCheck := checks["memory"].(map[string]any)
+	memoryCheck, ok := checks["memory"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
 	assert.Equal(t, "ok", memoryCheck["status"])
 	assert.GreaterOrEqual(t, memoryCheck["current_mb"], int64(0))
 }
@@ -417,7 +425,8 @@ func TestResourceStats(t *testing.T) {
 	req := &http.Request{Body: io.NopCloser(body)}
 	req = req.WithContext(context.Background())
 
-	_, _ = protector.SecureBodyReader(req)
+	_, err := protector.SecureBodyReader(req)
+	assert.NoError(t, err)
 
 	stats := protector.GetStats()
 	assert.Greater(t, stats.TotalRequests, int64(0))
@@ -460,7 +469,9 @@ func BenchmarkResourceProtection(b *testing.B) {
 			req := &http.Request{Body: io.NopCloser(reader)}
 			req = req.WithContext(context.Background())
 
-			_, _ = protector.SecureBodyReader(req)
+			if _, err := protector.SecureBodyReader(req); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 

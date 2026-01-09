@@ -279,8 +279,8 @@ func TestReadAfterWritePatterns(t *testing.T) {
 		err = helper.QueryAfterWrite(&ConsistencyTestModel{}, &consistency.QueryAfterWriteOptions{
 			RetryConfig: consistency.RecommendedRetryConfig(),
 			VerifyFunc: func(result any) bool {
-				r := result.(*ConsistencyTestModel)
-				return r.Name == item.Name
+				r, ok := result.(*ConsistencyTestModel)
+				return ok && r.Name == item.Name
 			},
 		}).
 			Index("username-index").

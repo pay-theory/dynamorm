@@ -261,9 +261,12 @@ func (ldb *LambdaDB) OptimizeForColdStart() {
 			return
 		}
 
-		_, _ = client.ListTables(ctx, &dynamodb.ListTablesInput{
+		_, err = client.ListTables(ctx, &dynamodb.ListTablesInput{
 			Limit: aws.Int32(1),
 		})
+		if err != nil {
+			return
+		}
 	}()
 
 	// Pre-compile common expressions if using a query builder
@@ -403,8 +406,17 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 	// Phase 3: DynamORM Setup
 	phaseStart = time.Now()
-	db, _ := NewLambdaOptimized()
+	db, err := NewLambdaOptimized()
 	phases["dynamorm_setup"] = time.Since(phaseStart)
+	if err != nil {
+		phases["dynamorm_setup_error"] = phases["dynamorm_setup"]
+		return ColdStartMetrics{
+			TotalDuration: time.Since(start),
+			Phases:        phases,
+			MemoryMB:      GetLambdaMemoryMB(),
+			IsLambda:      IsLambdaEnvironment(),
+		}
+	}
 
 	// Phase 4: Model Registration
 	if len(models) > 0 {

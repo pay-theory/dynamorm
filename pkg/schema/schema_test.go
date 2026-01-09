@@ -2,6 +2,7 @@ package schema
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -15,6 +16,17 @@ import (
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 )
+
+func deleteTableIfExists(t *testing.T, manager *Manager, tableName string) {
+	t.Helper()
+	if err := manager.DeleteTable(tableName); err != nil {
+		var notFoundErr *types.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
+			return
+		}
+		require.NoError(t, err)
+	}
+}
 
 // Test models
 type User struct {
@@ -77,7 +89,7 @@ func TestCreateTable(t *testing.T) {
 
 	t.Run("CreateSimpleTable", func(t *testing.T) {
 		// Delete table if exists
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 
 		// Create table
 		err := manager.CreateTable(&User{})
@@ -95,7 +107,7 @@ func TestCreateTable(t *testing.T) {
 		assert.Equal(t, types.TableStatusActive, desc.TableStatus)
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 
 	t.Run("CreateTableWithGSI", func(t *testing.T) {
@@ -104,7 +116,7 @@ func TestCreateTable(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete table if exists
-		_ = manager.DeleteTable("Orders")
+		deleteTableIfExists(t, manager, "Orders")
 
 		// Create table
 		err = manager.CreateTable(&Order{})
@@ -133,7 +145,7 @@ func TestCreateTable(t *testing.T) {
 		assert.True(t, hasStatusIndex)
 
 		// Cleanup
-		_ = manager.DeleteTable("Orders")
+		deleteTableIfExists(t, manager, "Orders")
 	})
 
 	t.Run("CreateTableWithLSI", func(t *testing.T) {
@@ -142,7 +154,7 @@ func TestCreateTable(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete table if exists
-		_ = manager.DeleteTable("Products")
+		deleteTableIfExists(t, manager, "Products")
 
 		// Create table
 		err = manager.CreateTable(&Product{})
@@ -155,12 +167,12 @@ func TestCreateTable(t *testing.T) {
 		assert.Equal(t, "updated-lsi", *desc.LocalSecondaryIndexes[0].IndexName)
 
 		// Cleanup
-		_ = manager.DeleteTable("Products")
+		deleteTableIfExists(t, manager, "Products")
 	})
 
 	t.Run("CreateTableWithOptions", func(t *testing.T) {
 		// Delete table if exists
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 
 		// Create table with provisioned throughput
 		err := manager.CreateTable(&User{},
@@ -181,7 +193,7 @@ func TestCreateTable(t *testing.T) {
 		}
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 }
 
@@ -220,7 +232,7 @@ func TestTableExists(t *testing.T) {
 		err := registry.Register(&User{})
 		require.NoError(t, err)
 
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 		err = manager.CreateTable(&User{})
 		require.NoError(t, err)
 
@@ -230,7 +242,7 @@ func TestTableExists(t *testing.T) {
 		assert.True(t, exists)
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 }
 
@@ -262,7 +274,7 @@ func TestUpdateTable(t *testing.T) {
 
 	t.Run("UpdateBillingMode", func(t *testing.T) {
 		// Create table with on-demand billing
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 		err := manager.CreateTable(&User{})
 		require.NoError(t, err)
 
@@ -279,7 +291,7 @@ func TestUpdateTable(t *testing.T) {
 		assert.Equal(t, types.BillingModeProvisioned, desc.BillingModeSummary.BillingMode)
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 }
 

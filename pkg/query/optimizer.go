@@ -102,8 +102,10 @@ func (o *QueryOptimizer) OptimizeQuery(q *Query) (*QueryPlan, error) {
 
 	// Check cache first
 	if cached, ok := o.planCache.Load(planID); ok {
-		plan := cached.(*QueryPlan)
-		if time.Since(plan.CachedAt) < o.planCacheTTL {
+		plan, ok := cached.(*QueryPlan)
+		if !ok {
+			o.planCache.Delete(planID)
+		} else if time.Since(plan.CachedAt) < o.planCacheTTL {
 			return plan, nil
 		}
 	}
@@ -220,16 +222,19 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 	// Get historical statistics if available
 	statsKey := o.generateStatsKey(q)
 	if stats, ok := o.queryStats.Load(statsKey); ok {
-		queryStats := stats.(*QueryStatistics)
-
-		// Use historical data for more accurate estimates
-		if queryStats.ExecutionCount > 10 {
-			estimate.ConfidenceLevel = 0.8
-			estimate.EstimatedDuration = queryStats.AverageDuration
-			avgItemsPerExecution := queryStats.TotalItemsRead / queryStats.ExecutionCount
-			estimate.EstimatedItemCount = avgItemsPerExecution
-			avgScannedPerExecution := queryStats.TotalItemsScanned / queryStats.ExecutionCount
-			estimate.EstimatedScanCount = avgScannedPerExecution
+		queryStats, ok := stats.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+		} else {
+			// Use historical data for more accurate estimates
+			if queryStats.ExecutionCount > 10 {
+				estimate.ConfidenceLevel = 0.8
+				estimate.EstimatedDuration = queryStats.AverageDuration
+				avgItemsPerExecution := queryStats.TotalItemsRead / queryStats.ExecutionCount
+				estimate.EstimatedItemCount = avgItemsPerExecution
+				avgScannedPerExecution := queryStats.TotalItemsScanned / queryStats.ExecutionCount
+				estimate.EstimatedScanCount = avgScannedPerExecution
+			}
 		}
 	}
 
@@ -309,7 +314,11 @@ func (o *QueryOptimizer) calculateOptimalSegments(q *Query) int {
 func (o *QueryOptimizer) applyAdaptiveOptimizations(q *Query, plan *QueryPlan) {
 	statsKey := o.generateStatsKey(q)
 	if stats, ok := o.queryStats.Load(statsKey); ok {
-		queryStats := stats.(*QueryStatistics)
+		queryStats, ok := stats.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+			return
+		}
 
 		// If error rate is high, suggest different approach
 		if queryStats.ErrorRate > 0.1 {
@@ -339,10 +348,21 @@ func (o *QueryOptimizer) RecordExecution(q *Query, result *QueryExecutionResult)
 	// Load or create statistics
 	var stats *QueryStatistics
 	if existing, ok := o.queryStats.Load(statsKey); ok {
-		stats = existing.(*QueryStatistics)
-	} else {
+		existingStats, ok := existing.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+		} else {
+			stats = existingStats
+		}
+	}
+
+	if stats == nil {
 		stats = &QueryStatistics{
 			MinDuration: result.Duration,
+		}
+	} else {
+		if stats.MinDuration == 0 {
+			stats.MinDuration = result.Duration
 		}
 	}
 
@@ -374,8 +394,10 @@ func (o *QueryOptimizer) RecordExecution(q *Query, result *QueryExecutionResult)
 func (o *QueryOptimizer) GetQueryPlan(q *Query) (*QueryPlan, bool) {
 	planID := o.generatePlanID(q)
 	if cached, ok := o.planCache.Load(planID); ok {
-		plan := cached.(*QueryPlan)
-		if time.Since(plan.CachedAt) < o.planCacheTTL {
+		plan, ok := cached.(*QueryPlan)
+		if !ok {
+			o.planCache.Delete(planID)
+		} else if time.Since(plan.CachedAt) < o.planCacheTTL {
 			return plan, true
 		}
 	}
@@ -391,7 +413,12 @@ func (o *QueryOptimizer) ClearCache() {
 func (o *QueryOptimizer) GetStatistics(q *Query) (*QueryStatistics, bool) {
 	statsKey := o.generateStatsKey(q)
 	if stats, ok := o.queryStats.Load(statsKey); ok {
-		return stats.(*QueryStatistics), true
+		queryStats, ok := stats.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+			return nil, false
+		}
+		return queryStats, true
 	}
 	return nil, false
 }

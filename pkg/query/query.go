@@ -590,7 +590,10 @@ func isZeroValue(v reflect.Value) bool {
 	case reflect.Struct:
 		// Check if it's time.Time
 		if v.Type().String() == "time.Time" {
-			return v.Interface().(interface{ IsZero() bool }).IsZero()
+			if isZeroer, ok := v.Interface().(interface{ IsZero() bool }); ok {
+				return isZeroer.IsZero()
+			}
+			return v.IsZero()
 		}
 		// For other structs, check if all fields are zero
 		for i := 0; i < v.NumField(); i++ {
@@ -1126,7 +1129,10 @@ func (q *Query) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	}
 
 	// Extract pagination info
-	queryResult := result.(map[string]any)
+	queryResult, ok := result.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected pagination result type: %T", result)
+	}
 
 	// Build the paginated result
 	paginatedResult := &core.PaginatedResult{

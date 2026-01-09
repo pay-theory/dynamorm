@@ -217,8 +217,15 @@ func (mdb *MultiAccountDB) refreshExpiredCredentials() {
 	now := time.Now()
 
 	mdb.cache.Range(func(key, value any) bool {
-		partnerID := key.(string)
-		entry := value.(*cacheEntry)
+		partnerID, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		entry, ok := value.(*cacheEntry)
+		if !ok || entry == nil {
+			return true
+		}
 
 		// Check if credentials are about to expire
 		if now.After(entry.expiry.Add(-10 * time.Minute)) {

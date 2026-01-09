@@ -467,68 +467,91 @@ func (b BenchmarkModel) TableName() string {
 
 func BenchmarkGetItemDirect(b *testing.B) {
 	// Setup mock or local DynamoDB
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	model := &BenchmarkModel{ID: "test-id"}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(model).Where("id", "=", "test-id").First(&result)
+		if err := db.Model(model).Where("id", "=", "test-id").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkGetItemByAttribute(b *testing.B) {
 	// Test querying by DynamoDB attribute name
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").First(&result)
+		if err := db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkGetItemByGoFieldName tests querying by Go field name
 func BenchmarkGetItemByGoFieldName(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("ID", "=", "test-id").First(&result)
+		if err := db.Model(&BenchmarkModel{}).Where("ID", "=", "test-id").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkGetItemWithProjection tests GetItem with field selection
 func BenchmarkGetItemWithProjection(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").Select("Name").First(&result)
+		if err := db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").Select("Name").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkMetadataCaching tests the metadata cache effectiveness
 func BenchmarkMetadataCaching(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	// Pre-warm the cache
 	_ = db.Model(&BenchmarkModel{})
@@ -541,14 +564,19 @@ func BenchmarkMetadataCaching(b *testing.B) {
 
 // BenchmarkQueryOperation tests Query performance when GetItem isn't used
 func BenchmarkQueryOperation(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var results []BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("Name", "=", "test-name").All(&results)
+		if err := db.Model(&BenchmarkModel{}).Where("Name", "=", "test-name").All(&results); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

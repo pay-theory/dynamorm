@@ -202,11 +202,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range cleanupItems {
-			_ = testCtx.DB.Model(&BatchTestItem{}).
+			err := testCtx.DB.Model(&BatchTestItem{}).
 				Where("ID", "=", item.ID).
 				Where("SKValue", "=", item.SKValue).
 				WithContext(ctx).
 				Delete()
+			require.NoError(t, err)
 		}
 
 		// Setup: Create items to delete
@@ -253,11 +254,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range cleanupItems {
-			_ = testCtx.DB.Model(&BatchTestItem{}).
+			err := testCtx.DB.Model(&BatchTestItem{}).
 				Where("ID", "=", item.ID).
 				Where("SKValue", "=", item.SKValue).
 				WithContext(ctx).
 				Delete()
+			require.NoError(t, err)
 		}
 
 		// Setup: Create items to be deleted

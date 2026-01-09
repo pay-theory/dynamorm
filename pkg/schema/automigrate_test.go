@@ -1,11 +1,13 @@
 package schema_test
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -29,6 +31,21 @@ type UserV2 struct {
 	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
+type tableDeleter interface {
+	DeleteTable(model any) error
+}
+
+func deleteTableIfExists(t *testing.T, db tableDeleter, model any) {
+	t.Helper()
+	if err := db.DeleteTable(model); err != nil {
+		var notFoundErr *types.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
+			return
+		}
+		require.NoError(t, err)
+	}
+}
+
 func TestAutoMigrateWithOptions(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 	// Skip if not running integration tests
@@ -47,7 +64,7 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 
 	t.Run("SimpleTableCreation", func(t *testing.T) {
 		// Clean up any existing table
-		_ = db.DeleteTable(&UserV1{})
+		deleteTableIfExists(t, db, &UserV1{})
 
 		// Simple auto-migrate should create table
 		err := db.AutoMigrate(&UserV1{})
@@ -59,21 +76,21 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 		assert.NotNil(t, desc)
 
 		// Clean up
-		_ = db.DeleteTable(&UserV1{})
+		deleteTableIfExists(t, db, &UserV1{})
 	})
 
 	t.Run("AutoMigrateWithBackup", func(t *testing.T) {
 		t.Skip("Backup functionality not fully implemented")
 
 		// Clean up any existing tables
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable("UserV1_backup")
+		deleteTableIfExists(t, db, &UserV1{})
+		deleteTableIfExists(t, db, "UserV1_backup")
 	})
 
 	t.Run("AutoMigrateWithTransform", func(t *testing.T) {
 		// Clean up any existing tables
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
+		deleteTableIfExists(t, db, &UserV1{})
+		deleteTableIfExists(t, db, &UserV2{})
 
 		// Create and populate V1 table
 		err := db.CreateTable(&UserV1{})
@@ -125,13 +142,13 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 		// This test demonstrates the intended API
 
 		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
+		deleteTableIfExists(t, db, &UserV1{})
+		deleteTableIfExists(t, db, &UserV2{})
 	})
 
 	t.Run("AutoMigrateIdempotent", func(t *testing.T) {
 		// Clean up any existing table
-		_ = db.DeleteTable(&UserV1{})
+		deleteTableIfExists(t, db, &UserV1{})
 
 		// First auto-migrate
 		err := db.AutoMigrate(&UserV1{})
@@ -142,7 +159,7 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 		assert.NoError(t, err)
 
 		// Clean up
-		_ = db.DeleteTable(&UserV1{})
+		deleteTableIfExists(t, db, &UserV1{})
 	})
 
 	t.Run("AutoMigrateWithBatchSize", func(t *testing.T) {
@@ -170,8 +187,8 @@ func TestAutoMigrateWithOptions(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clean up
-		_ = db.DeleteTable(&UserV1{})
-		_ = db.DeleteTable(&UserV2{})
+		deleteTableIfExists(t, db, &UserV1{})
+		deleteTableIfExists(t, db, &UserV2{})
 	})
 }
 

@@ -361,6 +361,16 @@ func (db *DB) EnsureTable(model any) error {
 
 // DeleteTable deletes the DynamoDB table for the given model
 func (db *DB) DeleteTable(model any) error {
+	if tableName, ok := model.(string); ok {
+		manager := schema.NewManager(db.session, db.registry)
+		return manager.DeleteTable(tableName)
+	}
+
+	// Register model first
+	if err := db.registry.Register(model); err != nil {
+		return fmt.Errorf("failed to register model %T: %w", model, err)
+	}
+
 	metadata, err := db.registry.GetMetadata(model)
 	if err != nil {
 		return err
@@ -1997,8 +2007,11 @@ func (q *query) marshalItem(model any, metadata *model.Metadata) (map[string]typ
 			}
 		} else if fieldMeta.IsTTL {
 			// Convert TTL to Unix timestamp if it's a time.Time
-			if fieldValue.Type().String() == "time.Time" && !fieldValue.IsZero() {
-				ttlTime := fieldValue.Interface().(time.Time)
+			if fieldValue.Type() == reflect.TypeOf(time.Time{}) && !fieldValue.IsZero() {
+				ttlTime, ok := fieldValue.Interface().(time.Time)
+				if !ok {
+					return nil, fmt.Errorf("expected time.Time for TTL field %s, got %T", fieldName, fieldValue.Interface())
+				}
 				fieldValue = reflect.ValueOf(ttlTime.Unix())
 			}
 		}
@@ -2817,7 +2830,9 @@ func (db *DB) TransactionFunc(fn func(tx any) error) error {
 	// Execute the transaction function
 	if err := fn(tx); err != nil {
 		// Rollback on error
-		_ = tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback failed: %w", rbErr))
+		}
 		return err
 	}
 

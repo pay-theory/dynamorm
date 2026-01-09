@@ -103,7 +103,10 @@ func (c *Converter) toAttributeValue(v reflect.Value) (types.AttributeValue, err
 
 	// Handle time.Time specially
 	if v.Type() == reflect.TypeOf(time.Time{}) {
-		t := v.Interface().(time.Time)
+		t, ok := v.Interface().(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("expected time.Time, got %T", v.Interface())
+		}
 		return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
 	}
 

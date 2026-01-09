@@ -140,7 +140,9 @@ func BenchmarkLambdaColdStart(b *testing.B) {
 // Benchmark warm start performance
 func BenchmarkLambdaWarmStart(b *testing.B) {
 	// Initialize once
-	_, _ = NewLambdaOptimized()
+	if _, err := NewLambdaOptimized(); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

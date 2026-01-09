@@ -492,7 +492,9 @@ func TestTransactionBuilderRetriesOnConflict(t *testing.T) {
 
 	err := builder.Put(&User{ID: "retry-user"}).Execute()
 	require.NoError(t, err)
-	assert.Equal(t, 2, builder.client.(*mockTransactClient).callCount)
+	mockClient, ok := builder.client.(*mockTransactClient)
+	require.True(t, ok)
+	assert.Equal(t, 2, mockClient.callCount)
 }
 
 func TestTransactionBuilderOperationLimit(t *testing.T) {

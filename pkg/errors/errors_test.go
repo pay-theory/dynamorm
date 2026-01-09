@@ -461,7 +461,10 @@ func TestConcurrentErrorAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			_ = err.Error()
-			_ = err.Unwrap()
+			unwrapped := err.Unwrap()
+			if unwrapped != nil {
+				_ = unwrapped.Error()
+			}
 			_ = err.Is(ErrTransactionFailed)
 			done <- true
 		}()
@@ -477,14 +480,14 @@ func TestConcurrentErrorAccess(t *testing.T) {
 func BenchmarkErrorCreation(b *testing.B) {
 	b.Run("NewError", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = NewError("Operation", "Model", ErrItemNotFound)
+			_ = NewError("Operation", "Model", ErrItemNotFound).Error()
 		}
 	})
 
 	b.Run("NewErrorWithContext", func(b *testing.B) {
 		ctx := map[string]any{"key": "value", "count": 42}
 		for i := 0; i < b.N; i++ {
-			_ = NewErrorWithContext("Operation", "Model", ErrItemNotFound, ctx)
+			_ = NewErrorWithContext("Operation", "Model", ErrItemNotFound, ctx).Error()
 		}
 	})
 }

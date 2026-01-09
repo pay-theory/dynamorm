@@ -122,10 +122,18 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 			return func(source map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 				augmented := augmentAttributeMapForTransform(source, sourceMetadata)
 				results := transformValue.Call([]reflect.Value{reflect.ValueOf(augmented)})
-				if results[1].IsNil() {
-					return results[0].Interface().(map[string]types.AttributeValue), nil
+				output, ok := results[0].Interface().(map[string]types.AttributeValue)
+				if !ok {
+					return nil, fmt.Errorf("transform returned %T; expected map[string]types.AttributeValue", results[0].Interface())
 				}
-				return results[0].Interface().(map[string]types.AttributeValue), results[1].Interface().(error)
+				if results[1].IsNil() {
+					return output, nil
+				}
+				err, ok := results[1].Interface().(error)
+				if !ok {
+					return nil, fmt.Errorf("transform returned %T; expected error", results[1].Interface())
+				}
+				return output, err
 			}, nil
 		}
 	}

@@ -11,6 +11,96 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func mustQuery(v any) Query {
+	if v == nil {
+		return nil
+	}
+	q, ok := v.(Query)
+	if !ok {
+		panic("unexpected type: expected core.Query")
+	}
+	return q
+}
+
+func mustDB(v any) DB {
+	if v == nil {
+		return nil
+	}
+	db, ok := v.(DB)
+	if !ok {
+		panic("unexpected type: expected core.DB")
+	}
+	return db
+}
+
+func mustPaginatedResult(v any) *PaginatedResult {
+	if v == nil {
+		return nil
+	}
+	result, ok := v.(*PaginatedResult)
+	if !ok {
+		panic("unexpected type: expected *core.PaginatedResult")
+	}
+	return result
+}
+
+func mustInt64(v any) int64 {
+	n, ok := v.(int64)
+	if !ok {
+		panic("unexpected type: expected int64")
+	}
+	return n
+}
+
+func mustUpdateBuilder(v any) UpdateBuilder {
+	if v == nil {
+		return nil
+	}
+	builder, ok := v.(UpdateBuilder)
+	if !ok {
+		panic("unexpected type: expected core.UpdateBuilder")
+	}
+	return builder
+}
+
+func mustBatchGetBuilder(v any) BatchGetBuilder {
+	if v == nil {
+		return nil
+	}
+	builder, ok := v.(BatchGetBuilder)
+	if !ok {
+		panic("unexpected type: expected core.BatchGetBuilder")
+	}
+	return builder
+}
+
+func mustKeySchema(v any) KeySchema {
+	schema, ok := v.(KeySchema)
+	if !ok {
+		panic("unexpected type: expected core.KeySchema")
+	}
+	return schema
+}
+
+func mustIndexSchemas(v any) []IndexSchema {
+	schemas, ok := v.([]IndexSchema)
+	if !ok {
+		panic("unexpected type: expected []core.IndexSchema")
+	}
+	return schemas
+}
+
+func mustAttributeMetadata(v any) *AttributeMetadata {
+	if v == nil {
+		return nil
+	}
+	meta, ok := v.(*AttributeMetadata)
+	if !ok {
+		panic("unexpected type: expected *core.AttributeMetadata")
+	}
+	return meta
+}
+
 // MockDB is a mock implementation of the DB interface
 type MockDB struct {
 	mock.Mock
@@ -18,7 +108,7 @@ type MockDB struct {
 
 func (m *MockDB) Model(model any) Query {
 	args := m.Called(model)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockDB) Transaction(fn func(tx *Tx) error) error {
@@ -43,7 +133,7 @@ func (m *MockDB) Close() error {
 
 func (m *MockDB) WithContext(ctx context.Context) DB {
 	args := m.Called(ctx)
-	return args.Get(0).(DB)
+	return mustDB(args.Get(0))
 }
 
 // MockQuery is a mock implementation of the Query interface
@@ -53,82 +143,82 @@ type MockQuery struct {
 
 func (m *MockQuery) Where(field string, op string, value any) Query {
 	args := m.Called(field, op, value)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) Index(indexName string) Query {
 	args := m.Called(indexName)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) Filter(field string, op string, value any) Query {
 	args := m.Called(field, op, value)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) OrFilter(field string, op string, value any) Query {
 	args := m.Called(field, op, value)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) FilterGroup(fn func(Query)) Query {
 	args := m.Called(fn)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) OrFilterGroup(fn func(Query)) Query {
 	args := m.Called(fn)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) IfNotExists() Query {
 	args := m.Called()
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) IfExists() Query {
 	args := m.Called()
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) WithCondition(field, operator string, value any) Query {
 	args := m.Called(field, operator, value)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) WithConditionExpression(expr string, values map[string]any) Query {
 	args := m.Called(expr, values)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) OrderBy(field string, order string) Query {
 	args := m.Called(field, order)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) Limit(limit int) Query {
 	args := m.Called(limit)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) Offset(offset int) Query {
 	args := m.Called(offset)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) Select(fields ...string) Query {
 	args := m.Called(fields)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) ConsistentRead() Query {
 	args := m.Called()
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) WithRetry(maxRetries int, initialDelay time.Duration) Query {
 	args := m.Called(maxRetries, initialDelay)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) First(dest any) error {
@@ -143,15 +233,12 @@ func (m *MockQuery) All(dest any) error {
 
 func (m *MockQuery) AllPaginated(dest any) (*PaginatedResult, error) {
 	args := m.Called(dest)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*PaginatedResult), args.Error(1)
+	return mustPaginatedResult(args.Get(0)), args.Error(1)
 }
 
 func (m *MockQuery) Count() (int64, error) {
 	args := m.Called()
-	return args.Get(0).(int64), args.Error(1)
+	return mustInt64(args.Get(0)), args.Error(1)
 }
 
 func (m *MockQuery) Create() error {
@@ -171,7 +258,7 @@ func (m *MockQuery) Update(fields ...string) error {
 
 func (m *MockQuery) UpdateBuilder() UpdateBuilder {
 	args := m.Called()
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockQuery) Delete() error {
@@ -186,7 +273,7 @@ func (m *MockQuery) Scan(dest any) error {
 
 func (m *MockQuery) ParallelScan(segment int32, totalSegments int32) Query {
 	args := m.Called(segment, totalSegments)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) ScanAllSegments(dest any, totalSegments int32) error {
@@ -206,7 +293,7 @@ func (m *MockQuery) BatchGetWithOptions(keys []any, dest any, opts *BatchGetOpti
 
 func (m *MockQuery) BatchGetBuilder() BatchGetBuilder {
 	args := m.Called()
-	return args.Get(0).(BatchGetBuilder)
+	return mustBatchGetBuilder(args.Get(0))
 }
 
 func (m *MockQuery) BatchCreate(items any) error {
@@ -231,7 +318,7 @@ func (m *MockQuery) BatchUpdateWithOptions(items []any, fields []string, options
 
 func (m *MockQuery) Cursor(cursor string) Query {
 	args := m.Called(cursor)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 func (m *MockQuery) SetCursor(cursor string) error {
@@ -241,7 +328,7 @@ func (m *MockQuery) SetCursor(cursor string) error {
 
 func (m *MockQuery) WithContext(ctx context.Context) Query {
 	args := m.Called(ctx)
-	return args.Get(0).(Query)
+	return mustQuery(args.Get(0))
 }
 
 // MockUpdateBuilder is a mock implementation of the UpdateBuilder interface
@@ -251,57 +338,57 @@ type MockUpdateBuilder struct {
 
 func (m *MockUpdateBuilder) Set(field string, value any) UpdateBuilder {
 	args := m.Called(field, value)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) UpdateBuilder {
 	args := m.Called(field, value, defaultValue)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Add(field string, value any) UpdateBuilder {
 	args := m.Called(field, value)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Increment(field string) UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Decrement(field string) UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Remove(field string) UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Delete(field string, value any) UpdateBuilder {
 	args := m.Called(field, value)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) AppendToList(field string, values any) UpdateBuilder {
 	args := m.Called(field, values)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) PrependToList(field string, values any) UpdateBuilder {
 	args := m.Called(field, values)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) RemoveFromListAt(field string, index int) UpdateBuilder {
 	args := m.Called(field, index)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) SetListElement(field string, index int, value any) UpdateBuilder {
 	args := m.Called(field, index, value)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Condition(field string, operator string, value any) UpdateBuilder {
@@ -314,22 +401,22 @@ func (m *MockUpdateBuilder) OrCondition(field string, operator string, value any
 
 func (m *MockUpdateBuilder) ConditionExists(field string) UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ConditionNotExists(field string) UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ConditionVersion(currentVersion int64) UpdateBuilder {
 	args := m.Called(currentVersion)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ReturnValues(option string) UpdateBuilder {
 	args := m.Called(option)
-	return args.Get(0).(UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Execute() error {
@@ -736,20 +823,17 @@ func (m *MockModelMetadata) TableName() string {
 
 func (m *MockModelMetadata) PrimaryKey() KeySchema {
 	args := m.Called()
-	return args.Get(0).(KeySchema)
+	return mustKeySchema(args.Get(0))
 }
 
 func (m *MockModelMetadata) Indexes() []IndexSchema {
 	args := m.Called()
-	return args.Get(0).([]IndexSchema)
+	return mustIndexSchemas(args.Get(0))
 }
 
 func (m *MockModelMetadata) AttributeMetadata(field string) *AttributeMetadata {
 	args := m.Called(field)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*AttributeMetadata)
+	return mustAttributeMetadata(args.Get(0))
 }
 
 func (m *MockModelMetadata) VersionFieldName() string {
@@ -809,7 +893,10 @@ func TestDBTransaction(t *testing.T) {
 		mockDB.On("Transaction", mock.MatchedBy(func(f func(tx *Tx) error) bool {
 			return f != nil
 		})).Return(nil).Run(func(args mock.Arguments) {
-			f := args.Get(0).(func(tx *Tx) error)
+			f, ok := args.Get(0).(func(tx *Tx) error)
+			if !ok {
+				t.Fatalf("expected function func(tx *Tx) error, got %T", args.Get(0))
+			}
 			if err := f(&Tx{db: mockDB}); err != nil {
 				t.Errorf("unexpected transaction error: %v", err)
 			}
@@ -831,7 +918,10 @@ func TestDBTransaction(t *testing.T) {
 		mockDB.On("Transaction", mock.MatchedBy(func(f func(tx *Tx) error) bool {
 			return f != nil
 		})).Return(expectedErr).Run(func(args mock.Arguments) {
-			f := args.Get(0).(func(tx *Tx) error)
+			f, ok := args.Get(0).(func(tx *Tx) error)
+			if !ok {
+				t.Fatalf("expected function func(tx *Tx) error, got %T", args.Get(0))
+			}
 			if err := f(&Tx{db: mockDB}); err != nil {
 				assert.ErrorIs(t, err, expectedErr)
 			}

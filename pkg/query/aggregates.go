@@ -474,9 +474,17 @@ func (g *GroupByQuery) evaluateHaving(group *GroupedResult) bool {
 					default:
 						// For MIN/MAX, try to convert to float
 						if result.Min != nil {
-							aggValue, _ = toFloat64(result.Min)
+							converted, err := toFloat64(result.Min)
+							if err != nil {
+								return false
+							}
+							aggValue = converted
 						} else if result.Max != nil {
-							aggValue, _ = toFloat64(result.Max)
+							converted, err := toFloat64(result.Max)
+							if err != nil {
+								return false
+							}
+							aggValue = converted
 						}
 					}
 					found = true

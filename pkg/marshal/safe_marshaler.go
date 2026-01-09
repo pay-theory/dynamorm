@@ -67,7 +67,12 @@ func (m *SafeMarshaler) MarshalItem(model any, metadata *model.Metadata) (map[st
 		cached, _ = m.cache.LoadOrStore(typ, sm)
 	}
 
-	sm := cached.(*safeStructMarshaler)
+	sm, ok := cached.(*safeStructMarshaler)
+	if !ok {
+		m.cache.Delete(typ)
+		sm = m.buildSafeStructMarshaler(typ, metadata)
+		m.cache.Store(typ, sm)
+	}
 
 	// Pre-allocate result map with estimated size
 	result := make(map[string]types.AttributeValue, sm.minFields)
@@ -202,7 +207,10 @@ func (m *SafeMarshaler) marshalValue(v reflect.Value, fieldMeta *safeFieldMarsha
 	case reflect.Struct:
 		// Special handling for time.Time
 		if v.Type() == reflect.TypeOf(time.Time{}) {
-			t := v.Interface().(time.Time)
+			t, ok := v.Interface().(time.Time)
+			if !ok {
+				return nil, fmt.Errorf("expected time.Time, got %T", v.Interface())
+			}
 			if fieldMeta.isTTL {
 				return &types.AttributeValueMemberN{Value: strconv.FormatInt(t.Unix(), 10)}, nil
 			}

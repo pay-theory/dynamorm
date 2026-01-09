@@ -175,7 +175,8 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			anyItems[i] = item
 		}
 
-		_ = q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
+		err := q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
+		assert.NoError(t, err)
 
 		// Should have been called at least once
 		assert.NotEmpty(t, progressCalls)
@@ -202,7 +203,8 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			anyItems[i] = item
 		}
 
-		_ = q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
+		err := q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
+		assert.NoError(t, err)
 
 		// Error handler should have been called due to execution failure
 		assert.True(t, errorHandlerCalled)
@@ -317,7 +319,9 @@ func TestPrepareBatches(t *testing.T) {
 					if tt.batchSize <= 0 || tt.batchSize > 25 {
 						expectedIdx = i*25 + j
 					}
-					assert.Equal(t, tt.items[expectedIdx].ID, item.(TestItem).ID)
+					typedItem, ok := item.(TestItem)
+					require.True(t, ok)
+					assert.Equal(t, tt.items[expectedIdx].ID, typedItem.ID)
 				}
 			}
 		})
@@ -761,7 +765,8 @@ func TestBatchDeleteWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		_ = q.BatchDeleteWithOptions(keys, opts)
+		err := q.BatchDeleteWithOptions(keys, opts)
+		assert.NoError(t, err)
 		assert.True(t, progressCalled)
 	})
 }
@@ -808,7 +813,8 @@ func TestExecuteBatchesParallel(t *testing.T) {
 		},
 	}
 
-	_ = q.executeBatchesParallel(items, opts, []string{"Name"}, &processed, total)
+	err := q.executeBatchesParallel(items, opts, []string{"Name"}, &processed, total)
+	assert.NoError(t, err)
 
 	// Verify all batches were attempted
 	assert.Len(t, executionOrder, 10)

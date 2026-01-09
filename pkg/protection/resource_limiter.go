@@ -475,28 +475,33 @@ func GetResourceProtectionType(err error) string {
 func (rp *ResourceProtector) HealthCheck() map[string]any {
 	stats := rp.GetStats()
 
+	memoryCheck := map[string]any{
+		"status":        "ok",
+		"current_mb":    stats.CurrentMemoryMB,
+		"limit_mb":      rp.config.MaxMemoryMB,
+		"usage_percent": float64(stats.CurrentMemoryMB) / float64(rp.config.MaxMemoryMB) * 100,
+	}
+	concurrencyCheck := map[string]any{
+		"status":              "ok",
+		"concurrent_requests": stats.ConcurrentRequests,
+		"max_requests":        rp.config.MaxConcurrentReq,
+		"concurrent_batches":  stats.ConcurrentBatchOps,
+		"max_batches":         rp.config.MaxConcurrentBatch,
+	}
+	rateLimitingCheck := map[string]any{
+		"status":           "ok",
+		"rate_limit_hits":  stats.RateLimitHits,
+		"requests_per_sec": rp.config.RequestsPerSecond,
+	}
+	checks := map[string]any{
+		"memory":        memoryCheck,
+		"concurrency":   concurrencyCheck,
+		"rate_limiting": rateLimitingCheck,
+	}
+
 	health := map[string]any{
-		"status": "healthy",
-		"checks": map[string]any{
-			"memory": map[string]any{
-				"status":        "ok",
-				"current_mb":    stats.CurrentMemoryMB,
-				"limit_mb":      rp.config.MaxMemoryMB,
-				"usage_percent": float64(stats.CurrentMemoryMB) / float64(rp.config.MaxMemoryMB) * 100,
-			},
-			"concurrency": map[string]any{
-				"status":              "ok",
-				"concurrent_requests": stats.ConcurrentRequests,
-				"max_requests":        rp.config.MaxConcurrentReq,
-				"concurrent_batches":  stats.ConcurrentBatchOps,
-				"max_batches":         rp.config.MaxConcurrentBatch,
-			},
-			"rate_limiting": map[string]any{
-				"status":           "ok",
-				"rate_limit_hits":  stats.RateLimitHits,
-				"requests_per_sec": rp.config.RequestsPerSecond,
-			},
-		},
+		"status":    "healthy",
+		"checks":    checks,
 		"timestamp": time.Now(),
 	}
 
@@ -504,12 +509,12 @@ func (rp *ResourceProtector) HealthCheck() map[string]any {
 	memoryUsage := float64(stats.CurrentMemoryMB) / float64(rp.config.MaxMemoryMB)
 	if memoryUsage > 0.9 {
 		health["status"] = "degraded"
-		health["checks"].(map[string]any)["memory"].(map[string]any)["status"] = "warning"
+		memoryCheck["status"] = "warning"
 	}
 
 	if stats.ConcurrentRequests >= int64(float64(rp.config.MaxConcurrentReq)*0.9) {
 		health["status"] = "degraded"
-		health["checks"].(map[string]any)["concurrency"].(map[string]any)["status"] = "warning"
+		concurrencyCheck["status"] = "warning"
 	}
 
 	return health

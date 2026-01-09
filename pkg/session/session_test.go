@@ -397,7 +397,9 @@ func BenchmarkSessionGetters(b *testing.B) {
 
 	b.Run("Client", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _ = sess.Client()
+			if _, err := sess.Client(); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 

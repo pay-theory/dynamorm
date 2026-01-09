@@ -61,6 +61,13 @@ func minimalAWSConfig(httpClient aws.HTTPClient) aws.Config {
 	return cfg
 }
 
+func mustDB(t *testing.T, dbAny any) *DB {
+	t.Helper()
+	db, ok := dbAny.(*DB)
+	require.True(t, ok, "expected *dynamorm.DB, got %T", dbAny)
+	return db
+}
+
 type capturedRequest struct {
 	Target  string
 	Payload map[string]any
@@ -102,7 +109,9 @@ func (c *capturingHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = req.Body.Close()
+	if err := req.Body.Close(); err != nil {
+		return nil, err
+	}
 
 	payload := make(map[string]any)
 	if len(bodyBytes) > 0 {
@@ -283,9 +292,8 @@ func TestDBModelCachesMetadata(t *testing.T) {
 	db := newBareDB()
 
 	q := db.Model(&testOrderModel{})
-	require.IsType(t, &query{}, q)
-
-	qq := q.(*query)
+	qq, ok := q.(*query)
+	require.True(t, ok)
 	require.Equal(t, db, qq.db)
 	require.NotNil(t, qq.builder)
 	require.Equal(t, 0, len(qq.conditions))
@@ -324,7 +332,7 @@ func TestQueryBuilderAllBuildsExpressions(t *testing.T) {
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
 
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	q := db.Model(&testOrderModel{}).
 		Where("TenantID", "=", "tenant#123").
@@ -389,7 +397,8 @@ func TestQueryBuilderAllBuildsExpressions(t *testing.T) {
 
 	var resolvedKeyExpr = keyExpr
 	for placeholder, actual := range namesMapRaw {
-		name := actual.(string)
+		name, isString := actual.(string)
+		require.True(t, isString)
 		resolvedKeyExpr = strings.ReplaceAll(resolvedKeyExpr, placeholder, name)
 	}
 	require.Contains(t, resolvedKeyExpr, meta.PrimaryKey.PartitionKey.DBName)
@@ -397,7 +406,8 @@ func TestQueryBuilderAllBuildsExpressions(t *testing.T) {
 
 	resolvedFilterExpr := filterExpr
 	for placeholder, actual := range namesMapRaw {
-		name := actual.(string)
+		name, isString := actual.(string)
+		require.True(t, isString)
 		resolvedFilterExpr = strings.ReplaceAll(resolvedFilterExpr, placeholder, name)
 	}
 	require.Contains(t, strings.ToLower(resolvedFilterExpr), "status")
@@ -430,7 +440,7 @@ func TestQueryBuilderFirstBuildsGetItemRequest(t *testing.T) {
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
 
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	q := db.Model(&testOrderModel{}).
 		Where("TenantID", "=", "tenant#999").
@@ -475,7 +485,7 @@ func TestQueryCreatePopulatesTimestampsAndCondition(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#create",
@@ -563,7 +573,7 @@ func TestQueryCreateConditionalFailure(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#create",
@@ -587,7 +597,7 @@ func TestCreateOrUpdateAllowsOverwrite(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#upsert",
@@ -609,12 +619,16 @@ func TestCreateOrUpdateAllowsOverwrite(t *testing.T) {
 
 	createdAttr, ok := item["createdAt"].(map[string]any)
 	require.True(t, ok)
-	_, err = time.Parse(time.RFC3339Nano, createdAttr["S"].(string))
+	createdStr, isString := createdAttr["S"].(string)
+	require.True(t, isString)
+	_, err = time.Parse(time.RFC3339Nano, createdStr)
 	require.NoError(t, err)
 
 	updatedAttr, ok := item["updatedAt"].(map[string]any)
 	require.True(t, ok)
-	_, err = time.Parse(time.RFC3339Nano, updatedAttr["S"].(string))
+	updatedStr, isString := updatedAttr["S"].(string)
+	require.True(t, isString)
+	_, err = time.Parse(time.RFC3339Nano, updatedStr)
 	require.NoError(t, err)
 
 	require.False(t, order.CreatedAt.IsZero())
@@ -631,7 +645,7 @@ func TestQueryUpdateBuildsExpression(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#update",
@@ -684,7 +698,8 @@ func TestQueryUpdateBuildsExpression(t *testing.T) {
 	var sawStatusValue bool
 	var sawUpdatedAtValue bool
 	for _, raw := range values {
-		attr := raw.(map[string]any)
+		attr, isMap := raw.(map[string]any)
+		require.True(t, isMap)
 		if s, exists := attr["S"].(string); exists {
 			switch {
 			case s == "SHIPPED":
@@ -715,7 +730,7 @@ func TestQueryUpdateConditionalFailure(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#update",
@@ -739,7 +754,7 @@ func TestQueryDeleteBuildsKey(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#delete",
@@ -759,10 +774,12 @@ func TestQueryDeleteBuildsKey(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, key, 2)
 
-	pk := key["tenantId"].(map[string]any)
+	pk, pkOK := key["tenantId"].(map[string]any)
+	require.True(t, pkOK)
 	require.Equal(t, order.TenantID, pk["S"])
 
-	sk := key["orderId"].(map[string]any)
+	sk, skOK := key["orderId"].(map[string]any)
+	require.True(t, skOK)
 	require.Equal(t, order.OrderID, sk["S"])
 }
 
@@ -783,7 +800,7 @@ func TestQueryDeleteConditionalFailure(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	order := &auditOrderModel{
 		TenantID: "tenant#delete",
@@ -838,7 +855,7 @@ func TestQueryAllAggregatesAcrossPages(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	var results []testOrderModel
 	err = db.Model(&testOrderModel{}).
@@ -905,7 +922,7 @@ func TestQueryAllRespectsLimit(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	var results []testOrderModel
 	err = db.Model(&testOrderModel{}).
@@ -946,7 +963,7 @@ func TestScanAllAppliesFilters(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	var results []testOrderModel
 	err = db.Model(&testOrderModel{}).
@@ -989,7 +1006,7 @@ func TestQueryCountAggregatesPages(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	count, err := db.Model(&testOrderModel{}).
 		Where("TenantID", "=", "tenant#count").
@@ -1019,7 +1036,7 @@ func TestScanCountReturnsTotal(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	count, err := db.Model(&testOrderModel{}).Count()
 	require.NoError(t, err)
@@ -1053,7 +1070,7 @@ func TestQueryFirstReturnsItem(t *testing.T) {
 
 	dbAny, err := New(session.Config{Region: "us-east-1"})
 	require.NoError(t, err)
-	db := dbAny.(*DB)
+	db := mustDB(t, dbAny)
 
 	var result testOrderModel
 	err = db.Model(&testOrderModel{}).

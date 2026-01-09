@@ -47,7 +47,9 @@ func IsEmpty(v reflect.Value) bool {
 	case reflect.Struct:
 		if v.Type() == timeType {
 			if v.CanInterface() {
-				return v.Interface().(time.Time).IsZero()
+				if t, ok := v.Interface().(time.Time); ok {
+					return t.IsZero()
+				}
 			}
 			return v.IsZero()
 		}

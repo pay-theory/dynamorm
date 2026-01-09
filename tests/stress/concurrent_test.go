@@ -34,9 +34,10 @@ func TestConcurrentQueries(t *testing.T) {
 
 	// Clean up any existing items
 	for i := 0; i < 100; i++ {
-		_ = db.Model(&models.TestUser{}).
+		err := db.Model(&models.TestUser{}).
 			Where("ID", "=", fmt.Sprintf("concurrent-user-%d", i)).
 			Delete()
+		require.NoError(t, err)
 	}
 
 	// Create test data
@@ -230,9 +231,10 @@ func TestLargeItemHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clean up any existing item
-		_ = db.Model(&LargeUser{}).
+		err = db.Model(&LargeUser{}).
 			Where("ID", "=", "large-string-user").
 			Delete()
+		require.NoError(t, err)
 
 		// Use a fixed timestamp for both create and query
 		timestamp := time.Now()
@@ -272,9 +274,10 @@ func TestLargeItemHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clean up any existing item
-		_ = db.Model(&FlexibleItem{}).
+		err = db.Model(&FlexibleItem{}).
 			Where("ID", "=", "many-attributes-item").
 			Delete()
+		require.NoError(t, err)
 
 		item := FlexibleItem{
 			ID:         "many-attributes-item",
@@ -365,9 +368,10 @@ func TestMemoryStability(t *testing.T) {
 
 	// Clean up any existing items
 	for i := 0; i < 100; i++ {
-		_ = db.Model(&models.TestUser{}).
+		err := db.Model(&models.TestUser{}).
 			Where("ID", "=", fmt.Sprintf("mem-test-user-%d", i)).
 			Delete()
+		require.NoError(t, err)
 	}
 
 	// Create test data
