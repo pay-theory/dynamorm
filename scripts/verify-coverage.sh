@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-default_threshold="50.0"
+default_threshold="90.0"
 threshold="${COVERAGE_THRESHOLD:-${default_threshold}}"
 profile="${COVER_PROFILE:-coverage_lib.out}"
 
@@ -20,4 +20,3 @@ awk -v total="${total_pct}" -v threshold="${threshold}" 'BEGIN { exit !(total+0 
 }
 
 echo "coverage: PASS (${total_pct}% >= ${threshold}%)"
-

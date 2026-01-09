@@ -12,6 +12,8 @@ Start here:
 - `docs/development/planning/dynamorm-controls-matrix.md` (what we care about, mapped to verifiers)
 - `docs/development/planning/dynamorm-10of10-rubric.md` (the definition of “good”; versioned)
 - `docs/development/planning/dynamorm-10of10-roadmap.md` (milestones mapped to rubric IDs)
+- `docs/development/planning/dynamorm-lint-green-roadmap.md` (execution plan to get `make lint` green)
+- `docs/development/planning/dynamorm-coverage-roadmap.md` (execution plan to reach 90% library coverage)
 - `docs/development/planning/dynamorm-evidence-plan.md` (where evidence comes from + how to regenerate)
 - `docs/development/planning/dynamorm-threat-model.md` (threats + mitigations for this codebase)
 - `docs/development/planning/ai-drift-recovery.md` (common AI failure modes + how we recover)

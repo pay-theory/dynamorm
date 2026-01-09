@@ -22,7 +22,7 @@ report, or CI artifact is possible.
 - Roadmap mapped to rubric IDs: `docs/development/planning/dynamorm-10of10-roadmap.md`
 - Threat model: `docs/development/planning/dynamorm-threat-model.md`
 
-## Rubric-to-evidence map (Rubric v0.1)
+## Rubric-to-evidence map (Rubric v0.2)
 
 | Rubric ID | Primary evidence | How to refresh |
 | --- | --- | --- |
@@ -33,8 +33,10 @@ report, or CI artifact is possible.
 | CON-2 | Lint output | `make lint` |
 | COM-1 | Multi-module compile output | `bash scripts/verify-go-modules.sh` |
 | COM-2 | CI alignment check output | `bash scripts/verify-ci-toolchain.sh` |
-| COM-3 / DOC-* | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
+| COM-3 | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
+| COM-4 | golangci-lint config verification output | `golangci-lint config verify -c .golangci-v2.yml` |
+| COM-5 | Coverage threshold verification output | `bash scripts/verify-coverage-threshold.sh` |
+| DOC-* | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
 | SEC-1 | gosec output (optional SARIF) | `bash scripts/sec-gosec.sh` |
 | SEC-2 | govulncheck output | `bash scripts/sec-govulncheck.sh` |
 | SEC-3 | `go mod verify` output | `go mod verify` |
-

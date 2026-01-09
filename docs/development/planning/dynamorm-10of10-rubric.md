@@ -6,12 +6,13 @@ It is designed for an **AI-generated codebase**: gates must be **versioned, meas
 
 ## Versioning (no moving goalposts)
 
-- **Rubric version:** `v0.1` (2026-01-09)
+- **Rubric version:** `v0.2` (2026-01-09)
 - **Comparability rule:** grades are only comparable within the same rubric version.
 - **Change rule:** rubric changes must bump the version and include a brief changelog entry (what changed + why).
 
 ### Changelog
 
+- `v0.2` (2026-01-09): Require **90%** library coverage for **QUA-3**, add anti-dilution completeness gates for lint config validity and coverage threshold, and treat `.golangci-v2.yml` as the source of truth for `make lint`.
 - `v0.1` (2026-01-09): Initial rubric for DynamORM.
 
 ## Scoring (deterministic)
@@ -36,7 +37,7 @@ Every rubric item has exactly one verification mechanism:
 | --- | ---: | --- | --- |
 | QUA-1 | 4 | Unit tests stay green | `make test-unit` |
 | QUA-2 | 3 | Integration tests stay green (DynamoDB Local required) | `make integration` |
-| QUA-3 | 3 | Library coverage stays at or above the threshold | `bash scripts/verify-coverage.sh` |
+| QUA-3 | 3 | Library coverage stays at or above the threshold (default **90%**) | `bash scripts/verify-coverage.sh` |
 
 **10/10 definition:** QUA-1 through QUA-3 pass.
 
@@ -57,11 +58,13 @@ Every rubric item has exactly one verification mechanism:
 
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| COM-1 | 4 | All Go modules compile (including examples) | `bash scripts/verify-go-modules.sh` |
-| COM-2 | 3 | CI toolchain aligns to repo expectations (Go + pinned tool versions) | `bash scripts/verify-ci-toolchain.sh` |
-| COM-3 | 3 | Planning docs exist and are versioned | `bash scripts/verify-planning-docs.sh` |
+| COM-1 | 2 | All Go modules compile (including examples) | `bash scripts/verify-go-modules.sh` |
+| COM-2 | 2 | CI toolchain aligns to repo expectations (Go + pinned tool versions) | `bash scripts/verify-ci-toolchain.sh` |
+| COM-3 | 2 | Planning docs exist and are versioned | `bash scripts/verify-planning-docs.sh` |
+| COM-4 | 2 | Lint configuration is schema-valid for golangci-lint v2 | `golangci-lint config verify -c .golangci-v2.yml` |
+| COM-5 | 2 | Coverage gate configuration is not diluted (default threshold ≥ 90%) | `bash scripts/verify-coverage-threshold.sh` |
 
-**10/10 definition:** COM-1 through COM-3 pass.
+**10/10 definition:** COM-1 through COM-5 pass.
 
 ---
 
@@ -94,10 +97,12 @@ Every rubric item has exactly one verification mechanism:
 ```bash
 bash scripts/verify-planning-docs.sh
 bash scripts/fmt-check.sh
+golangci-lint config verify -c .golangci-v2.yml
 make lint
 
 make test-unit
 make integration
+bash scripts/verify-coverage-threshold.sh
 bash scripts/verify-coverage.sh
 
 bash scripts/verify-go-modules.sh
@@ -107,4 +112,3 @@ bash scripts/sec-gosec.sh
 bash scripts/sec-govulncheck.sh
 go mod verify
 ```
-
