@@ -628,47 +628,9 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 		opts.MaxBatchSize = 25
 	}
 
-	// Prepare write requests
-	allRequests := make([]types.WriteRequest, 0, totalItems)
-
-	// Add put requests
-	for _, item := range putItems {
-		itemAV, err := convertItemToAttributeValue(item)
-		if err != nil {
-			if opts.ErrorHandler != nil {
-				if handlerErr := opts.ErrorHandler(item, err); handlerErr != nil {
-					return handlerErr
-				}
-				continue
-			}
-			return fmt.Errorf("failed to marshal item: %w", err)
-		}
-
-		allRequests = append(allRequests, types.WriteRequest{
-			PutRequest: &types.PutRequest{
-				Item: itemAV,
-			},
-		})
-	}
-
-	// Add delete requests
-	for _, key := range deleteKeys {
-		keyAV, err := q.extractKeyAttributeValues(key)
-		if err != nil {
-			if opts.ErrorHandler != nil {
-				if handlerErr := opts.ErrorHandler(key, err); handlerErr != nil {
-					return handlerErr
-				}
-				continue
-			}
-			return fmt.Errorf("failed to extract key: %w", err)
-		}
-
-		allRequests = append(allRequests, types.WriteRequest{
-			DeleteRequest: &types.DeleteRequest{
-				Key: keyAV,
-			},
-		})
+	allRequests, err := q.buildBatchWriteRequests(putItems, deleteKeys, totalItems, opts)
+	if err != nil {
+		return err
 	}
 
 	// Split into batches
@@ -677,14 +639,9 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 	// Execute batches
 	processed := 0
 	for _, batch := range batches {
-		err := q.executeBatchWriteWithRetries(q.metadata.TableName(), batch, opts)
-		if err != nil {
-			if opts.ErrorHandler != nil {
-				if handlerErr := opts.ErrorHandler(batch, err); handlerErr != nil {
-					return handlerErr
-				}
-			} else {
-				return err
+		if err := q.executeBatchWriteWithRetries(q.metadata.TableName(), batch, opts); err != nil {
+			if handlerErr := handleBatchUpdateError(opts, batch, err, err); handlerErr != nil {
+				return handlerErr
 			}
 		}
 
@@ -695,6 +652,69 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 	}
 
 	return nil
+}
+
+func (q *Query) buildBatchWriteRequests(putItems []any, deleteKeys []any, capacity int, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+	allRequests := make([]types.WriteRequest, 0, capacity)
+
+	requests, err := appendPutWriteRequests(allRequests, putItems, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	requests, err = q.appendDeleteWriteRequests(requests, deleteKeys, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return requests, nil
+}
+
+func appendPutWriteRequests(requests []types.WriteRequest, putItems []any, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+	for _, item := range putItems {
+		itemAV, err := convertItemToAttributeValue(item)
+		if err != nil {
+			if handlerErr := handleBatchUpdateError(opts, item, err, fmt.Errorf("failed to marshal item: %w", err)); handlerErr != nil {
+				return nil, handlerErr
+			}
+			continue
+		}
+
+		requests = append(requests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: itemAV,
+			},
+		})
+	}
+
+	return requests, nil
+}
+
+func (q *Query) appendDeleteWriteRequests(requests []types.WriteRequest, deleteKeys []any, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+	for _, key := range deleteKeys {
+		keyAV, err := q.extractKeyAttributeValues(key)
+		if err != nil {
+			if handlerErr := handleBatchUpdateError(opts, key, err, fmt.Errorf("failed to extract key: %w", err)); handlerErr != nil {
+				return nil, handlerErr
+			}
+			continue
+		}
+
+		requests = append(requests, types.WriteRequest{
+			DeleteRequest: &types.DeleteRequest{
+				Key: keyAV,
+			},
+		})
+	}
+
+	return requests, nil
+}
+
+func handleBatchUpdateError(opts *BatchUpdateOptions, subject any, originalErr error, fallback error) error {
+	if opts != nil && opts.ErrorHandler != nil {
+		return opts.ErrorHandler(subject, originalErr)
+	}
+	return fallback
 }
 
 // splitWriteRequests splits write requests into batches

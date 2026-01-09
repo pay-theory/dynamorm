@@ -24,14 +24,44 @@ func (q *Query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOpt
 		return err
 	}
 
+	if err := q.validateBatchGetInputs(keys, dest); err != nil {
+		return err
+	}
+
+	executor, err := q.batchGetExecutor()
+	if err != nil {
+		return err
+	}
+
+	effectiveOpts, keySpecs, chunks, err := q.buildBatchGetPlan(keys, opts)
+	if err != nil {
+		return err
+	}
+
+	flattened, err := executeBatchGetChunks(executor, chunks, keySpecs, effectiveOpts)
+	if err != nil {
+		return err
+	}
+
+	if rawDest, ok := dest.(*[]map[string]types.AttributeValue); ok {
+		*rawDest = append((*rawDest)[:0], flattened...)
+		return nil
+	}
+
+	return UnmarshalItems(flattened, dest)
+}
+
+func (q *Query) validateBatchGetInputs(keys []any, dest any) error {
 	if q.metadata == nil {
 		return errors.New("model metadata is required for batch get")
 	}
-
 	if len(keys) == 0 {
 		return errors.New("no keys provided")
 	}
+	return validateBatchGetDest(dest)
+}
 
+func validateBatchGetDest(dest any) error {
 	destValue := reflect.ValueOf(dest)
 	if !destValue.IsValid() {
 		return errors.New("dest must be a pointer to slice")
@@ -39,37 +69,46 @@ func (q *Query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOpt
 	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
 		return errors.New("dest must be a pointer to slice")
 	}
+	return nil
+}
 
+func (q *Query) batchGetExecutor() (BatchExecutor, error) {
 	executor, ok := q.executor.(BatchExecutor)
 	if !ok {
-		return errors.New("executor does not support batch operations")
+		return nil, errors.New("executor does not support batch operations")
 	}
+	return executor, nil
+}
 
+func (q *Query) buildBatchGetPlan(keys []any, opts *core.BatchGetOptions) (*core.BatchGetOptions, []batchKeySpec, []batchGetChunk, error) {
 	effectiveOpts := q.normalizeBatchGetOptions(opts)
 
 	keySpecs, err := q.convertBatchGetKeys(keys)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
 	projectionExpr, projectionNames, err := q.buildBatchGetProjection()
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
 	consistentRead := effectiveOpts.ConsistentRead || q.consistentRead
 	chunks := q.buildBatchGetChunks(keySpecs, effectiveOpts.ChunkSize, consistentRead, projectionExpr, projectionNames)
 
+	return effectiveOpts, keySpecs, chunks, nil
+}
+
+func executeBatchGetChunks(executor BatchExecutor, chunks []batchGetChunk, keySpecs []batchKeySpec, opts *core.BatchGetOptions) ([]map[string]types.AttributeValue, error) {
 	ordered := make([]map[string]types.AttributeValue, len(keySpecs))
 	var orderMu sync.Mutex
 
-	progress := makeProgressReporter(effectiveOpts.ProgressCallback, len(keySpecs))
-
+	progress := makeProgressReporter(opts.ProgressCallback, len(keySpecs))
 	processChunk := func(chunk batchGetChunk) error {
-		items, execErr := executor.ExecuteBatchGet(chunk.request, effectiveOpts)
+		items, execErr := executor.ExecuteBatchGet(chunk.request, opts)
 		if execErr != nil {
-			if effectiveOpts.OnChunkError != nil {
-				return effectiveOpts.OnChunkError(chunk.originals, execErr)
+			if opts.OnChunkError != nil {
+				return opts.OnChunkError(chunk.originals, execErr)
 			}
 			return execErr
 		}
@@ -79,31 +118,29 @@ func (q *Query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOpt
 		return nil
 	}
 
-	if effectiveOpts.Parallel && effectiveOpts.MaxConcurrency > 1 {
-		if err := runChunksParallel(chunks, processChunk, effectiveOpts.MaxConcurrency); err != nil {
-			return err
+	if opts.Parallel && opts.MaxConcurrency > 1 {
+		if err := runChunksParallel(chunks, processChunk, opts.MaxConcurrency); err != nil {
+			return nil, err
 		}
 	} else {
 		for _, chunk := range chunks {
 			if err := processChunk(chunk); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	var flattened []map[string]types.AttributeValue
+	return flattenBatchGetResults(ordered), nil
+}
+
+func flattenBatchGetResults(ordered []map[string]types.AttributeValue) []map[string]types.AttributeValue {
+	flattened := make([]map[string]types.AttributeValue, 0, len(ordered))
 	for _, item := range ordered {
 		if item != nil {
 			flattened = append(flattened, item)
 		}
 	}
-
-	if rawDest, ok := dest.(*[]map[string]types.AttributeValue); ok {
-		*rawDest = append((*rawDest)[:0], flattened...)
-		return nil
-	}
-
-	return UnmarshalItems(flattened, dest)
+	return flattened
 }
 
 // BatchGetBuilder returns a fluent builder for composing advanced BatchGet operations.
