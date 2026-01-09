@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/pay-theory/dynamorm/internal/expr"
+	"github.com/pay-theory/dynamorm/internal/reflectutil"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/marshal"
@@ -2511,7 +2512,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 				continue
 			}
 			fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-			if !fieldValue.IsZero() || !fieldMeta.OmitEmpty {
+			if !reflectutil.IsEmpty(fieldValue) || !fieldMeta.OmitEmpty {
 				fieldsToUpdate = append(fieldsToUpdate, fieldName)
 			}
 		}
