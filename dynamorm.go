@@ -1271,13 +1271,14 @@ func (q *query) BatchCreate(items any) error {
 		return err
 	}
 
-	// Validate items is a slice
-	itemsValue := reflect.ValueOf(items)
-	if itemsValue.Kind() == reflect.Ptr {
-		itemsValue = itemsValue.Elem()
+	itemsValue, err := sliceValue(items)
+	if err != nil {
+		return err
 	}
-	if itemsValue.Kind() != reflect.Slice {
-		return fmt.Errorf("items must be a slice")
+
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for batch create: %w", err)
 	}
 
 	// Process items in batches of 25 (DynamoDB limit)
@@ -1285,31 +1286,10 @@ func (q *query) BatchCreate(items any) error {
 	totalItems := itemsValue.Len()
 
 	for i := 0; i < totalItems; i += batchSize {
-		end := i + batchSize
-		if end > totalItems {
-			end = totalItems
-		}
-
-		// Build batch write request
-		writeRequests := make([]types.WriteRequest, 0, end-i)
-
-		for j := i; j < end; j++ {
-			itemValue := itemsValue.Index(j)
-			if itemValue.Kind() == reflect.Ptr {
-				itemValue = itemValue.Elem()
-			}
-
-			// Marshal item
-			item, err := q.marshalItem(itemValue.Interface(), metadata)
-			if err != nil {
-				return fmt.Errorf("failed to marshal item %d: %w", j, err)
-			}
-
-			writeRequests = append(writeRequests, types.WriteRequest{
-				PutRequest: &types.PutRequest{
-					Item: item,
-				},
-			})
+		end := minInt(i+batchSize, totalItems)
+		writeRequests, err := q.buildBatchCreateWriteRequests(itemsValue, i, end, metadata)
+		if err != nil {
+			return err
 		}
 
 		// Build BatchWriteItem input
@@ -1320,32 +1300,8 @@ func (q *query) BatchCreate(items any) error {
 		}
 
 		// Execute batch write with retries for unprocessed items
-		client, err := q.db.session.Client()
-		if err != nil {
-			return fmt.Errorf("failed to get client for batch create: %w", err)
-		}
-
-		for {
-			output, err := client.BatchWriteItem(q.ctx, input)
-			if err != nil {
-				return fmt.Errorf("failed to batch create items: %w", err)
-			}
-
-			// Check for unprocessed items
-			if len(output.UnprocessedItems) == 0 {
-				break
-			}
-
-			// Check if context is canceled before retrying
-			select {
-			case <-q.ctx.Done():
-				return fmt.Errorf("context canceled during batch create retry: %w", q.ctx.Err())
-			default:
-				// Continue with retry
-			}
-
-			// Retry unprocessed items
-			input.RequestItems = output.UnprocessedItems
+		if err := q.batchWriteWithRetries(q.ctx, client, input, "batch create", true); err != nil {
+			return err
 		}
 	}
 
@@ -1370,84 +1326,16 @@ func (q *query) BatchDelete(keys []any) error {
 
 	// Process keys in batches of 25 (DynamoDB limit)
 	const batchSize = 25
+	client, err := q.db.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for batch delete: %w", err)
+	}
 
 	for i := 0; i < len(keys); i += batchSize {
-		end := i + batchSize
-		if end > len(keys) {
-			end = len(keys)
-		}
-
-		// Build batch write request
-		writeRequests := make([]types.WriteRequest, 0, end-i)
-
-		for j := i; j < end; j++ {
-			key := keys[j]
-			keyMap := make(map[string]types.AttributeValue)
-
-			// Handle different key formats
-			switch k := key.(type) {
-			case map[string]any:
-				// Key is a map with pk and optional sk
-				if pk, hasPK := k["pk"]; hasPK {
-					av, err := q.db.converter.ToAttributeValue(pk)
-					if err != nil {
-						return fmt.Errorf("failed to convert partition key: %w", err)
-					}
-					keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-				}
-				if sk, hasSK := k["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
-					av, err := q.db.converter.ToAttributeValue(sk)
-					if err != nil {
-						return fmt.Errorf("failed to convert sort key: %w", err)
-					}
-					keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-				}
-			default:
-				// Check if key is a struct with the same type as our model
-				keyValue := reflect.ValueOf(key)
-				if keyValue.Kind() == reflect.Ptr {
-					keyValue = keyValue.Elem()
-				}
-
-				if keyValue.Kind() == reflect.Struct {
-					// Extract primary key fields from struct
-					for _, field := range metadata.Fields {
-						if field.IsPK {
-							fieldValue := keyValue.FieldByIndex(field.IndexPath)
-							av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
-							if err != nil {
-								return fmt.Errorf("failed to convert partition key: %w", err)
-							}
-							keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-						} else if field.IsSK && metadata.PrimaryKey.SortKey != nil {
-							fieldValue := keyValue.FieldByIndex(field.IndexPath)
-							av, err := q.db.converter.ToAttributeValue(fieldValue.Interface())
-							if err != nil {
-								return fmt.Errorf("failed to convert sort key: %w", err)
-							}
-							keyMap[metadata.PrimaryKey.SortKey.DBName] = av
-						}
-					}
-				} else {
-					// Key is just the partition key value
-					av, err := q.db.converter.ToAttributeValue(key)
-					if err != nil {
-						return fmt.Errorf("failed to convert partition key: %w", err)
-					}
-					keyMap[metadata.PrimaryKey.PartitionKey.DBName] = av
-				}
-			}
-
-			// Validate that we have at least a partition key
-			if len(keyMap) == 0 {
-				return fmt.Errorf("invalid key at index %d: missing partition key", j)
-			}
-
-			writeRequests = append(writeRequests, types.WriteRequest{
-				DeleteRequest: &types.DeleteRequest{
-					Key: keyMap,
-				},
-			})
+		end := minInt(i+batchSize, len(keys))
+		writeRequests, err := q.buildBatchDeleteWriteRequests(keys, i, end, metadata)
+		if err != nil {
+			return err
 		}
 
 		// Build BatchWriteItem input
@@ -1458,28 +1346,183 @@ func (q *query) BatchDelete(keys []any) error {
 		}
 
 		// Execute batch write with retries for unprocessed items
-		client, err := q.db.session.Client()
-		if err != nil {
-			return fmt.Errorf("failed to get client for batch delete: %w", err)
-		}
-
-		for {
-			output, err := client.BatchWriteItem(q.ctx, input)
-			if err != nil {
-				return fmt.Errorf("failed to batch delete items: %w", err)
-			}
-
-			// Check for unprocessed items
-			if len(output.UnprocessedItems) == 0 {
-				break
-			}
-
-			// Retry unprocessed items
-			input.RequestItems = output.UnprocessedItems
+		if err := q.batchWriteWithRetries(q.ctx, client, input, "batch delete", false); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func (q *query) buildBatchCreateWriteRequests(itemsValue reflect.Value, start, end int, metadata *model.Metadata) ([]types.WriteRequest, error) {
+	writeRequests := make([]types.WriteRequest, 0, end-start)
+	for i := start; i < end; i++ {
+		itemValue := itemsValue.Index(i)
+		if itemValue.Kind() == reflect.Ptr {
+			itemValue = itemValue.Elem()
+		}
+
+		item, err := q.marshalItem(itemValue.Interface(), metadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal item %d: %w", i, err)
+		}
+
+		writeRequests = append(writeRequests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: item,
+			},
+		})
+	}
+	return writeRequests, nil
+}
+
+func (q *query) buildBatchDeleteWriteRequests(keys []any, start, end int, metadata *model.Metadata) ([]types.WriteRequest, error) {
+	writeRequests := make([]types.WriteRequest, 0, end-start)
+	for i := start; i < end; i++ {
+		keyMap, err := q.buildKeyMapForBatchDelete(keys[i], metadata)
+		if err != nil {
+			return nil, err
+		}
+		if len(keyMap) == 0 {
+			return nil, fmt.Errorf("invalid key at index %d: missing partition key", i)
+		}
+
+		writeRequests = append(writeRequests, types.WriteRequest{
+			DeleteRequest: &types.DeleteRequest{
+				Key: keyMap,
+			},
+		})
+	}
+	return writeRequests, nil
+}
+
+func (q *query) buildKeyMapForBatchDelete(key any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	switch k := key.(type) {
+	case map[string]any:
+		return q.buildKeyMapFromMapKey(k, metadata)
+	default:
+		return q.buildKeyMapFromAnyKey(key, metadata)
+	}
+}
+
+func (q *query) buildKeyMapFromMapKey(keyMap map[string]any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	result := make(map[string]types.AttributeValue)
+
+	if pk, hasPK := keyMap["pk"]; hasPK {
+		av, err := q.db.converter.ToAttributeValue(pk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert partition key: %w", err)
+		}
+		result[metadata.PrimaryKey.PartitionKey.DBName] = av
+	}
+
+	if sk, hasSK := keyMap["sk"]; hasSK && metadata.PrimaryKey.SortKey != nil {
+		av, err := q.db.converter.ToAttributeValue(sk)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert sort key: %w", err)
+		}
+		result[metadata.PrimaryKey.SortKey.DBName] = av
+	}
+
+	return result, nil
+}
+
+func (q *query) buildKeyMapFromAnyKey(key any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	keyValue := reflect.ValueOf(key)
+	if keyValue.IsValid() && keyValue.Kind() == reflect.Ptr {
+		if keyValue.IsNil() {
+			return q.buildKeyMapFromPartitionKeyValue(key, metadata)
+		}
+		keyValue = keyValue.Elem()
+	}
+
+	if keyValue.IsValid() && keyValue.Kind() == reflect.Struct {
+		return q.buildKeyMapFromStructKey(keyValue, metadata)
+	}
+
+	return q.buildKeyMapFromPartitionKeyValue(key, metadata)
+}
+
+func (q *query) buildKeyMapFromStructKey(keyValue reflect.Value, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	result := make(map[string]types.AttributeValue)
+
+	for _, field := range metadata.Fields {
+		switch {
+		case field.IsPK:
+			av, err := q.db.converter.ToAttributeValue(keyValue.FieldByIndex(field.IndexPath).Interface())
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert partition key: %w", err)
+			}
+			result[metadata.PrimaryKey.PartitionKey.DBName] = av
+		case field.IsSK && metadata.PrimaryKey.SortKey != nil:
+			av, err := q.db.converter.ToAttributeValue(keyValue.FieldByIndex(field.IndexPath).Interface())
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert sort key: %w", err)
+			}
+			result[metadata.PrimaryKey.SortKey.DBName] = av
+		}
+	}
+
+	return result, nil
+}
+
+func (q *query) buildKeyMapFromPartitionKeyValue(key any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	av, err := q.db.converter.ToAttributeValue(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert partition key: %w", err)
+	}
+
+	return map[string]types.AttributeValue{
+		metadata.PrimaryKey.PartitionKey.DBName: av,
+	}, nil
+}
+
+func (q *query) batchWriteWithRetries(ctx context.Context, client *dynamodb.Client, input *dynamodb.BatchWriteItemInput, operation string, checkCtx bool) error {
+	for {
+		output, err := client.BatchWriteItem(ctx, input)
+		if err != nil {
+			return fmt.Errorf("failed to %s items: %w", operation, err)
+		}
+		if len(output.UnprocessedItems) == 0 {
+			return nil
+		}
+		if checkCtx {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context canceled during %s retry: %w", operation, ctx.Err())
+			default:
+			}
+		}
+
+		input.RequestItems = output.UnprocessedItems
+	}
+}
+
+func sliceValue(items any) (reflect.Value, error) {
+	value := reflect.ValueOf(items)
+	if !value.IsValid() {
+		return reflect.Value{}, fmt.Errorf("items must be a slice")
+	}
+
+	if value.Kind() == reflect.Ptr {
+		if value.IsNil() {
+			return reflect.Value{}, fmt.Errorf("items must be a slice")
+		}
+		value = value.Elem()
+	}
+
+	if value.Kind() != reflect.Slice {
+		return reflect.Value{}, fmt.Errorf("items must be a slice")
+	}
+
+	return value, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // WithContext sets the context for the query
