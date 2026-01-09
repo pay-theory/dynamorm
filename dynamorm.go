@@ -2019,68 +2019,89 @@ func (q *query) marshalItem(model any, metadata *model.Metadata) (map[string]typ
 		return q.db.marshaler.MarshalItem(model, metadata)
 	}
 
-	// Fall back to reflection-based marshaling
-	item := make(map[string]types.AttributeValue)
-
 	modelValue := reflect.ValueOf(model)
 	if modelValue.Kind() == reflect.Ptr {
 		modelValue = modelValue.Elem()
 	}
 
-	// Process each field
+	return q.marshalItemReflect(modelValue, metadata)
+}
+
+func (q *query) marshalItemReflect(modelValue reflect.Value, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	item := make(map[string]types.AttributeValue)
+	now := time.Now()
+
 	for fieldName, fieldMeta := range metadata.Fields {
-		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-
-		// Skip zero values if omitempty
-		if fieldMeta.OmitEmpty && fieldValue.IsZero() {
-			continue
-		}
-
-		// Handle special fields
-		switch {
-		case fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt:
-			// Set to current time
-			now := time.Now()
-			fieldValue = reflect.ValueOf(now)
-		case fieldMeta.IsVersion:
-			// Initialize version to 0 for new items
-			if fieldValue.IsZero() {
-				fieldValue = reflect.ValueOf(int64(0))
-			}
-		case fieldMeta.IsTTL:
-			// Convert TTL to Unix timestamp if it's a time.Time
-			if fieldValue.Type() == reflect.TypeOf(time.Time{}) && !fieldValue.IsZero() {
-				ttlTime, ok := fieldValue.Interface().(time.Time)
-				if !ok {
-					return nil, fmt.Errorf("expected time.Time for TTL field %s, got %T", fieldName, fieldValue.Interface())
-				}
-				fieldValue = reflect.ValueOf(ttlTime.Unix())
-			}
-		}
-
-		// Convert to AttributeValue
-		var av types.AttributeValue
-		var err error
-
-		if fieldMeta.IsSet {
-			av, err = q.db.converter.ConvertToSet(fieldValue.Interface(), true)
-		} else {
-			av, err = q.db.converter.ToAttributeValue(fieldValue.Interface())
-		}
-
+		av, ok, err := q.marshalFieldValue(modelValue, fieldName, fieldMeta, now)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert field %s: %w", fieldName, err)
+			return nil, err
 		}
-
-		// Skip NULL values unless explicitly included
-		if _, isNull := av.(*types.AttributeValueMemberNULL); isNull && fieldMeta.OmitEmpty {
+		if !ok {
 			continue
 		}
-
 		item[fieldMeta.DBName] = av
 	}
 
 	return item, nil
+}
+
+func (q *query) marshalFieldValue(modelValue reflect.Value, fieldName string, fieldMeta *model.FieldMetadata, now time.Time) (types.AttributeValue, bool, error) {
+	fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+
+	if fieldMeta.OmitEmpty && fieldValue.IsZero() {
+		return nil, false, nil
+	}
+
+	valueToConvert, err := q.valueForField(fieldName, fieldMeta, fieldValue, now)
+	if err != nil {
+		return nil, false, err
+	}
+
+	av, err := q.convertFieldValue(fieldMeta, valueToConvert)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to convert field %s: %w", fieldName, err)
+	}
+
+	if _, isNull := av.(*types.AttributeValueMemberNULL); isNull && fieldMeta.OmitEmpty {
+		return nil, false, nil
+	}
+
+	return av, true, nil
+}
+
+func (q *query) valueForField(fieldName string, fieldMeta *model.FieldMetadata, fieldValue reflect.Value, now time.Time) (any, error) {
+	switch {
+	case fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt:
+		return now, nil
+	case fieldMeta.IsVersion:
+		if fieldValue.IsZero() {
+			return int64(0), nil
+		}
+	case fieldMeta.IsTTL:
+		return q.ttlValue(fieldName, fieldValue)
+	}
+
+	return fieldValue.Interface(), nil
+}
+
+func (q *query) ttlValue(fieldName string, fieldValue reflect.Value) (any, error) {
+	if fieldValue.Type() != reflect.TypeOf(time.Time{}) || fieldValue.IsZero() {
+		return fieldValue.Interface(), nil
+	}
+
+	ttlTime, ok := fieldValue.Interface().(time.Time)
+	if !ok {
+		return nil, fmt.Errorf("expected time.Time for TTL field %s, got %T", fieldName, fieldValue.Interface())
+	}
+
+	return ttlTime.Unix(), nil
+}
+
+func (q *query) convertFieldValue(fieldMeta *model.FieldMetadata, value any) (types.AttributeValue, error) {
+	if fieldMeta.IsSet {
+		return q.db.converter.ConvertToSet(value, true)
+	}
+	return q.db.converter.ToAttributeValue(value)
 }
 
 // isConditionalCheckFailedException checks if the error is a conditional check failure
