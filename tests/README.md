@@ -157,19 +157,23 @@ jobs:
     runs-on: ubuntu-latest
     services:
       dynamodb:
-        image: amazon/dynamodb-local
+        image: amazon/dynamodb-local:3.1.0
         ports:
           - 8000:8000
     
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-go@v4
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
       with:
-        go-version: '1.21'
+        go-version-file: go.mod
     
     - name: Run Tests
       env:
         DYNAMODB_ENDPOINT: http://localhost:8000
+        AWS_REGION: us-east-1
+        AWS_DEFAULT_REGION: us-east-1
+        AWS_ACCESS_KEY_ID: dummy
+        AWS_SECRET_ACCESS_KEY: dummy
       run: |
         go test ./... -v -race -coverprofile=coverage.out
         go tool cover -html=coverage.out -o coverage.html

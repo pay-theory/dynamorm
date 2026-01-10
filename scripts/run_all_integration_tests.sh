@@ -16,6 +16,8 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+DYNAMODB_LOCAL_IMAGE="${DYNAMODB_LOCAL_IMAGE:-amazon/dynamodb-local:3.1.0}"
+
 # Check if Docker is available
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}Error: Docker is not installed or not in PATH${NC}"
@@ -27,7 +29,7 @@ if docker ps | grep -q dynamodb-test; then
     echo -e "${YELLOW}DynamoDB Local is already running${NC}"
 else
     echo "Starting DynamoDB Local..."
-    docker run -d -p 8000:8000 --name dynamodb-test amazon/dynamodb-local
+    docker run -d -p 8000:8000 --name dynamodb-test "${DYNAMODB_LOCAL_IMAGE}"
     
     echo "Waiting for DynamoDB Local to start..."
     for i in {1..10}; do

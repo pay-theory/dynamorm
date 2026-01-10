@@ -6,6 +6,8 @@ set -e
 
 echo "Setting up DynamORM test environment..."
 
+DYNAMODB_LOCAL_IMAGE="${DYNAMODB_LOCAL_IMAGE:-amazon/dynamodb-local:3.1.0}"
+
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     echo "Error: Docker is required to run DynamoDB Local"
@@ -30,7 +32,7 @@ else
     docker run -d \
         --name dynamodb-local \
         -p 8000:8000 \
-        amazon/dynamodb-local \
+        "${DYNAMODB_LOCAL_IMAGE}" \
         -jar DynamoDBLocal.jar \
         -inMemory \
         -sharedDb
