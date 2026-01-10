@@ -1,0 +1,24 @@
+# DynamORM Coverage Roadmap — COV-3 targets
+# Format: <package> <min_percent>
+github.com/pay-theory/dynamorm 50
+github.com/pay-theory/dynamorm/internal/expr 50
+github.com/pay-theory/dynamorm/internal/numutil 50
+github.com/pay-theory/dynamorm/internal/reflectutil 50
+github.com/pay-theory/dynamorm/pkg/consistency 50
+github.com/pay-theory/dynamorm/pkg/core 50
+github.com/pay-theory/dynamorm/pkg/errors 50
+github.com/pay-theory/dynamorm/pkg/index 50
+github.com/pay-theory/dynamorm/pkg/interfaces 50
+github.com/pay-theory/dynamorm/pkg/marshal 50
+github.com/pay-theory/dynamorm/pkg/mocks 50
+github.com/pay-theory/dynamorm/pkg/model 50
+github.com/pay-theory/dynamorm/pkg/naming 50
+github.com/pay-theory/dynamorm/pkg/protection 50
+github.com/pay-theory/dynamorm/pkg/query 50
+github.com/pay-theory/dynamorm/pkg/schema 50
+github.com/pay-theory/dynamorm/pkg/session 50
+github.com/pay-theory/dynamorm/pkg/testing 50
+github.com/pay-theory/dynamorm/pkg/transaction 50
+github.com/pay-theory/dynamorm/pkg/types 50
+github.com/pay-theory/dynamorm/pkg/validation 50
+
