@@ -9,13 +9,15 @@ Prerequisite: `make lint` is green (finish the lint roadmap first). Once coverag
 Snapshot (2026-01-10):
 
 - Prerequisite check: ✅ `make lint` is green (M1 complete)
-- `bash scripts/verify-coverage.sh`: **53.1%** vs threshold **90%** (fails)
+- `bash scripts/verify-coverage.sh`: **64.3%** vs threshold **90%** (fails)
+- `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-3.tsv`: ✅ (50% floors)
 
 ## Progress snapshots
 
 - Baseline (2026-01-10): **51.0%** vs threshold **90%** (fails)
 - After COV-1 (2026-01-10): **52.6%** vs threshold **90%** (fails); removed 0%-coverage packages (`internal/reflectutil`, `pkg/testing`)
 - After COV-2 (2026-01-10): **53.1%** vs threshold **90%** (fails); package floors enforced via `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-2.tsv`
+- After COV-3 (2026-01-10): **64.3%** vs threshold **90%** (fails); package floors raised to 50% via `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-3.tsv`
 
 ## Guardrails (no denominator games)
 
@@ -35,7 +37,7 @@ bash scripts/coverage.sh
 Verify package-level milestone floors (prevents “we forgot to test pkg X”):
 
 ```bash
-bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-2.tsv
+bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-3.tsv
 ```
 
 Final rubric gate (overall threshold, default 90%):
@@ -80,7 +82,7 @@ This repo currently has a single hard gate at 90%. To make progress reviewable, 
 
 - ✅ COV-1: remove “0% islands” (every production package has tests)
 - ✅ COV-2: broad floor (25%+ across production packages)
-- COV-3: meaningful safety net (50%+)
+- ✅ COV-3: meaningful safety net (50%+)
 - COV-4: high confidence (70%+)
 - COV-5: pre-finish (80%+)
 - COV-6: finish line (90%+ + pass `bash scripts/verify-coverage.sh`)
