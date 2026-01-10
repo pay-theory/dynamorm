@@ -5,6 +5,7 @@ on:
     branches: ["premain"]
   pull_request:
     branches: ["premain"]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -31,6 +32,7 @@ jobs:
       - name: Run rubric
         env:
           AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
           AWS_ACCESS_KEY_ID: dummy
           AWS_SECRET_ACCESS_KEY: dummy
           DYNAMODB_ENDPOINT: http://localhost:8000
@@ -45,4 +47,3 @@ jobs:
           path: |
             coverage_lib.out
             gosec.sarif
-
