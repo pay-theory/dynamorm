@@ -21,6 +21,10 @@ bash scripts/verify-dynamodb-local-pin.sh
 bash scripts/verify-no-panics.sh
 bash scripts/verify-safe-defaults.sh
 bash scripts/verify-network-hygiene.sh
+bash scripts/verify-encrypted-tag-implemented.sh
+bash scripts/verify-go-file-size.sh
+bash scripts/verify-maintainability-roadmap.sh
+bash scripts/verify-query-singleton.sh
 bash scripts/verify-validation-parity.sh
 bash scripts/fuzz-smoke.sh
 

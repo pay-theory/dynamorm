@@ -1,4 +1,4 @@
-# DynamORM Controls Matrix (Quality + Security)
+# DynamORM Controls Matrix (Quality + Security + Maintainability)
 
 This controls matrix is the “requirements → controls → verifiers → evidence” backbone for DynamORM.
 It is intentionally **engineering-focused** (not a compliance certification claim).
@@ -42,3 +42,7 @@ Threat ID note:
 | Security | THR-3, THR-4 | SEC-4 | Availability hardening | No `panic(...)` in production paths | `bash scripts/verify-no-panics.sh` | CI logs |
 | Security | THR-3, THR-5 | SEC-5 | Safe-by-default marshaling | Unsafe marshaling is opt-in only; defaults use safe marshaling | `bash scripts/verify-safe-defaults.sh` | CI logs |
 | Security | THR-4, THR-5 | SEC-7 | Network hygiene defaults | HTTP clients have timeouts; no unreviewed retry disables | `bash scripts/verify-network-hygiene.sh` | CI logs |
+| Security | THR-5 | SEC-8 | Encrypted-tag semantics are real | `dynamorm:"encrypted"` fails closed unless implemented + configured | `bash scripts/verify-encrypted-tag-implemented.sh` | CI logs |
+| Maintainability | THR-6 | MAI-1 | Bounded review surface | Production files stay under a line-count budget | `bash scripts/verify-go-file-size.sh` | CI logs |
+| Maintainability | THR-6 | MAI-2 | Convergence plan exists | Maintainability roadmap stays current (hotspots + plan) | `bash scripts/verify-maintainability-roadmap.sh` | Planning docs |
+| Maintainability | THR-6 | MAI-3 | Avoid semantics drift | One canonical Query implementation | `bash scripts/verify-query-singleton.sh` | CI logs |

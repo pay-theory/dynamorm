@@ -39,6 +39,24 @@ Each rubric item must name exactly one verification mechanism:
 
 **10/10 definition:** SEC-1 through SEC-4 pass.
 
+Notes:
+- If the system exposes “security-affordance” tags/flags (e.g., `encrypted`, `redacted`, `masked`), add a scored item that ensures they have **enforced semantics** and fail closed when misconfigured.
+
+---
+
+## Maintainability (MAI) — keep the system reviewable over time
+
+This category is especially important for AI-assisted code generation, where “it works” can still accumulate
+structural debt that increases security and reliability risk (duplicate implementations, god files, unclear canonical paths).
+
+| ID | Points | Requirement | How to verify |
+| --- | ---: | --- | --- |
+| MAI-1 | 4 | Production code stays under a file-size budget (no “god files”) | [command] |
+| MAI-2 | 3 | Maintainability/convergence roadmap exists and is current | [artifact check] |
+| MAI-3 | 3 | One canonical implementation for each critical path | [command] |
+
+**10/10 definition:** MAI-1 through MAI-3 pass.
+
 ---
 
 ## Privacy (PRV) — minimize and protect sensitive data
@@ -62,4 +80,3 @@ Each rubric item must name exactly one verification mechanism:
 | CMP-3 | 3 | Risk assessment / threat model exists and is current | [artifact check] |
 
 **10/10 definition:** CMP-1 through CMP-3 pass.
-

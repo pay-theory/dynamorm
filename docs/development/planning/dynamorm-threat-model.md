@@ -8,7 +8,7 @@ generation; it is not a formal assessment or certification.
 - **System:** DynamORM (Go library for DynamoDB access patterns + example apps)
 - **In-scope data:** whatever the consuming application persists in DynamoDB (often includes PII, tokens, secrets, or customer metadata)
 - **Out of scope:** application authentication/authorization, IAM policy design, and environment hardening (owned by consuming services)
-- **Important note:** the `dynamorm:"encrypted"` tag is currently **metadata only**; it does not provide encryption by itself.
+- **Important note:** the `dynamorm:"encrypted"` tag is currently **metadata only**; it does not provide encryption by itself (see `docs/development/planning/dynamorm-encryption-tag-roadmap.md`).
 
 ## Assets (what we protect)
 
@@ -43,6 +43,6 @@ generation; it is not a formal assessment or certification.
 
 ## Gaps / open questions
 
-- Should DynamORM explicitly document and/or implement the `encrypted` tag semantics (or remove it)?
+- Implement `dynamorm:"encrypted"` semantics per `docs/development/planning/dynamorm-encryption-tag-roadmap.md` (KMS Key ARN only). Until then, treat the tag as metadata-only.
 - Should we add fuzzing for expression building and marshaling edge cases?
 - Where should “safe defaults” live for limits/retries (library vs application)?

@@ -1,4 +1,4 @@
-# DynamORM: Rubric vNext Notes (v0.4+)
+# DynamORM: Rubric vNext Notes (v0.5+)
 
 This file captures **potential rubric improvements** and **process upgrades** discovered during remediation work.
 Items are only part of the rubric once explicitly adopted and versioned in `docs/development/planning/dynamorm-10of10-rubric.md`.
@@ -6,7 +6,8 @@ Items are only part of the rubric once explicitly adopted and versioned in `docs
 ## Status
 
 - Adopted in rubric `v0.3` (2026-01-10): COM-6, COM-7, SEC-4, SEC-5, SEC-7, QUA-4, QUA-5, DOC-4, DOC-5 (and supporting verifiers + roadmap milestones).
-- This document now tracks *new* candidates for `v0.4+` and captures lessons learned while hardening the rubric surface.
+- Adopted in rubric `v0.4` (2026-01-10): MAI-1, MAI-2, MAI-3, SEC-8 (and supporting verifiers + roadmap milestones).
+- This document now tracks *new* candidates for `v0.5+` and captures lessons learned while hardening the rubric surface.
 
 ## Why vNext exists (the “10/10 but…” problem)
 

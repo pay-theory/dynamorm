@@ -1,0 +1,98 @@
+# DynamORM: Maintainability Roadmap (Rubric MAI)
+
+Goal: reduce long-lived structural debt that makes a high-risk library hard to review, hard to change safely, and prone to “semantic drift” over time (especially under AI-assisted iteration).
+
+This roadmap exists to make the maintainability gates in `docs/development/planning/dynamorm-10of10-rubric.md` achievable and measurable.
+
+## Baseline (start of MAI work)
+
+Snapshot (2026-01-10):
+
+- Largest production files (line count):
+  - `dynamorm.go`: **3726**
+  - `pkg/query/query.go`: **1808**
+  - `pkg/query/executor.go`: **1213**
+  - `pkg/transaction/builder.go`: **1120**
+- Query logic exists in more than one place (`dynamorm.go` has a `query` implementation and `pkg/query` also implements a query builder/executor surface).
+
+## Guardrails (keep refactors safe)
+
+- Keep `make test-unit` and `make lint` green between milestones.
+- Prefer small, mechanical moves (file/package splits) before behavior refactors.
+- Preserve public APIs unless a change is explicitly planned and documented.
+
+## Workstreams
+
+### 1) File decomposition (remove “god files”)
+
+Target: split large files into cohesive packages/files so review surface stays bounded and ownership is clearer.
+
+Initial hotspot:
+- `dynamorm.go` (DB, query builder, metadata adapter, executors in one file)
+
+### 2) Converge query semantics (one canonical path)
+
+Target: choose one query implementation as canonical and make the other:
+- a thin wrapper/delegator, or
+- fully removed (with a deprecation window if public APIs require it).
+
+### 3) Boundary hardening for future changes
+
+Target: move “core” behavior behind stable interfaces and add focused tests around the boundaries that tend to drift:
+- expression building
+- marshaling/unmarshaling
+- query compilation/execution
+
+## Milestones (map to MAI rubric IDs)
+
+### MAI-0 — Establish the roadmap (this document)
+
+**Closes:** MAI-2 (once the verifier is wired)  
+**Acceptance criteria**
+- This document exists and includes: baseline, workstreams, and MAI milestones.
+
+---
+
+### MAI-1 — Enforce a file-size budget and shrink `dynamorm.go`
+
+**Closes:** MAI-1  
+**Goal:** eliminate “god files” (starting with `dynamorm.go`) so changes are reviewable.
+
+**Acceptance criteria**
+- `bash scripts/verify-go-file-size.sh` is green at the rubric budget.
+- `dynamorm.go` is split into cohesive files/packages (DB/session wiring vs query vs adapters vs executors).
+
+---
+
+### MAI-2 — Keep the maintainability plan current
+
+**Closes:** MAI-2  
+**Goal:** keep a current hotspot/convergence plan as the code evolves.
+
+**Acceptance criteria**
+- `bash scripts/verify-maintainability-roadmap.sh` is green.
+- Baseline snapshot is updated when major refactors land (line counts + convergence status).
+
+---
+
+### MAI-3 — One canonical Query implementation
+
+**Closes:** MAI-3  
+**Goal:** avoid parallel semantics drift by having a single canonical query builder/executor surface.
+
+**Acceptance criteria**
+- `bash scripts/verify-query-singleton.sh` is green.
+- The non-canonical query path is either removed or reduced to a documented delegator layer.
+- Behavior parity is covered by unit tests around the public `core.Query` interface.
+
+## Helpful commands
+
+```bash
+# Expected red until MAI-1/MAI-3 complete
+bash scripts/verify-go-file-size.sh
+bash scripts/verify-query-singleton.sh
+
+# Should become green early and stay green
+bash scripts/verify-maintainability-roadmap.sh
+```
+

@@ -1,6 +1,6 @@
 # Planning (Assurance & Security)
 
-This folder standardizes how we measure and maintain **quality, consistency, completeness, and security** for
+This folder standardizes how we measure and maintain **quality, consistency, completeness, security, and maintainability** for
 **DynamORM** (a repository that is largely AI-generated).
 
 The goal is to prevent “green by drift” (weakened gates, excluded scopes, unpinned tools) by making expectations
@@ -14,6 +14,8 @@ Start here:
 - `docs/development/planning/dynamorm-10of10-roadmap.md` (milestones mapped to rubric IDs)
 - `docs/development/planning/dynamorm-lint-green-roadmap.md` (execution plan to get `make lint` green)
 - `docs/development/planning/dynamorm-coverage-roadmap.md` (execution plan to reach 90% library coverage)
+- `docs/development/planning/dynamorm-encryption-tag-roadmap.md` (execution plan to implement `dynamorm:"encrypted"` safely)
+- `docs/development/planning/dynamorm-maintainability-roadmap.md` (execution plan to decompose + converge critical paths)
 - `docs/development/planning/dynamorm-evidence-plan.md` (where evidence comes from + how to regenerate)
 - `docs/development/planning/dynamorm-threat-model.md` (threats + mitigations for this codebase)
 - `docs/development/planning/ai-drift-recovery.md` (common AI failure modes + how we recover)

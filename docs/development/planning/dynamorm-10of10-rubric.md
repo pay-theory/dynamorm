@@ -1,4 +1,4 @@
-# DynamORM: 10/10 Rubric (Quality, Consistency, Completeness, Security, Docs)
+# DynamORM: 10/10 Rubric (Quality, Consistency, Completeness, Security, Maintainability, Docs)
 
 This rubric defines what “10/10” means for DynamORM and how category grades are computed.
 It is designed for an **AI-generated codebase**: gates must be **versioned, measurable, repeatable**, and resistant to
@@ -6,12 +6,13 @@ It is designed for an **AI-generated codebase**: gates must be **versioned, meas
 
 ## Versioning (no moving goalposts)
 
-- **Rubric version:** `v0.3` (2026-01-10)
+- **Rubric version:** `v0.4` (2026-01-10)
 - **Comparability rule:** grades are only comparable within the same rubric version.
 - **Change rule:** rubric changes must bump the version and include a brief changelog entry (what changed + why).
 
 ### Changelog
 
+- `v0.4` (2026-01-10): Add **Maintainability** category gates (file-size budget, documented maintainability plan, and “one query implementation” pressure) and add **SEC-8** to require enforced semantics for `dynamorm:"encrypted"` (no metadata-only security tags).
 - `v0.3` (2026-01-10): Add **high-risk domain safety gates** that catch “10/10 but still risky” failure modes: CI rubric enforcement, DynamoDB Local pinning, doc integrity checks, threat-model↔controls parity, panic bans in production paths, safe-by-default marshaling, network hygiene defaults, validator↔converter parity, and bounded fuzz smoke passes.
 - `v0.2` (2026-01-09): Require **90%** library coverage for **QUA-3**, add anti-dilution completeness gates for lint config validity and coverage threshold, and treat `.golangci-v2.yml` as the source of truth for `make lint`.
 - `v0.1` (2026-01-09): Initial rubric for DynamORM.
@@ -81,10 +82,27 @@ Every rubric item has exactly one verification mechanism:
 | SEC-2 | 2 | Dependency vulnerability scan stays green | `bash scripts/sec-govulncheck.sh` |
 | SEC-3 | 1 | Supply-chain verification stays green | `go mod verify` |
 | SEC-4 | 2 | No `panic(...)` in production paths | `bash scripts/verify-no-panics.sh` |
-| SEC-5 | 2 | Safe-by-default marshaling (unsafe only via explicit opt-in) | `bash scripts/verify-safe-defaults.sh` |
+| SEC-5 | 1 | Safe-by-default marshaling (unsafe only via explicit opt-in) | `bash scripts/verify-safe-defaults.sh` |
 | SEC-7 | 1 | Network hygiene defaults (timeouts + retry posture) | `bash scripts/verify-network-hygiene.sh` |
+| SEC-8 | 1 | `dynamorm:"encrypted"` has enforced semantics (KMS Key ARN required; no metadata-only tag) | `bash scripts/verify-encrypted-tag-implemented.sh` |
 
-**10/10 definition:** SEC-1 through SEC-7 pass.
+**10/10 definition:** SEC-1, SEC-2, SEC-3, SEC-4, SEC-5, SEC-7, and SEC-8 pass.
+
+---
+
+## Maintainability (MAI) — keep the codebase convergent
+
+This category exists because AI-assisted code generation often “works” but accumulates long-lived structural debt:
+monolithic files, duplicate implementations, and unclear canonical paths. In a high-risk domain, these are
+reliability and security risks because they make future changes harder to reason about and easier to drift.
+
+| ID | Points | Requirement | How to verify |
+| --- | ---: | --- | --- |
+| MAI-1 | 4 | Production Go files stay under a line-count budget (no “god files”) | `bash scripts/verify-go-file-size.sh` |
+| MAI-2 | 3 | Maintainability roadmap exists and is current (hotspots + convergence plan) | `bash scripts/verify-maintainability-roadmap.sh` |
+| MAI-3 | 3 | One canonical Query implementation (avoid parallel semantics drift) | `bash scripts/verify-query-singleton.sh` |
+
+**10/10 definition:** MAI-1 through MAI-3 pass.
 
 ---
 
@@ -125,6 +143,10 @@ bash scripts/verify-dynamodb-local-pin.sh
 bash scripts/verify-no-panics.sh
 bash scripts/verify-safe-defaults.sh
 bash scripts/verify-network-hygiene.sh
+bash scripts/verify-encrypted-tag-implemented.sh
+bash scripts/verify-go-file-size.sh
+bash scripts/verify-maintainability-roadmap.sh
+bash scripts/verify-query-singleton.sh
 bash scripts/verify-validation-parity.sh
 bash scripts/fuzz-smoke.sh
 

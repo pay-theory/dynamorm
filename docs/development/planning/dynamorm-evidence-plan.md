@@ -20,9 +20,11 @@ report, or CI artifact is possible.
 - Controls matrix: `docs/development/planning/dynamorm-controls-matrix.md`
 - Versioned rubric: `docs/development/planning/dynamorm-10of10-rubric.md`
 - Roadmap mapped to rubric IDs: `docs/development/planning/dynamorm-10of10-roadmap.md`
+- Encryption tag roadmap: `docs/development/planning/dynamorm-encryption-tag-roadmap.md`
+- Maintainability roadmap: `docs/development/planning/dynamorm-maintainability-roadmap.md`
 - Threat model: `docs/development/planning/dynamorm-threat-model.md`
 
-## Rubric-to-evidence map (Rubric v0.3)
+## Rubric-to-evidence map (Rubric v0.4)
 
 | Rubric ID | Primary evidence | How to refresh |
 | --- | --- | --- |
@@ -49,3 +51,7 @@ report, or CI artifact is possible.
 | SEC-4 | No-panics verification output | `bash scripts/verify-no-panics.sh` |
 | SEC-5 | Safe-defaults verification output | `bash scripts/verify-safe-defaults.sh` |
 | SEC-7 | Network hygiene verification output | `bash scripts/verify-network-hygiene.sh` |
+| SEC-8 | Encrypted-tag semantics verification output | `bash scripts/verify-encrypted-tag-implemented.sh` |
+| MAI-1 | File-size budget verification output | `bash scripts/verify-go-file-size.sh` |
+| MAI-2 | Maintainability roadmap verification output | `bash scripts/verify-maintainability-roadmap.sh` |
+| MAI-3 | Query convergence verification output | `bash scripts/verify-query-singleton.sh` |

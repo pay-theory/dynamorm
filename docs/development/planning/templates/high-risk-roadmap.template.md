@@ -9,6 +9,7 @@ This template is intended to be copied and filled per project.
 | Security | [x/10] | [SEC-*] |
 | Privacy | [x/10] | [PRV-*] |
 | Compliance Readiness | [x/10] | [CMP-*] |
+| Maintainability | [x/10] | [MAI-*] |
 
 Evidence (most recent):
 
@@ -68,3 +69,18 @@ Evidence (most recent):
 [commands]
 ```
 
+---
+
+### M3 — Maintainability convergence (keep future work safe)
+
+**Closes:** [MAI-*]  
+**Goal:** reduce structural debt that makes high-risk changes hard to review or easy to drift over time.
+
+**Acceptance criteria**
+- Maintainability gates are measurable and enforced (file-size budgets, convergence checks).
+- Duplicate critical-path implementations are removed or reduced to delegators.
+
+**Suggested verification**
+```bash
+[commands]
+```

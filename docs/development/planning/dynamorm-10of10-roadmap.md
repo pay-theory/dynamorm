@@ -1,11 +1,11 @@
-# DynamORM: 10/10 Roadmap (Rubric v0.3)
+# DynamORM: 10/10 Roadmap (Rubric v0.4)
 
 This roadmap is the execution plan for achieving and maintaining **10/10** across **Quality**, **Consistency**,
-**Completeness**, **Security**, and **Docs** as defined by:
+**Completeness**, **Security**, **Maintainability**, and **Docs** as defined by:
 
 - `docs/development/planning/dynamorm-10of10-rubric.md` (source of truth; versioned)
 
-## Current scorecard (Rubric v0.3)
+## Current scorecard (Rubric v0.4)
 
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned toolchain, stable commands, and no “green by exclusion” shortcuts).
@@ -15,7 +15,8 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 | Quality | 10/10 | — |
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
-| Security | 10/10 | — |
+| Security | 9/10 | `SEC-8` |
+| Maintainability | 3/10 | `MAI-1`, `MAI-3` |
 | Docs | 10/10 | — |
 
 Evidence (refresh whenever behavior changes):
@@ -36,6 +37,10 @@ Evidence (refresh whenever behavior changes):
 - `bash scripts/verify-no-panics.sh`
 - `bash scripts/verify-safe-defaults.sh`
 - `bash scripts/verify-network-hygiene.sh`
+- `bash scripts/verify-encrypted-tag-implemented.sh` (**expected FAIL** until `dynamorm:"encrypted"` is implemented)
+- `bash scripts/verify-go-file-size.sh` (**expected FAIL** until `dynamorm.go` is decomposed)
+- `bash scripts/verify-maintainability-roadmap.sh`
+- `bash scripts/verify-query-singleton.sh` (**expected FAIL** until query implementations converge)
 - `bash scripts/verify-validation-parity.sh`
 - `bash scripts/fuzz-smoke.sh`
 - `bash scripts/sec-gosec.sh`
@@ -141,6 +146,20 @@ Guardrails (no denominator games):
 
 ---
 
+### M3.75 — Implement `dynamorm:"encrypted"` semantics (KMS Key ARN only)
+
+**Closes:** SEC-8  
+**Goal:** remove “metadata-only encryption” risk by implementing real field-level encryption semantics with a provided KMS key ARN.
+
+Tracking document: `docs/development/planning/dynamorm-encryption-tag-roadmap.md`
+
+**Acceptance criteria**
+- `bash scripts/verify-encrypted-tag-implemented.sh` is green.
+- Encrypted fields fail closed if key ARN is not configured.
+- Encrypted fields are rejected for PK/SK/index keys and are not queryable.
+
+---
+
 ### M4 — Docs integrity + risk→control traceability
 
 **Closes:** DOC-4, DOC-5  
@@ -149,3 +168,17 @@ Guardrails (no denominator games):
 **Acceptance criteria**
 - `bash scripts/verify-doc-integrity.sh` is green (internal links resolve; version claims match go.mod).
 - `bash scripts/verify-threat-controls-parity.sh` is green (every `THR-*` maps to at least one control).
+
+---
+
+### M5 — Maintainability convergence (decompose + unify query)
+
+**Closes:** MAI-1, MAI-2, MAI-3  
+**Goal:** keep the codebase structurally convergent so future changes remain reviewable and safe.
+
+Tracking document: `docs/development/planning/dynamorm-maintainability-roadmap.md`
+
+**Acceptance criteria**
+- `bash scripts/verify-go-file-size.sh` is green.
+- `bash scripts/verify-maintainability-roadmap.sh` is green.
+- `bash scripts/verify-query-singleton.sh` is green.

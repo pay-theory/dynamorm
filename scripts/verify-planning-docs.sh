@@ -5,6 +5,8 @@ required=(
   "docs/development/planning/dynamorm-controls-matrix.md"
   "docs/development/planning/dynamorm-10of10-rubric.md"
   "docs/development/planning/dynamorm-10of10-roadmap.md"
+  "docs/development/planning/dynamorm-encryption-tag-roadmap.md"
+  "docs/development/planning/dynamorm-maintainability-roadmap.md"
   "docs/development/planning/dynamorm-evidence-plan.md"
   "docs/development/planning/dynamorm-threat-model.md"
 )
@@ -31,4 +33,3 @@ if [[ "${failures}" -ne 0 ]]; then
 fi
 
 echo "planning-docs: present"
-

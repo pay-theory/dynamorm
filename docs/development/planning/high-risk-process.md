@@ -20,6 +20,7 @@ execution pattern: scope → controls → gates → evidence.
 - **Roadmap**: milestones mapped directly to rubric IDs (keeps execution honest).
 - **Evidence plan**: where audit artifacts live and how they’re generated/re-generated.
 - **Gates**: CI/local verifiers that block regressions for the highest-risk controls.
+- **Maintainability plan** (recommended for AI-generated codebases): explicit convergence goals (avoid duplicate implementations), file-size budgets, and refactor milestones that keep the code reviewable over time.
 
 Templates live in:
 
@@ -58,6 +59,8 @@ Convert the controls matrix into a small rubric:
 - 0–10 per category.
 - fixed point weights; pass/fail items only.
 - each item has a single “how to verify” source of truth (command or deterministic artifact check).
+- include a **Maintainability** category when structural drift is a real risk (duplicate implementations, god files, unclear canonical paths).
+- if you introduce “security-affordance” flags/tags (e.g., `encrypted`, `redacted`, `masked`), add a rubric item that ensures they have **enforced semantics** (no metadata-only false positives).
 
 ### Step 3 — Map rubric items to milestones (roadmap)
 
@@ -79,3 +82,4 @@ After each milestone:
 - run the verifiers,
 - store/refresh evidence,
 - update the rubric scorecard (with the rubric version noted).
+- record newly discovered “rubric blind spots” as candidate rubric items (with a proposed verifier) so one-off findings turn into durable gates.
