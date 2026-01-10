@@ -12,7 +12,7 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
-| Quality | 7/10 | QUA-3 |
+| Quality | 10/10 | — |
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
 | Security | 10/10 | — |
@@ -22,7 +22,7 @@ Evidence (refresh whenever behavior changes):
 
 - ✅ `make test-unit`
 - ✅ `make integration`
-- ❌ `bash scripts/verify-coverage.sh` (current: **64.3%** vs threshold **90%**)
+- ✅ `bash scripts/verify-coverage.sh` (current: **90.0%** vs threshold **90%**)
 - ✅ `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
 - ✅ `bash scripts/fmt-check.sh`
 - ✅ `golangci-lint config verify -c .golangci-v2.yml`

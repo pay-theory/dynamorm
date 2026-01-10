@@ -4,12 +4,12 @@ Goal: raise DynamORM “library coverage” to **≥ 90%** as measured by `bash 
 
 Prerequisite: `make lint` is green (finish the lint roadmap first). Once coverage work starts, keep `make lint` green after every coverage pass so tests do not accumulate unreviewed lint debt.
 
-## Current state (baseline)
+## Current state
 
 Snapshot (2026-01-10):
 
 - Prerequisite check: ✅ `make lint` is green (M1 complete)
-- `bash scripts/verify-coverage.sh`: **82.8%** vs threshold **90%** (fails)
+- `bash scripts/verify-coverage.sh`: ✅ **90.0%** vs threshold **90%** (passes)
 - `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-5.tsv`: ✅ (80% floors)
 
 ## Progress snapshots
@@ -20,6 +20,7 @@ Snapshot (2026-01-10):
 - After COV-3 (2026-01-10): **64.3%** vs threshold **90%** (fails); package floors raised to 50% via `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-3.tsv`
 - After COV-4 (2026-01-10): **75.8%** vs threshold **90%** (fails); package floors raised to 70% via `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-4.tsv`
 - After COV-5 (2026-01-10): **82.8%** vs threshold **90%** (fails); package floors raised to 80% via `bash scripts/verify-coverage-packages.sh --targets docs/development/planning/coverage-targets/dynamorm-cov-5.tsv`
+- After COV-6 (2026-01-10): ✅ **90.0%** vs threshold **90%** (passes); global gate now green
 
 ## Guardrails (no denominator games)
 
@@ -87,4 +88,4 @@ This repo currently has a single hard gate at 90%. To make progress reviewable, 
 - ✅ COV-3: meaningful safety net (50%+)
 - ✅ COV-4: high confidence (70%+)
 - ✅ COV-5: pre-finish (80%+)
-- COV-6: finish line (90%+ + pass `bash scripts/verify-coverage.sh`)
+- ✅ COV-6: finish line (90%+ + pass `bash scripts/verify-coverage.sh`)
