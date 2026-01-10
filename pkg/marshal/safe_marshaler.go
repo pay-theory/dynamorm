@@ -11,11 +11,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/pay-theory/dynamorm/pkg/model"
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 // SafeMarshaler provides memory-safe marshaling implementation without unsafe operations
 // This is the default marshaler and should be used in production environments
 type SafeMarshaler struct {
+	converter *pkgTypes.Converter
+
 	// Cache for reflection metadata to optimize performance
 	cache sync.Map // map[reflect.Type]*safeStructMarshaler
 }
@@ -42,6 +45,12 @@ type safeFieldMarshaler struct {
 // NewSafeMarshaler creates a new safe marshaler (recommended for production)
 func NewSafeMarshaler() *SafeMarshaler {
 	return &SafeMarshaler{}
+}
+
+// NewSafeMarshalerWithConverter creates a safe marshaler that consults the provided converter
+// for registered custom type conversions.
+func NewSafeMarshalerWithConverter(converter *pkgTypes.Converter) *SafeMarshaler {
+	return &SafeMarshaler{converter: converter}
 }
 
 // MarshalItem safely marshals a model to DynamoDB AttributeValues using only reflection
@@ -168,17 +177,68 @@ func (m *SafeMarshaler) buildSafeStructMarshaler(typ reflect.Type, metadata *mod
 
 // marshalValue safely marshals a reflect.Value to AttributeValue
 func (m *SafeMarshaler) marshalValue(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, error) {
-	if v.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return &types.AttributeValueMemberNULL{Value: true}, nil
-		}
-		v = v.Elem()
+	original := v
+	v, isNil := derefOptionalPointer(v)
+	if isNil {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
 	}
 
 	if fieldMeta.omitEmpty && v.IsZero() {
 		return &types.AttributeValueMemberNULL{Value: true}, nil
 	}
 
+	if av, ok, err := m.marshalTimeValue(v, fieldMeta); ok {
+		return av, err
+	}
+
+	if av, ok, err := m.marshalCustomValue(original); ok {
+		return av, err
+	}
+
+	return m.marshalValueByKind(v, fieldMeta)
+}
+
+func derefOptionalPointer(v reflect.Value) (reflect.Value, bool) {
+	if v.Kind() != reflect.Ptr {
+		return v, false
+	}
+	if v.IsNil() {
+		return reflect.Value{}, true
+	}
+	return v.Elem(), false
+}
+
+func (m *SafeMarshaler) marshalCustomValue(original reflect.Value) (types.AttributeValue, bool, error) {
+	if m.converter == nil || !original.IsValid() {
+		return nil, false, nil
+	}
+	if !m.converter.HasCustomConverter(original.Type()) {
+		return nil, false, nil
+	}
+
+	av, err := m.converter.ToAttributeValue(original.Interface())
+	if err != nil {
+		return nil, true, err
+	}
+	return av, true, nil
+}
+
+func (m *SafeMarshaler) marshalTimeValue(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, bool, error) {
+	if v.Type() != timeType {
+		return nil, false, nil
+	}
+
+	t, ok := v.Interface().(time.Time)
+	if !ok {
+		return nil, true, fmt.Errorf("expected time.Time, got %T", v.Interface())
+	}
+	if fieldMeta.isTTL {
+		return &types.AttributeValueMemberN{Value: strconv.FormatInt(t.Unix(), 10)}, true, nil
+	}
+	return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, true, nil
+}
+
+func (m *SafeMarshaler) marshalValueByKind(v reflect.Value, fieldMeta *safeFieldMarshaler) (types.AttributeValue, error) {
 	switch v.Kind() {
 	case reflect.String:
 		return &types.AttributeValueMemberS{Value: v.String()}, nil

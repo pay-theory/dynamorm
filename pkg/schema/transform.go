@@ -111,7 +111,11 @@ func CreateModelTransform(transformFunc interface{}, sourceMetadata, targetMetad
 	}
 
 	converter := pkgTypes.NewConverter()
-	marshaler := marshal.New(converter)
+	marshalerFactory := marshal.NewMarshalerFactory(marshal.DefaultConfig()).WithConverter(converter)
+	marshaler, err := marshalerFactory.NewMarshaler()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create marshaler: %w", err)
+	}
 
 	return wrapModelTransform(transformValue, transformType, sourceMetadata, targetMetadata, converter, marshaler), nil
 }
@@ -164,7 +168,7 @@ func wrapModelTransform(
 	sourceMetadata *model.Metadata,
 	targetMetadata *model.Metadata,
 	converter *pkgTypes.Converter,
-	marshaler *marshal.Marshaler,
+	marshaler marshal.MarshalerInterface,
 ) TransformFunc {
 	return func(sourceItem map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 		sourceModel, err := buildSourceModel(transformType, sourceItem, sourceMetadata, converter)

@@ -41,7 +41,7 @@ type DB struct {
 	session             *session.Session
 	registry            *model.Registry
 	converter           *pkgTypes.Converter
-	marshaler           *marshal.Marshaler
+	marshaler           marshal.MarshalerInterface
 	metadataCache       sync.Map
 	lambdaTimeoutBuffer time.Duration
 	mu                  sync.RWMutex
@@ -149,12 +149,17 @@ func New(config session.Config) (core.ExtendedDB, error) {
 	}
 
 	converter := pkgTypes.NewConverter()
+	marshalerFactory := marshal.NewMarshalerFactory(marshal.DefaultConfig()).WithConverter(converter)
+	marshalerInstance, err := marshalerFactory.NewMarshaler()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create marshaler: %w", err)
+	}
 
 	return &DB{
 		session:   sess,
 		registry:  model.NewRegistry(),
 		converter: converter,
-		marshaler: marshal.New(converter),
+		marshaler: marshalerInstance,
 		ctx:       context.Background(),
 	}, nil
 }
@@ -182,7 +187,12 @@ func (db *DB) RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomC
 
 	db.converter.RegisterConverter(typ, converter)
 	if db.marshaler != nil {
-		db.marshaler.ClearCache()
+		type cacheClearer interface {
+			ClearCache()
+		}
+		if clearer, ok := db.marshaler.(cacheClearer); ok && clearer != nil {
+			clearer.ClearCache()
+		}
 	}
 	return nil
 }

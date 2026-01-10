@@ -114,6 +114,9 @@ func (f *MarshalerFactory) NewMarshaler() (MarshalerInterface, error) {
 func (f *MarshalerFactory) NewMarshalerWithAcknowledgment(ack *SecurityAcknowledgment) (MarshalerInterface, error) {
 	switch f.config.MarshalerType {
 	case SafeMarshalerType, "": // Default to safe
+		if f.converter != nil {
+			return NewSafeMarshalerWithConverter(f.converter), nil
+		}
 		return NewSafeMarshaler(), nil
 
 	case UnsafeMarshalerType:
