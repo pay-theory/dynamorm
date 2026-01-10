@@ -412,11 +412,60 @@ func TestRetryableQuery_DefaultResponsesDontPanic(t *testing.T) {
 
 func TestErrorQuery_ImplementsCoreQuery(t *testing.T) {
 	q := &errorQuery{err: errors.New("boom")}
+
+	require.Same(t, q, q.Where("id", "=", "u1"))
+	require.Same(t, q, q.Index("by-id"))
+	require.Same(t, q, q.Filter("name", "=", "alice"))
+	require.Same(t, q, q.OrFilter("name", "=", "alice"))
+	require.Same(t, q, q.FilterGroup(func(core.Query) {}))
+	require.Same(t, q, q.OrFilterGroup(func(core.Query) {}))
+	require.Same(t, q, q.IfNotExists())
+	require.Same(t, q, q.IfExists())
+	require.Same(t, q, q.WithCondition("name", "=", "alice"))
+	require.Same(t, q, q.WithConditionExpression("a = :v", map[string]any{":v": 1}))
+	require.Same(t, q, q.OrderBy("id", "ASC"))
+	require.Same(t, q, q.Limit(10))
+	require.Same(t, q, q.Offset(10))
+	require.Same(t, q, q.Select("id"))
+	require.Same(t, q, q.ConsistentRead())
+	require.Same(t, q, q.WithRetry(1, 0))
+	require.Same(t, q, q.WithContext(context.Background()))
+	require.Same(t, q, q.ParallelScan(0, 1))
+	require.Same(t, q, q.Cursor("c"))
+
 	require.Error(t, q.Create())
+	require.Error(t, q.CreateOrUpdate())
 	require.Error(t, q.Delete())
 	require.Error(t, q.Update("Name"))
+	require.Error(t, q.First(&cov3Item{}))
 	var out []cov3Item
 	require.Error(t, q.All(&out))
-	_, err := q.Count()
+	_, err := q.AllPaginated(&out)
 	require.Error(t, err)
+	_, err = q.Count()
+	require.Error(t, err)
+
+	require.Error(t, q.Scan(&out))
+	require.Error(t, q.BatchGet([]any{"u1"}, &out))
+	require.Error(t, q.BatchGetWithOptions([]any{"u1"}, &out, nil))
+	require.Error(t, q.BatchCreate(out))
+	require.Error(t, q.BatchDelete([]any{"u1"}))
+	require.Error(t, q.BatchWrite([]any{}, []any{}))
+	require.Error(t, q.BatchUpdateWithOptions(nil, []string{"Name"}))
+
+	require.Nil(t, q.UpdateBuilder())
+	require.Error(t, q.ScanAllSegments(&out, 1))
+	require.Error(t, q.SetCursor("c"))
+
+	builder := q.BatchGetBuilder()
+	require.Error(t, builder.
+		Keys([]any{"u1"}).
+		ChunkSize(1).
+		ConsistentRead().
+		Parallel(1).
+		WithRetry(nil).
+		Select("id").
+		OnProgress(func(int, int) {}).
+		OnError(func([]any, error) error { return nil }).
+		Execute(&out))
 }
