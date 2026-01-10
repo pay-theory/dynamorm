@@ -7,6 +7,7 @@ GOMOD := github.com/pay-theory/dynamorm
 UNIT_PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/ | grep -v /tests/stress | grep -v /tests/integration)
 ALL_PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/ | grep -v /tests/stress)
 INTEGRATION_PACKAGES := $(shell go list ./tests/integration/...)
+DYNAMODB_LOCAL_IMAGE ?= amazon/dynamodb-local:3.1.0
 
 # Default target
 all: fmt lint test build
@@ -83,13 +84,8 @@ clean:
 # Start DynamoDB Local
 docker-up:
 	@echo "Starting DynamoDB Local..."
-	@if docker ps -a | grep -q dynamodb-local; then \
-		if docker ps | grep -q dynamodb-local; then \
-			echo "DynamoDB Local is already running"; \
-		else \
-			echo "Starting existing container..."; \
-			docker start dynamodb-local; \
-		fi \
+	@if curl -s http://localhost:8000 > /dev/null 2>&1; then \
+		echo "DynamoDB Local is already running"; \
 	else \
 		if [ -f docker-compose.yml ]; then \
 			if command -v docker-compose > /dev/null 2>&1; then \
@@ -98,8 +94,12 @@ docker-up:
 				docker compose up -d dynamodb-local; \
 			fi; \
 		else \
-			docker run -d --name dynamodb-local -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -inMemory -sharedDb; \
-		fi \
+			if docker ps -a --format '{{.Names}}' | grep -qx 'dynamodb-local'; then \
+				docker start dynamodb-local; \
+			else \
+				docker run -d --name dynamodb-local -p 8000:8000 $(DYNAMODB_LOCAL_IMAGE) -jar DynamoDBLocal.jar -inMemory -sharedDb; \
+			fi; \
+		fi; \
 	fi
 	@echo "Waiting for DynamoDB Local to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
@@ -118,7 +118,13 @@ docker-up:
 # Stop DynamoDB Local
 docker-down:
 	@echo "Stopping DynamoDB Local..."
-	@if docker ps | grep -q dynamodb-local; then \
+	@if [ -f docker-compose.yml ]; then \
+		if command -v docker-compose > /dev/null 2>&1; then \
+			docker-compose stop dynamodb-local; \
+		else \
+			docker compose stop dynamodb-local; \
+		fi; \
+	elif docker ps --format '{{.Names}}' | grep -qx 'dynamodb-local'; then \
 		docker stop dynamodb-local; \
 	else \
 		echo "DynamoDB Local is not running"; \
@@ -127,7 +133,14 @@ docker-down:
 # Remove DynamoDB Local container (useful for cleanup)
 docker-clean:
 	@echo "Removing DynamoDB Local container..."
-	@if docker ps -a | grep -q dynamodb-local; then \
+	@if [ -f docker-compose.yml ]; then \
+		if command -v docker-compose > /dev/null 2>&1; then \
+			docker-compose down; \
+		else \
+			docker compose down; \
+		fi; \
+		echo "Containers removed"; \
+	elif docker ps -a --format '{{.Names}}' | grep -qx 'dynamodb-local'; then \
 		docker rm -f dynamodb-local; \
 		echo "Container removed"; \
 	else \
