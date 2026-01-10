@@ -338,6 +338,18 @@ func TestExecuteBatchWriteItem(t *testing.T) {
 	})
 }
 
+func TestBatchWriteExecutor_ExecuteQueryAndScan_ReturnErrors_COV6(t *testing.T) {
+	executor := &BatchWriteExecutor{}
+
+	err := executor.ExecuteQuery(&CompiledQuery{Operation: "Query"}, &struct{}{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support ExecuteQuery")
+
+	err = executor.ExecuteScan(&CompiledQuery{Operation: "Scan"}, &struct{}{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support ExecuteScan")
+}
+
 func TestBatchDeleteWithResult(t *testing.T) {
 	ctx := context.Background()
 

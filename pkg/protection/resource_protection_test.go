@@ -366,6 +366,15 @@ func TestMemoryMonitoring(t *testing.T) {
 	})
 }
 
+func TestMemoryMonitor_determineSeverity_COV6(t *testing.T) {
+	mm := &MemoryMonitor{}
+
+	assert.Equal(t, "CRITICAL", mm.determineSeverity(0.95))
+	assert.Equal(t, "HIGH", mm.determineSeverity(0.90))
+	assert.Equal(t, "MEDIUM", mm.determineSeverity(0.80))
+	assert.Equal(t, "LOW", mm.determineSeverity(0.10))
+}
+
 // TestProtectionErrors tests protection error handling
 func TestProtectionErrors(t *testing.T) {
 	t.Run("ProtectionErrorInterface", func(t *testing.T) {
@@ -413,6 +422,39 @@ func TestHealthCheck(t *testing.T) {
 	}
 	assert.Equal(t, "ok", memoryCheck["status"])
 	assert.GreaterOrEqual(t, memoryCheck["current_mb"], int64(0))
+}
+
+func TestHealthCheck_DegradesOnHighUsage_COV6(t *testing.T) {
+	config := DefaultResourceLimits()
+	config.MaxMemoryMB = 100
+	config.MaxConcurrentReq = 10
+
+	protector := NewResourceProtector(config)
+	atomic.StoreInt64(&protector.stats.CurrentMemoryMB, 95)
+	atomic.StoreInt64(&protector.stats.ConcurrentRequests, 9)
+
+	health := protector.HealthCheck()
+	assert.Equal(t, "degraded", health["status"])
+
+	checks, ok := health["checks"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
+
+	memoryCheck, ok := checks["memory"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
+	assert.Equal(t, "warning", memoryCheck["status"])
+
+	concurrencyCheck, ok := checks["concurrency"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
+	assert.Equal(t, "warning", concurrencyCheck["status"])
 }
 
 // TestResourceStats tests statistics tracking
