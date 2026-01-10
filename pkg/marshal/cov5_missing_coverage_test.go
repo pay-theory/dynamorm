@@ -21,12 +21,16 @@ func TestMarshaler_marshalValue_CoversPointerAndInterfaceKinds(t *testing.T) {
 	value := "x"
 	av, err := m.marshalValue(reflect.ValueOf(&value))
 	require.NoError(t, err)
-	require.Equal(t, "x", av.(*types.AttributeValueMemberS).Value)
+	member, ok := av.(*types.AttributeValueMemberS)
+	require.True(t, ok)
+	require.Equal(t, "x", member.Value)
 
 	var iface any = "y"
 	av, err = m.marshalValue(reflect.ValueOf(&iface).Elem())
 	require.NoError(t, err)
-	require.Equal(t, "y", av.(*types.AttributeValueMemberS).Value)
+	member, ok = av.(*types.AttributeValueMemberS)
+	require.True(t, ok)
+	require.Equal(t, "y", member.Value)
 
 	var nilIface any
 	av, err = m.marshalValue(reflect.ValueOf(&nilIface).Elem())
@@ -59,5 +63,7 @@ func TestSafeMarshaler_marshalValue_CoversInterfaceKind(t *testing.T) {
 
 	out, err := marshaler.MarshalItem(item{ID: "id-1", Any: "value"}, metadata)
 	require.NoError(t, err)
-	require.Equal(t, "value", out["any"].(*types.AttributeValueMemberS).Value)
+	anyValue, ok := out["any"].(*types.AttributeValueMemberS)
+	require.True(t, ok)
+	require.Equal(t, "value", anyValue.Value)
 }

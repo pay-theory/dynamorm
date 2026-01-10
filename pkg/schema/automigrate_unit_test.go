@@ -154,6 +154,7 @@ func newTestManager(t *testing.T, httpClient aws.HTTPClient) *Manager {
 		CredentialsProvider: credentials.NewStaticCredentialsProvider("test", "secret", "token"),
 		AWSConfigOptions: []func(*config.LoadOptions) error{
 			config.WithHTTPClient(httpClient),
+			config.WithRetryer(func() aws.Retryer { return aws.NopRetryer{} }),
 		},
 	})
 	require.NoError(t, err)

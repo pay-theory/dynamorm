@@ -10,8 +10,8 @@ import (
 )
 
 type cov5BatchWriteExecutor struct {
-	calls   int
 	batches [][]types.WriteRequest
+	calls   int
 }
 
 func (e *cov5BatchWriteExecutor) ExecuteQuery(_ *core.CompiledQuery, _ any) error { return nil }
@@ -56,6 +56,21 @@ func TestQuery_BatchWriteWithOptions_ExecutesPutAndDeleteRequests(t *testing.T) 
 	}
 	require.True(t, seenPut)
 	require.True(t, seenDelete)
+}
+
+func TestQuery_BatchWrite_UsesDefaultOptions_COV5(t *testing.T) {
+	exec := &cov5BatchWriteExecutor{}
+	q := New(&struct{}{}, cov5Metadata{
+		table:      "tbl",
+		primaryKey: core.KeySchema{PartitionKey: "pk"},
+	}, exec)
+
+	type item struct {
+		PK string `dynamodb:"pk"`
+	}
+
+	require.NoError(t, q.BatchWrite([]any{&item{PK: "p1"}}, []any{&item{PK: "d1"}}))
+	require.Equal(t, 1, exec.calls)
 }
 
 func TestQuery_BatchWriteWithOptions_ErrorHandler_SkipsInvalidItems(t *testing.T) {

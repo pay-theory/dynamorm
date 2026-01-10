@@ -60,8 +60,10 @@ func TestBatchGetBuilder_SelectAndOrdering(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 2)
 
-	pk0 := out[0]["pk"].(*types.AttributeValueMemberS)
-	pk1 := out[1]["pk"].(*types.AttributeValueMemberS)
+	pk0, ok := out[0]["pk"].(*types.AttributeValueMemberS)
+	require.True(t, ok)
+	pk1, ok := out[1]["pk"].(*types.AttributeValueMemberS)
+	require.True(t, ok)
 	require.Equal(t, "p1", pk0.Value)
 	require.Equal(t, "p2", pk1.Value)
 }
@@ -87,6 +89,7 @@ func TestBatchGetBuilder_OnErrorCanSwallowChunkErrors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
-	pk := out[0]["pk"].(*types.AttributeValueMemberS)
+	pk, ok := out[0]["pk"].(*types.AttributeValueMemberS)
+	require.True(t, ok)
 	require.Equal(t, "p2", pk.Value)
 }

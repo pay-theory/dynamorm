@@ -10,10 +10,10 @@ import (
 )
 
 type cov5QueryExecutor struct {
-	queryCalls int
-	scanCalls  int
 	lastQuery  *core.CompiledQuery
 	lastScan   *core.CompiledQuery
+	queryCalls int
+	scanCalls  int
 }
 
 func (e *cov5QueryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
@@ -100,4 +100,20 @@ func TestQuery_FilterGroups_RecordBuilderError(t *testing.T) {
 
 	var out []struct{}
 	require.Error(t, q.All(&out))
+}
+
+func TestQuery_OrFilterGroup_CoversGroupedOrFilters_COV5(t *testing.T) {
+	exec := &cov5QueryExecutor{}
+
+	q := New(&struct{}{}, cov5Metadata{
+		table:      "tbl",
+		primaryKey: core.KeySchema{PartitionKey: "pk"},
+	}, exec)
+
+	q.OrFilterGroup(func(sub core.Query) {
+		sub.Filter("field", "=", "v")
+	})
+
+	var out []struct{}
+	require.NoError(t, q.All(&out))
 }

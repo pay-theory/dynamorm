@@ -3,11 +3,11 @@ package query
 import "github.com/pay-theory/dynamorm/pkg/core"
 
 type cov5Metadata struct {
-	table        string
 	primaryKey   core.KeySchema
-	indexes      []core.IndexSchema
 	attributes   map[string]*core.AttributeMetadata
+	table        string
 	versionField string
+	indexes      []core.IndexSchema
 }
 
 func (m cov5Metadata) TableName() string { return m.table }
