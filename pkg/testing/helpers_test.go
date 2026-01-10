@@ -2,11 +2,15 @@ package testing_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/pay-theory/dynamorm/pkg/core"
+	dynamormerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/mocks"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	dynamormtesting "github.com/pay-theory/dynamorm/pkg/testing"
 )
 
@@ -81,6 +85,142 @@ func TestQueryChain_ExpectFirst(t *testing.T) {
 		Limit(10).
 		OrderBy("id", "ASC").
 		First(&got)
+	require.NoError(t, err)
+	require.Equal(t, expected, got)
+
+	testDB.AssertExpectations(t)
+}
+
+func TestTestDB_ExpectationHelpers(t *testing.T) {
+	type user struct {
+		ID string
+	}
+
+	u := &user{ID: "u1"}
+	ctx := context.Background()
+
+	testDB := dynamormtesting.NewTestDB()
+	testDB.Reset()
+
+	t.Run("create and create error", func(t *testing.T) {
+		testDB.ExpectModel(u).ExpectCreate()
+		require.NoError(t, testDB.MockDB.Model(u).Create())
+
+		expectedErr := errors.New("boom")
+		testDB.ExpectModel(u).ExpectCreateError(expectedErr)
+		require.ErrorIs(t, testDB.MockDB.Model(u).Create(), expectedErr)
+	})
+
+	t.Run("where, first, and not found", func(t *testing.T) {
+		testDB.ExpectModel(u).
+			ExpectWhere("id", "=", "u1").
+			ExpectFind(u)
+
+		var got user
+		require.NoError(t, testDB.MockDB.Model(u).Where("id", "=", "u1").First(&got))
+		require.Equal(t, *u, got)
+
+		testDB.ExpectModel(u).ExpectNotFound()
+		require.ErrorIs(t, testDB.MockDB.Model(u).First(&got), dynamormerrors.ErrItemNotFound)
+	})
+
+	t.Run("update and delete", func(t *testing.T) {
+		testDB.ExpectModel(u).ExpectUpdate("Name")
+		require.NoError(t, testDB.MockDB.Model(u).Update("Name"))
+
+		expectedErr := errors.New("update failed")
+		testDB.ExpectModel(u).ExpectUpdateError(expectedErr, "Name")
+		require.ErrorIs(t, testDB.MockDB.Model(u).Update("Name"), expectedErr)
+
+		testDB.ExpectModel(u).ExpectDelete()
+		require.NoError(t, testDB.MockDB.Model(u).Delete())
+
+		deleteErr := errors.New("delete failed")
+		testDB.ExpectModel(u).ExpectDeleteError(deleteErr)
+		require.ErrorIs(t, testDB.MockDB.Model(u).Delete(), deleteErr)
+	})
+
+	t.Run("count and query modifiers", func(t *testing.T) {
+		testDB.ExpectModel(u).ExpectCount(3)
+		got, err := testDB.MockDB.Model(u).Count()
+		require.NoError(t, err)
+		require.Equal(t, int64(3), got)
+
+		testDB.ExpectModel(u).
+			ExpectLimit(10).
+			ExpectOffset(20).
+			ExpectOrderBy("id", "ASC").
+			ExpectIndex("by-id")
+
+		_ = testDB.MockDB.Model(u).
+			Limit(10).
+			Offset(20).
+			OrderBy("id", "ASC").
+			Index("by-id")
+	})
+
+	t.Run("transaction helpers", func(t *testing.T) {
+		testDB.ExpectTransaction(func(_ *core.Tx) {})
+		require.NoError(t, testDB.MockDB.Transaction(func(_ *core.Tx) error { return nil }))
+
+		expectedErr := errors.New("tx failed")
+		testDB.ExpectTransactionError(expectedErr)
+		require.ErrorIs(t, testDB.MockDB.Transaction(func(_ *core.Tx) error { return nil }), expectedErr)
+	})
+
+	t.Run("batch helpers", func(t *testing.T) {
+		keys := []interface{}{"u1", "u2"}
+		expected := []user{{ID: "u1"}, {ID: "u2"}}
+
+		testDB.ExpectModel(u).ExpectBatchGet(keys, &expected)
+
+		var got []user
+		require.NoError(t, testDB.MockDB.Model(u).BatchGet(keys, &got))
+		require.Equal(t, expected, got)
+
+		testDB.ExpectModel(u).ExpectBatchCreate([]user{{ID: "u3"}})
+		require.NoError(t, testDB.MockDB.Model(u).BatchCreate([]user{{ID: "u3"}}))
+
+		testDB.ExpectModel(u).ExpectBatchDelete(keys)
+		require.NoError(t, testDB.MockDB.Model(u).BatchDelete(keys))
+	})
+
+	t.Run("with context passthrough", func(t *testing.T) {
+		testDB.MockDB.On("WithContext", ctx).Return(testDB.MockDB).Once()
+		dbWithCtx := testDB.MockDB.WithContext(ctx)
+		require.Equal(t, testDB.MockDB, dbWithCtx)
+	})
+
+	testDB.AssertExpectations(t)
+
+	// Ensure Reset clears expectations and doesn't panic.
+	testDB.Reset()
+	testDB.MockDB.ExpectedCalls = nil
+	testDB.MockQuery.ExpectedCalls = nil
+
+	// Touch DefaultDBFactory.CreateDB for coverage; it's a placeholder.
+	var factory dynamormtesting.DefaultDBFactory
+	db, err := factory.CreateDB(session.Config{Region: "us-east-1"})
+	require.NoError(t, err)
+	require.Nil(t, db)
+}
+
+func TestQueryChain_ExpectAll(t *testing.T) {
+	testDB := dynamormtesting.NewTestDB()
+
+	expected := []int{1, 2, 3}
+	testDB.NewQueryChain().
+		Where("id", "=", "u1").
+		Limit(10).
+		OrderBy("id", "ASC").
+		ExpectAll(&expected)
+
+	var got []int
+	err := testDB.MockQuery.
+		Where("id", "=", "u1").
+		Limit(10).
+		OrderBy("id", "ASC").
+		All(&got)
 	require.NoError(t, err)
 	require.Equal(t, expected, got)
 
