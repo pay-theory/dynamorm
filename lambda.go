@@ -28,6 +28,9 @@ var (
 	// Global Lambda-optimized DB for connection reuse
 	globalLambdaDB *LambdaDB
 	lambdaOnce     sync.Once
+
+	benchmarkLoadDefaultConfig = config.LoadDefaultConfig
+	benchmarkNewDynamoDBClient = dynamodb.NewFromConfig
 )
 
 // Package dynamorm provides Lambda-specific optimizations for DynamoDB operations.
@@ -386,7 +389,7 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 	// Phase 1: AWS Config
 	phaseStart := time.Now()
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := benchmarkLoadDefaultConfig(context.Background())
 	phases["aws_config"] = time.Since(phaseStart)
 	if err != nil {
 		// If config loading fails, still track it but with error
@@ -401,7 +404,7 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 	// Phase 2: DynamoDB Client
 	phaseStart = time.Now()
-	client := dynamodb.NewFromConfig(cfg)
+	client := benchmarkNewDynamoDBClient(cfg)
 	phases["dynamodb_client"] = time.Since(phaseStart)
 
 	// Phase 3: DynamORM Setup
