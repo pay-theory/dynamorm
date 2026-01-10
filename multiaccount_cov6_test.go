@@ -14,6 +14,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type cov6LogBuffer struct {
+	buf bytes.Buffer
+	mu  sync.Mutex
+}
+
+func (b *cov6LogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *cov6LogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func TestMultiAccountDB_refreshExpiredCredentials_RefreshesAndSkipsInvalidEntries_COV6(t *testing.T) {
 	mdb := &MultiAccountDB{
 		cache:      &sync.Map{},
@@ -83,7 +100,7 @@ func TestMultiAccountDB_refreshExpiredCredentials_LogsOnRefreshError_COV6(t *tes
 		},
 	})
 
-	var buf bytes.Buffer
+	var buf cov6LogBuffer
 	prevWriter := log.Writer()
 	prevFlags := log.Flags()
 	log.SetOutput(&buf)
@@ -110,6 +127,6 @@ func TestMultiAccountDB_refreshExpiredCredentials_LogsOnRefreshError_COV6(t *tes
 	}
 
 	require.Eventually(t, func() bool {
-		return bytes.Contains(buf.Bytes(), []byte("Credential refresh failed"))
+		return bytes.Contains([]byte(buf.String()), []byte("Credential refresh failed"))
 	}, 500*time.Millisecond, 10*time.Millisecond)
 }
