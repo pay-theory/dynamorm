@@ -1216,12 +1216,16 @@ func (q *query) BatchGetBuilder() core.BatchGetBuilder {
 		return &errorBatchGetBuilder{err: err}
 	}
 
-	internal, _, err := q.buildBatchGetQuery()
+	internal, metadata, err := q.buildBatchGetQuery()
 	if err != nil {
 		return &errorBatchGetBuilder{err: err}
 	}
 
-	return internal.BatchGetBuilder()
+	return &batchGetBuilderWrapper{
+		builder:  internal.BatchGetBuilder(),
+		query:    q,
+		metadata: metadata,
+	}
 }
 
 func (q *query) buildBatchGetQuery() (*queryPkg.Query, *model.Metadata, error) {
@@ -3179,6 +3183,60 @@ func (b *errorBatchGetBuilder) OnError(_ core.BatchChunkErrorHandler) core.Batch
 	return b
 }
 func (b *errorBatchGetBuilder) Execute(_ any) error { return b.err }
+
+type batchGetBuilderWrapper struct {
+	builder  core.BatchGetBuilder
+	query    *query
+	metadata *model.Metadata
+}
+
+func (b *batchGetBuilderWrapper) Keys(keys []any) core.BatchGetBuilder {
+	b.builder = b.builder.Keys(keys)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) ChunkSize(size int) core.BatchGetBuilder {
+	b.builder = b.builder.ChunkSize(size)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) ConsistentRead() core.BatchGetBuilder {
+	b.builder = b.builder.ConsistentRead()
+	return b
+}
+
+func (b *batchGetBuilderWrapper) Parallel(maxConcurrency int) core.BatchGetBuilder {
+	b.builder = b.builder.Parallel(maxConcurrency)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) WithRetry(policy *core.RetryPolicy) core.BatchGetBuilder {
+	b.builder = b.builder.WithRetry(policy)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) Select(fields ...string) core.BatchGetBuilder {
+	b.builder = b.builder.Select(fields...)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) OnProgress(callback core.BatchProgressCallback) core.BatchGetBuilder {
+	b.builder = b.builder.OnProgress(callback)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) OnError(handler core.BatchChunkErrorHandler) core.BatchGetBuilder {
+	b.builder = b.builder.OnError(handler)
+	return b
+}
+
+func (b *batchGetBuilderWrapper) Execute(dest any) error {
+	var rawItems []map[string]types.AttributeValue
+	if err := b.builder.Execute(&rawItems); err != nil {
+		return err
+	}
+	return b.query.unmarshalItems(rawItems, dest, b.metadata)
+}
 
 // ParallelScan configures parallel scanning with segment and total segments
 func (q *query) ParallelScan(segment int32, totalSegments int32) core.Query {
