@@ -226,8 +226,8 @@ func TestQuery_WithRetry_FirstAndAll(t *testing.T) {
 
 func TestDB_TableOperationsAndAutoMigrate(t *testing.T) {
 	httpClient := newCapturingHTTPClient(map[string]string{
-		"DynamoDB_20120810.CreateTable": `{}`,
-		"DynamoDB_20120810.DeleteTable": `{}`,
+		"DynamoDB_20120810.CreateTable":   `{}`,
+		"DynamoDB_20120810.DeleteTable":   `{}`,
 		"DynamoDB_20120810.DescribeTable": `{"Table":{"TableName":"cov3_items","TableStatus":"ACTIVE","BillingModeSummary":{"BillingMode":"PAY_PER_REQUEST"}}}`,
 	})
 
@@ -335,14 +335,16 @@ func TestMultiAccount_SanitizationAndCaching(t *testing.T) {
 
 	mdb, err := NewMultiAccount(map[string]AccountConfig{
 		"partner1": {
-			RoleARN:          "arn:aws:iam::123456789012:role/TestRole",
-			ExternalID:       "external",
-			Region:           "us-east-1",
-			SessionDuration:  10 * time.Minute,
+			RoleARN:         "arn:aws:iam::123456789012:role/TestRole",
+			ExternalID:      "external",
+			Region:          "us-east-1",
+			SessionDuration: 10 * time.Minute,
 		},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = mdb.Close() })
+	t.Cleanup(func() {
+		require.NoError(t, mdb.Close())
+	})
 
 	base, err := mdb.Partner("")
 	require.NoError(t, err)

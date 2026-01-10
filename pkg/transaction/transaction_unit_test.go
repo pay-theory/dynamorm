@@ -3,10 +3,10 @@ package transaction
 import (
 	"bytes"
 	"context"
+	stderrs "errors"
 	"fmt"
 	"io"
 	"net/http"
-	stderrs "errors"
 	"testing"
 	"time"
 
@@ -44,8 +44,12 @@ type stubHTTPClient struct {
 func (c stubHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	target := req.Header.Get("X-Amz-Target")
 	if req.Body != nil {
-		_, _ = io.Copy(io.Discard, req.Body)
-		_ = req.Body.Close()
+		if _, err := io.Copy(io.Discard, req.Body); err != nil {
+			return nil, err
+		}
+		if err := req.Body.Close(); err != nil {
+			return nil, err
+		}
 	}
 
 	body := c.responses[target]
@@ -91,7 +95,7 @@ func TestTransaction_OperationsAndCommit(t *testing.T) {
 	httpClient := stubHTTPClient{
 		responses: map[string]string{
 			"DynamoDB_20120810.TransactWriteItems": `{}`,
-			"DynamoDB_20120810.TransactGetItems":  `{"Responses":[{"Item":{"id":{"S":"user-1"},"email":{"S":"test@example.com"}}}]}`,
+			"DynamoDB_20120810.TransactGetItems":   `{"Responses":[{"Item":{"id":{"S":"user-1"},"email":{"S":"test@example.com"}}}]}`,
 		},
 	}
 

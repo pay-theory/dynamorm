@@ -206,4 +206,3 @@ func TestMarkerOptionsAndInputBuilder(t *testing.T) {
 	// Marker options should not mutate the input.
 	require.Equal(t, &dynamodb.CreateTableInput{}, input)
 }
-
