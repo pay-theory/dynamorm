@@ -11,6 +11,11 @@ Snapshot (2026-01-10):
 - Prerequisite check: ✅ `make lint` is green (M1 complete)
 - `bash scripts/verify-coverage.sh`: **51.0%** vs threshold **90%** (fails)
 
+## Progress snapshots
+
+- Baseline (2026-01-10): **51.0%** vs threshold **90%** (fails)
+- After COV-1 (2026-01-10): **52.6%** vs threshold **90%** (fails); removed 0%-coverage packages (`internal/reflectutil`, `pkg/testing`)
+
 ## Guardrails (no denominator games)
 
 - Do not reduce the measurement surface by excluding additional production packages from `scripts/coverage.sh`.
@@ -66,7 +71,7 @@ Initial hotspots to prioritize (high churn / high surface area):
 
 This repo currently has a single hard gate at 90%. To make progress reviewable, adopt incremental milestones (modeled after K3) such as:
 
-- COV-1: remove “0% islands” (every production package has tests)
+- ✅ COV-1: remove “0% islands” (every production package has tests)
 - COV-2: broad floor (25%+)
 - COV-3: meaningful safety net (50%+)
 - COV-4: high confidence (70%+)
