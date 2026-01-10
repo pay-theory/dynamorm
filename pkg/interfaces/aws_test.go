@@ -42,16 +42,18 @@ func TestNewDynamoDBClientWrapper(t *testing.T) {
 // TestNewTableExistsWaiterWrapper ensures the constructor works with a nil client
 // Note: This will panic in production but we're testing the wrapper creation pattern
 func TestNewTableExistsWaiterWrapper(t *testing.T) {
-	// NewTableExistsWaiter requires a valid client, so we skip this test
-	// in unit test mode and rely on integration tests
-	t.Skip("Requires valid DynamoDB client - covered by integration tests")
+	waiter := NewTableExistsWaiterWrapper(newFailingDynamoDBClient(t))
+	if waiter == nil {
+		t.Error("NewTableExistsWaiterWrapper returned nil")
+	}
 }
 
 // TestNewTableNotExistsWaiterWrapper ensures the constructor works with a nil client
 func TestNewTableNotExistsWaiterWrapper(t *testing.T) {
-	// NewTableNotExistsWaiter requires a valid client, so we skip this test
-	// in unit test mode and rely on integration tests
-	t.Skip("Requires valid DynamoDB client - covered by integration tests")
+	waiter := NewTableNotExistsWaiterWrapper(newFailingDynamoDBClient(t))
+	if waiter == nil {
+		t.Error("NewTableNotExistsWaiterWrapper returned nil")
+	}
 }
 
 // TestDynamoDBClientInterface_Coverage ensures all interface methods are documented
