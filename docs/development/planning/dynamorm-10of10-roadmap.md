@@ -22,7 +22,7 @@ Evidence (refresh whenever behavior changes):
 
 - ✅ `make test-unit`
 - ✅ `make integration`
-- ❌ `bash scripts/verify-coverage.sh` (current: **52.6%** vs threshold **90%**)
+- ❌ `bash scripts/verify-coverage.sh` (current: **53.1%** vs threshold **90%**)
 - ✅ `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
 - ✅ `bash scripts/fmt-check.sh`
 - ✅ `golangci-lint config verify -c .golangci-v2.yml`
