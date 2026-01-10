@@ -451,6 +451,36 @@ func TestErrorChaining(t *testing.T) {
 	assert.Contains(t, errMsg, "operation failed")
 }
 
+func TestTransactionError_ErrorAndUnwrap(t *testing.T) {
+	t.Run("nil receiver", func(t *testing.T) {
+		var txErr *TransactionError
+		assert.Equal(t, "dynamorm: transaction failed", txErr.Error())
+		assert.Nil(t, txErr.Unwrap())
+	})
+
+	t.Run("includes operation, index, and reason", func(t *testing.T) {
+		baseErr := errors.New("boom")
+		txErr := &TransactionError{
+			Err:            baseErr,
+			Operation:      "update",
+			Reason:         "ConditionalCheckFailed",
+			OperationIndex: 3,
+		}
+
+		assert.Contains(t, txErr.Error(), "transaction operation update (index 3) failed: ConditionalCheckFailed")
+		assert.ErrorIs(t, txErr.Unwrap(), baseErr)
+	})
+
+	t.Run("omits index when negative and omits reason when empty", func(t *testing.T) {
+		txErr := &TransactionError{
+			Operation:      "delete",
+			OperationIndex: -1,
+		}
+
+		assert.Equal(t, "dynamorm: transaction operation delete failed", txErr.Error())
+	})
+}
+
 // TestConcurrentErrorAccess tests thread safety of error operations
 func TestConcurrentErrorAccess(t *testing.T) {
 	err := NewErrorWithContext("ConcurrentOp", "TestModel", ErrTransactionFailed,
