@@ -65,7 +65,10 @@ test-all: docker-up
 fmt:
 	@echo "Formatting code..."
 	@go fmt ./...
-	@gofmt -s -w .
+	@files="$$(git ls-files '*.go')"; \
+	if [ -n "$$files" ]; then \
+		gofmt -s -w $$files; \
+	fi
 
 fmt-check:
 	@./scripts/fmt-check.sh
