@@ -12,7 +12,7 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
-| Quality | 9/10 | QUA-5 |
+| Quality | 10/10 | — |
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
 | Security | 10/10 | — |
