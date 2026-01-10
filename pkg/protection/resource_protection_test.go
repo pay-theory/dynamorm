@@ -375,6 +375,45 @@ func TestMemoryMonitor_determineSeverity_COV6(t *testing.T) {
 	assert.Equal(t, "LOW", mm.determineSeverity(0.10))
 }
 
+func TestMemoryMonitor_checkMemory_TriggersAlertAndGC_COV6(t *testing.T) {
+	config := DefaultResourceLimits()
+	config.MaxMemoryMB = 1
+	config.MemoryPanicThreshold = 0.0
+
+	protector := NewResourceProtector(config)
+
+	// Ensure the heap is non-trivially allocated so memory usage crosses the threshold.
+	buf := make([]byte, 10*1024*1024)
+	for i := range buf {
+		buf[i] = byte(i)
+	}
+
+	alerts := make(chan MemoryAlert, 1)
+	protector.memoryMonitor.mu.Lock()
+	protector.memoryMonitor.alertCallback = func(alert MemoryAlert) {
+		select {
+		case alerts <- alert:
+		default:
+		}
+	}
+	protector.memoryMonitor.mu.Unlock()
+
+	protector.memoryMonitor.checkMemory()
+
+	stats := protector.GetStats()
+	assert.Greater(t, stats.MemoryAlerts, int64(0))
+	assert.GreaterOrEqual(t, stats.CurrentMemoryMB, int64(0))
+
+	select {
+	case alert := <-alerts:
+		assert.Equal(t, "MemoryThresholdExceeded", alert.Type)
+		assert.NotEmpty(t, alert.Severity)
+		assert.Greater(t, alert.UsagePercent, 0.0)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected memory alert callback to run")
+	}
+}
+
 // TestProtectionErrors tests protection error handling
 func TestProtectionErrors(t *testing.T) {
 	t.Run("ProtectionErrorInterface", func(t *testing.T) {

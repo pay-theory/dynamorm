@@ -173,8 +173,12 @@ func (m *Marshaler) marshalStructFields(ptr unsafe.Pointer, fields []fieldMarsha
 
 		if fm.isVersion {
 			fieldPtr := unsafe.Add(ptr, fm.offset)
-			val := *(*int64)(fieldPtr)
-			result[fm.dbName] = marshalVersionNumber(val)
+			fieldValue := reflect.NewAt(fm.typ, fieldPtr).Elem()
+			version, err := versionNumberFromValue(fieldValue)
+			if err != nil {
+				return fmt.Errorf("field %s: %w", fm.dbName, err)
+			}
+			result[fm.dbName] = marshalVersionNumber(version)
 			continue
 		}
 

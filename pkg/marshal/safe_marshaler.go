@@ -112,9 +112,11 @@ func (m *SafeMarshaler) marshalSafeStructFields(
 
 		field := v.FieldByIndex(fm.fieldIndex)
 		if fm.isVersion {
-			if field.Kind() == reflect.Int64 {
-				result[fm.dbName] = marshalVersionNumber(field.Int())
+			version, err := versionNumberFromValue(field)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", fm.dbName, err)
 			}
+			result[fm.dbName] = marshalVersionNumber(version)
 			continue
 		}
 

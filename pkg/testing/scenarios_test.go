@@ -116,9 +116,22 @@ func TestCommonScenarios_OtherSetups(t *testing.T) {
 		expectedErr := errors.New("boom")
 		scenarios.SetupErrorScenarios(map[string]error{
 			"create": expectedErr,
+			"find":   expectedErr,
+			"update": expectedErr,
+			"delete": expectedErr,
+			"all":    expectedErr,
+			"count":  expectedErr,
 		})
 
 		require.ErrorIs(t, testDB.MockQuery.Create(), expectedErr)
+		require.ErrorIs(t, testDB.MockQuery.First(u), expectedErr)
+		require.ErrorIs(t, testDB.MockQuery.Update("Name"), expectedErr)
+		require.ErrorIs(t, testDB.MockQuery.Delete(), expectedErr)
+
+		var got []user
+		require.ErrorIs(t, testDB.MockQuery.All(&got), expectedErr)
+		_, err := testDB.MockQuery.Count()
+		require.ErrorIs(t, err, expectedErr)
 	})
 
 	t.Run("SetupScanScenario", func(t *testing.T) {
@@ -210,6 +223,7 @@ func TestMockUpdateBuilder_ReturnTypesAndPanics(t *testing.T) {
 		b.On("PrependToList", "list", []string{"a"}).Return(b).Once()
 		b.On("RemoveFromListAt", "list", 2).Return(b).Once()
 		b.On("SetListElement", "list", 0, "x").Return(b).Once()
+		b.On("Condition", "field", "=", 1).Return(b).Once()
 		b.On("OrCondition", "field", "=", 1).Return(b).Once()
 		b.On("ConditionExists", "field").Return(b).Once()
 		b.On("ConditionNotExists", "field").Return(b).Once()
@@ -224,6 +238,7 @@ func TestMockUpdateBuilder_ReturnTypesAndPanics(t *testing.T) {
 		require.Same(t, b, b.PrependToList("list", []string{"a"}))
 		require.Same(t, b, b.RemoveFromListAt("list", 2))
 		require.Same(t, b, b.SetListElement("list", 0, "x"))
+		require.Same(t, b, b.Condition("field", "=", 1))
 		require.Same(t, b, b.OrCondition("field", "=", 1))
 		require.Same(t, b, b.ConditionExists("field"))
 		require.Same(t, b, b.ConditionNotExists("field"))
