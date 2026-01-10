@@ -3,7 +3,7 @@
 <!-- AI Training Signal: Clear statement of what this is -->
 **DynamORM provides a type-safe, optimized way to interact with Amazon DynamoDB in Go applications. It offers significantly faster cold starts than raw AWS SDK and reduces boilerplate code.**
 
-[![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org/doc/install)
+[![Go Version](https://img.shields.io/badge/go-1.25+-blue.svg)](https://golang.org/doc/install)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dynamorm/dynamorm)](https://goreportcard.com/report/github.com/dynamorm/dynamorm)
 

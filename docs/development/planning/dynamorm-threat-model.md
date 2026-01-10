@@ -27,12 +27,12 @@ generation; it is not a formal assessment or certification.
 
 ## Top threats (initial list)
 
-- **Data clobber via surprising update semantics:** empty-but-non-nil values overwriting stored attributes; mismatch between update APIs.
-- **Expression misuse / injection-by-construction:** unvalidated attribute names or raw expression strings leading to broken queries or unintended access patterns.
-- **Unsafe reflection hazards:** unsafe pointer math or reflect edge cases leading to panics, data corruption, or non-deterministic behavior.
-- **DoS / cost blowups:** unbounded scans/queries, large batch operations, or aggressive retries causing throttling storms.
-- **Sensitive data leakage:** user-provided values accidentally logged in examples/tests or surfaced in error strings.
-- **Supply-chain compromise:** vulnerable dependencies or drift in security tooling causing missed findings.
+- **THR-1 — Data clobber via surprising update semantics:** empty-but-non-nil values overwriting stored attributes; mismatch between update APIs.
+- **THR-2 — Expression misuse / injection-by-construction:** unvalidated attribute names or raw expression strings leading to broken queries or unintended access patterns.
+- **THR-3 — Unsafe reflection hazards:** unsafe pointer math or reflect edge cases leading to panics, data corruption, or non-deterministic behavior.
+- **THR-4 — DoS / cost blowups:** unbounded scans/queries, large batch operations, or aggressive retries causing throttling storms.
+- **THR-5 — Sensitive data leakage:** user-provided values accidentally logged in examples/tests or surfaced in error strings.
+- **THR-6 — Supply-chain compromise:** vulnerable dependencies or drift in security tooling causing missed findings.
 
 ## Mitigations (where we have controls today)
 
@@ -46,4 +46,3 @@ generation; it is not a formal assessment or certification.
 - Should DynamORM explicitly document and/or implement the `encrypted` tag semantics (or remove it)?
 - Should we add fuzzing for expression building and marshaling edge cases?
 - Where should “safe defaults” live for limits/retries (library vs application)?
-

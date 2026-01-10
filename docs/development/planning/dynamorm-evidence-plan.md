@@ -22,13 +22,15 @@ report, or CI artifact is possible.
 - Roadmap mapped to rubric IDs: `docs/development/planning/dynamorm-10of10-roadmap.md`
 - Threat model: `docs/development/planning/dynamorm-threat-model.md`
 
-## Rubric-to-evidence map (Rubric v0.2)
+## Rubric-to-evidence map (Rubric v0.3)
 
 | Rubric ID | Primary evidence | How to refresh |
 | --- | --- | --- |
 | QUA-1 | Test output | `make test-unit` |
 | QUA-2 | Test output (CI/local) | `make integration` |
 | QUA-3 | Coverage profile + summary | `bash scripts/verify-coverage.sh` |
+| QUA-4 | Parity harness output | `bash scripts/verify-validation-parity.sh` |
+| QUA-5 | Fuzz smoke output | `bash scripts/fuzz-smoke.sh` |
 | CON-1 | gofmt diff list | `bash scripts/fmt-check.sh` |
 | CON-2 | Lint output | `make lint` |
 | COM-1 | Multi-module compile output | `bash scripts/verify-go-modules.sh` |
@@ -36,7 +38,14 @@ report, or CI artifact is possible.
 | COM-3 | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
 | COM-4 | golangci-lint config verification output | `golangci-lint config verify -c .golangci-v2.yml` |
 | COM-5 | Coverage threshold verification output | `bash scripts/verify-coverage-threshold.sh` |
+| COM-6 | CI rubric enforcement verification output | `bash scripts/verify-ci-rubric-enforced.sh` |
+| COM-7 | DynamoDB Local pin verification output | `bash scripts/verify-dynamodb-local-pin.sh` |
 | DOC-* | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
+| DOC-4 | Doc integrity verification output | `bash scripts/verify-doc-integrity.sh` |
+| DOC-5 | Threat-controls parity verification output | `bash scripts/verify-threat-controls-parity.sh` |
 | SEC-1 | gosec output (optional SARIF) | `bash scripts/sec-gosec.sh` |
 | SEC-2 | govulncheck output | `bash scripts/sec-govulncheck.sh` |
 | SEC-3 | `go mod verify` output | `go mod verify` |
+| SEC-4 | No-panics verification output | `bash scripts/verify-no-panics.sh` |
+| SEC-5 | Safe-defaults verification output | `bash scripts/verify-safe-defaults.sh` |
+| SEC-7 | Network hygiene verification output | `bash scripts/verify-network-hygiene.sh` |

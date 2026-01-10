@@ -1,37 +1,46 @@
-# DynamORM: 10/10 Roadmap (Rubric v0.2)
+# DynamORM: 10/10 Roadmap (Rubric v0.3)
 
 This roadmap is the execution plan for achieving and maintaining **10/10** across **Quality**, **Consistency**,
 **Completeness**, **Security**, and **Docs** as defined by:
 
 - `docs/development/planning/dynamorm-10of10-rubric.md` (source of truth; versioned)
 
-## Current scorecard (Rubric v0.2)
+## Current scorecard (Rubric v0.3)
 
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned toolchain, stable commands, and no “green by exclusion” shortcuts).
 
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
-| Quality | 10/10 | — |
+| Quality | 7/10 | QUA-4, QUA-5 |
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
-| Security | 10/10 | — |
+| Security | 5/10 | SEC-4, SEC-5, SEC-7 |
 | Docs | 10/10 | — |
 
 Evidence (refresh whenever behavior changes):
 
-- ✅ `make test-unit`
-- ✅ `make integration`
-- ✅ `bash scripts/verify-coverage.sh` (current: **90.0%** vs threshold **90%**)
-- ✅ `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
-- ✅ `bash scripts/fmt-check.sh`
-- ✅ `golangci-lint config verify -c .golangci-v2.yml`
-- ✅ `make lint` (0 issues)
-- ✅ `bash scripts/verify-go-modules.sh`
-- ✅ `bash scripts/verify-ci-toolchain.sh`
-- ✅ `bash scripts/sec-gosec.sh`
-- ✅ `bash scripts/sec-govulncheck.sh`
-- ✅ `go mod verify`
+- `make test-unit`
+- `make integration`
+- `bash scripts/verify-coverage.sh` (current: **90.0%** vs threshold **90%**)
+- `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
+- `bash scripts/fmt-check.sh`
+- `golangci-lint config verify -c .golangci-v2.yml`
+- `make lint`
+- `bash scripts/verify-go-modules.sh`
+- `bash scripts/verify-ci-toolchain.sh`
+- `bash scripts/verify-ci-rubric-enforced.sh`
+- `bash scripts/verify-dynamodb-local-pin.sh`
+- `bash scripts/verify-threat-controls-parity.sh`
+- `bash scripts/verify-doc-integrity.sh`
+- `bash scripts/verify-no-panics.sh`
+- `bash scripts/verify-safe-defaults.sh`
+- `bash scripts/verify-network-hygiene.sh`
+- `bash scripts/verify-validation-parity.sh`
+- `bash scripts/fuzz-smoke.sh`
+- `bash scripts/sec-gosec.sh`
+- `bash scripts/sec-govulncheck.sh`
+- `go mod verify`
 
 ## Milestones (map directly to rubric IDs)
 
@@ -84,7 +93,7 @@ Guardrails (no denominator games):
 
 ### M2 — Enforce the loop in CI (after remediation)
 
-**Closes:** (durability milestone; supports all categories)  
+**Closes:** COM-6  
 **Goal:** run the recommended rubric surface on every PR with pinned tooling.
 
 **Acceptance criteria**
@@ -95,3 +104,48 @@ Guardrails (no denominator games):
 - Workflow: `.github/workflows/quality-gates.yml` runs `make rubric` on PRs to `premain` (and on pushes to `premain`).
 - Tooling pins: `golangci-lint@v2.5.0`, `govulncheck@v1.1.4`, `gosec@v2.22.11` (plus `go.mod` toolchain `go1.25.3` via `go-version-file`).
 - Integration infra pin: DynamoDB Local uses `amazon/dynamodb-local:3.1.0` (via `docker-compose.yml` and `DYNAMODB_LOCAL_IMAGE`).
+
+---
+
+### M2.5 — Determinism gates (integration stability)
+
+**Closes:** COM-7  
+**Goal:** reduce CI/non-CI drift by pinning integration infrastructure dependencies.
+
+**Acceptance criteria**
+- `bash scripts/verify-dynamodb-local-pin.sh` is green.
+
+---
+
+### M3 — Safety defaults (availability + security posture)
+
+**Closes:** SEC-4, SEC-5, SEC-7  
+**Goal:** make “safe by default” true in code paths that handle PHI/PII/CHD-like data, and prevent runtime crashers.
+
+**Acceptance criteria**
+- `bash scripts/verify-no-panics.sh` is green (no panics in production paths).
+- `bash scripts/verify-safe-defaults.sh` is green (unsafe marshaling not wired into defaults).
+- `bash scripts/verify-network-hygiene.sh` is green (HTTP timeouts + reviewed retry posture).
+
+---
+
+### M3.5 — Boundary hardening (validator parity + fuzz smoke)
+
+**Closes:** QUA-4, QUA-5  
+**Goal:** ensure inputs accepted by validators don’t crash downstream conversion/expression building, and add a cheap
+“unknown unknown” detector for crashers.
+
+**Acceptance criteria**
+- `bash scripts/verify-validation-parity.sh` is green (no panics; errors are surfaced safely).
+- `bash scripts/fuzz-smoke.sh` is green (bounded fuzz pass with at least one Fuzz target per package group).
+
+---
+
+### M4 — Docs integrity + risk→control traceability
+
+**Closes:** DOC-4, DOC-5  
+**Goal:** prevent silent documentation drift and ensure every named top threat has at least one mapped control.
+
+**Acceptance criteria**
+- `bash scripts/verify-doc-integrity.sh` is green (internal links resolve; version claims match go.mod).
+- `bash scripts/verify-threat-controls-parity.sh` is green (every `THR-*` maps to at least one control).

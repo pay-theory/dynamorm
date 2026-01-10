@@ -6,12 +6,13 @@ It is designed for an **AI-generated codebase**: gates must be **versioned, meas
 
 ## Versioning (no moving goalposts)
 
-- **Rubric version:** `v0.2` (2026-01-09)
+- **Rubric version:** `v0.3` (2026-01-10)
 - **Comparability rule:** grades are only comparable within the same rubric version.
 - **Change rule:** rubric changes must bump the version and include a brief changelog entry (what changed + why).
 
 ### Changelog
 
+- `v0.3` (2026-01-10): Add **high-risk domain safety gates** that catch “10/10 but still risky” failure modes: CI rubric enforcement, DynamoDB Local pinning, doc integrity checks, threat-model↔controls parity, panic bans in production paths, safe-by-default marshaling, network hygiene defaults, validator↔converter parity, and bounded fuzz smoke passes.
 - `v0.2` (2026-01-09): Require **90%** library coverage for **QUA-3**, add anti-dilution completeness gates for lint config validity and coverage threshold, and treat `.golangci-v2.yml` as the source of truth for `make lint`.
 - `v0.1` (2026-01-09): Initial rubric for DynamORM.
 
@@ -35,11 +36,13 @@ Every rubric item has exactly one verification mechanism:
 
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| QUA-1 | 4 | Unit tests stay green | `make test-unit` |
-| QUA-2 | 3 | Integration tests stay green (DynamoDB Local required) | `make integration` |
-| QUA-3 | 3 | Library coverage stays at or above the threshold (default **90%**) | `bash scripts/verify-coverage.sh` |
+| QUA-1 | 3 | Unit tests stay green | `make test-unit` |
+| QUA-2 | 2 | Integration tests stay green (DynamoDB Local required) | `make integration` |
+| QUA-3 | 2 | Library coverage stays at or above the threshold (default **90%**) | `bash scripts/verify-coverage.sh` |
+| QUA-4 | 2 | Validator ↔ converter parity (no “validated but crashes” inputs) | `bash scripts/verify-validation-parity.sh` |
+| QUA-5 | 1 | Bounded fuzz smoke pass for crashers | `bash scripts/fuzz-smoke.sh` |
 
-**10/10 definition:** QUA-1 through QUA-3 pass.
+**10/10 definition:** QUA-1 through QUA-5 pass.
 
 ---
 
@@ -60,11 +63,13 @@ Every rubric item has exactly one verification mechanism:
 | --- | ---: | --- | --- |
 | COM-1 | 2 | All Go modules compile (including examples) | `bash scripts/verify-go-modules.sh` |
 | COM-2 | 2 | CI toolchain aligns to repo expectations (Go + pinned tool versions) | `bash scripts/verify-ci-toolchain.sh` |
-| COM-3 | 2 | Planning docs exist and are versioned | `bash scripts/verify-planning-docs.sh` |
-| COM-4 | 2 | Lint configuration is schema-valid for golangci-lint v2 | `golangci-lint config verify -c .golangci-v2.yml` |
-| COM-5 | 2 | Coverage gate configuration is not diluted (default threshold ≥ 90%) | `bash scripts/verify-coverage-threshold.sh` |
+| COM-3 | 1 | Planning docs exist and are versioned | `bash scripts/verify-planning-docs.sh` |
+| COM-4 | 1 | Lint configuration is schema-valid for golangci-lint v2 | `golangci-lint config verify -c .golangci-v2.yml` |
+| COM-5 | 1 | Coverage gate configuration is not diluted (default threshold ≥ 90%) | `bash scripts/verify-coverage-threshold.sh` |
+| COM-6 | 2 | CI enforces rubric surface (runs `make rubric`, pinned tools, uploads artifacts) | `bash scripts/verify-ci-rubric-enforced.sh` |
+| COM-7 | 1 | DynamoDB Local image is pinned (no `:latest`) | `bash scripts/verify-dynamodb-local-pin.sh` |
 
-**10/10 definition:** COM-1 through COM-5 pass.
+**10/10 definition:** COM-1 through COM-7 pass.
 
 ---
 
@@ -72,11 +77,14 @@ Every rubric item has exactly one verification mechanism:
 
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| SEC-1 | 4 | Static security scan stays green (first-party only) | `bash scripts/sec-gosec.sh` |
-| SEC-2 | 4 | Dependency vulnerability scan stays green | `bash scripts/sec-govulncheck.sh` |
-| SEC-3 | 2 | Supply-chain verification stays green | `go mod verify` |
+| SEC-1 | 2 | Static security scan stays green (first-party only) | `bash scripts/sec-gosec.sh` |
+| SEC-2 | 2 | Dependency vulnerability scan stays green | `bash scripts/sec-govulncheck.sh` |
+| SEC-3 | 1 | Supply-chain verification stays green | `go mod verify` |
+| SEC-4 | 2 | No `panic(...)` in production paths | `bash scripts/verify-no-panics.sh` |
+| SEC-5 | 2 | Safe-by-default marshaling (unsafe only via explicit opt-in) | `bash scripts/verify-safe-defaults.sh` |
+| SEC-7 | 1 | Network hygiene defaults (timeouts + retry posture) | `bash scripts/verify-network-hygiene.sh` |
 
-**10/10 definition:** SEC-1 through SEC-3 pass.
+**10/10 definition:** SEC-1 through SEC-7 pass.
 
 ---
 
@@ -84,11 +92,13 @@ Every rubric item has exactly one verification mechanism:
 
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| DOC-1 | 4 | Threat model exists and is current | `bash scripts/verify-planning-docs.sh` |
-| DOC-2 | 3 | Evidence plan exists and is reproducible | `bash scripts/verify-planning-docs.sh` |
-| DOC-3 | 3 | Rubric + roadmap exist and are current | `bash scripts/verify-planning-docs.sh` |
+| DOC-1 | 2 | Threat model exists and is current | `bash scripts/verify-planning-docs.sh` |
+| DOC-2 | 2 | Evidence plan exists and is reproducible | `bash scripts/verify-planning-docs.sh` |
+| DOC-3 | 2 | Rubric + roadmap exist and are current | `bash scripts/verify-planning-docs.sh` |
+| DOC-4 | 2 | Docs integrity (no broken internal links; version claims match code) | `bash scripts/verify-doc-integrity.sh` |
+| DOC-5 | 2 | Threat model ↔ controls parity (every `THR-*` maps to a control) | `bash scripts/verify-threat-controls-parity.sh` |
 
-**10/10 definition:** DOC-1 through DOC-3 pass.
+**10/10 definition:** DOC-1 through DOC-5 pass.
 
 ---
 
@@ -96,6 +106,8 @@ Every rubric item has exactly one verification mechanism:
 
 ```bash
 bash scripts/verify-planning-docs.sh
+bash scripts/verify-threat-controls-parity.sh
+bash scripts/verify-doc-integrity.sh
 bash scripts/fmt-check.sh
 golangci-lint config verify -c .golangci-v2.yml
 make lint
@@ -107,6 +119,14 @@ bash scripts/verify-coverage.sh
 
 bash scripts/verify-go-modules.sh
 bash scripts/verify-ci-toolchain.sh
+bash scripts/verify-ci-rubric-enforced.sh
+bash scripts/verify-dynamodb-local-pin.sh
+
+bash scripts/verify-no-panics.sh
+bash scripts/verify-safe-defaults.sh
+bash scripts/verify-network-hygiene.sh
+bash scripts/verify-validation-parity.sh
+bash scripts/fuzz-smoke.sh
 
 bash scripts/sec-gosec.sh
 bash scripts/sec-govulncheck.sh
