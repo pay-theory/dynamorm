@@ -950,6 +950,7 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 	if destValue.Kind() != reflect.Ptr || destValue.Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("destination must be a pointer to slice")
 	}
+	sliceType := destValue.Elem().Type()
 
 	// Create a channel to collect results from each segment
 	type segmentResult struct {
@@ -983,7 +984,7 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 			}
 
 			// Create a slice to hold this segment's results
-			elemType := destValue.Type().Elem()
+			elemType := sliceType.Elem()
 			segmentDest := reflect.New(reflect.SliceOf(elemType))
 
 			// Execute scan for this segment
