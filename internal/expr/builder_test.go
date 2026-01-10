@@ -195,9 +195,9 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("SET expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateSet("name", "John Doe")
-		builder.AddUpdateSet("age", 30)
-		builder.AddUpdateSet("email", "john@example.com")
+		require.NoError(t, builder.AddUpdateSet("name", "John Doe"))
+		require.NoError(t, builder.AddUpdateSet("age", 30))
+		require.NoError(t, builder.AddUpdateSet("email", "john@example.com"))
 
 		components := builder.Build()
 
@@ -210,8 +210,8 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("ADD expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateAdd("loginCount", 1)
-		builder.AddUpdateAdd("points", 10)
+		require.NoError(t, builder.AddUpdateAdd("loginCount", 1))
+		require.NoError(t, builder.AddUpdateAdd("points", 10))
 
 		components := builder.Build()
 
@@ -236,7 +236,7 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("DELETE expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateDelete("tags", []string{"old", "deprecated"})
+		require.NoError(t, builder.AddUpdateDelete("tags", []string{"old", "deprecated"}))
 
 		components := builder.Build()
 
@@ -247,10 +247,10 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("mixed update expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateSet("name", "Jane Doe")
-		builder.AddUpdateAdd("version", 1)
+		require.NoError(t, builder.AddUpdateSet("name", "Jane Doe"))
+		require.NoError(t, builder.AddUpdateAdd("version", 1))
 		builder.AddUpdateRemove("tempData")
-		builder.AddUpdateDelete("tags", []string{"temp"})
+		require.NoError(t, builder.AddUpdateDelete("tags", []string{"temp"}))
 
 		components := builder.Build()
 
@@ -541,8 +541,8 @@ func TestBuildCompleteExpression(t *testing.T) {
 	builder.AddProjection("id", "status", "amount", "createdAt")
 
 	// Add update expressions
-	builder.AddUpdateSet("status", "completed")
-	builder.AddUpdateAdd("totalAmount", 100)
+	require.NoError(t, builder.AddUpdateSet("status", "completed"))
+	require.NoError(t, builder.AddUpdateAdd("totalAmount", 100))
 
 	// Add condition
 	require.NoError(t, builder.AddConditionExpression("version", "=", 1))

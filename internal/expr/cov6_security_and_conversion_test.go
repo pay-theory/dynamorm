@@ -1,7 +1,6 @@
 package expr
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -61,18 +60,14 @@ func TestConvertToAttributeValueSecure_RejectsInvalidValue_COV6(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBuilder_addValueAsSet_StoresNullOnInvalidOrUnsupported_COV6(t *testing.T) {
+func TestBuilder_addValueAsSet_ReturnsErrorOnInvalidOrUnsupported_COV6(t *testing.T) {
 	b := NewBuilder()
 
-	invalid := b.addValueAsSet(make(chan int))
-	require.True(t, strings.HasPrefix(invalid, ":invalid"))
-	_, ok := b.values[invalid].(*types.AttributeValueMemberNULL)
-	require.True(t, ok)
+	_, err := b.addValueAsSet(make(chan int))
+	require.Error(t, err)
 
-	unsupported := b.addValueAsSet([]struct{}{{}})
-	require.True(t, strings.HasPrefix(unsupported, ":v"))
-	_, ok = b.values[unsupported].(*types.AttributeValueMemberNULL)
-	require.True(t, ok)
+	_, err = b.addValueAsSet([]struct{}{{}})
+	require.Error(t, err)
 }
 
 func TestBuilder_convertToSetAttributeValue_CoversAdditionalBranches_COV6(t *testing.T) {

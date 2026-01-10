@@ -341,7 +341,9 @@ func (b *Builder) buildFieldUpdate(op transactOperation) (*types.Update, error) 
 		if !fieldValue.IsValid() {
 			return nil, fmt.Errorf("field %s is invalid", field)
 		}
-		builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface())
+		if err := builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface()); err != nil {
+			return nil, fmt.Errorf("failed to build update for %s: %w", field, err)
+		}
 	}
 
 	rawConds, err := b.applyConditionsToBuilder(op.metadata, builder, op.conditions)

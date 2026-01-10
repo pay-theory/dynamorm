@@ -51,7 +51,9 @@ func (ub *UpdateBuilder) mapFieldToDynamoDBName(field string) string {
 // Set adds a SET expression to update a field
 func (ub *UpdateBuilder) Set(field string, value any) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateSet(dbFieldName, value)
+	if err := ub.expr.AddUpdateSet(dbFieldName, value); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Set(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -70,7 +72,9 @@ func (ub *UpdateBuilder) SetIfNotExists(field string, value any, defaultValue an
 // Add increments a numeric field (atomic counter)
 func (ub *UpdateBuilder) Add(field string, value any) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateAdd(dbFieldName, value)
+	if err := ub.expr.AddUpdateAdd(dbFieldName, value); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Add(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -120,7 +124,9 @@ func (ub *UpdateBuilder) Delete(field string, value any) core.UpdateBuilder {
 		}
 	}
 
-	ub.expr.AddUpdateDelete(dbFieldName, setValue)
+	if err := ub.expr.AddUpdateDelete(dbFieldName, setValue); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Delete(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -158,7 +164,9 @@ func (ub *UpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBu
 // SetListElement sets a specific element in a list
 func (ub *UpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateSet(fmt.Sprintf("%s[%d]", dbFieldName, index), value)
+	if err := ub.expr.AddUpdateSet(fmt.Sprintf("%s[%d]", dbFieldName, index), value); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("SetListElement(%s): %w", field, err)
+	}
 	return ub
 }
 

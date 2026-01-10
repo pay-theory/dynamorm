@@ -2565,7 +2565,9 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		return err
 	}
 
-	q.addUpdatedAtUpdate(builder, metadata)
+	if err = q.addUpdatedAtUpdate(builder, metadata); err != nil {
+		return err
+	}
 
 	if err = q.addUpdateVersionCondition(builder, metadata, modelValue); err != nil {
 		return err
@@ -2720,22 +2722,31 @@ func (q *query) addUpdateExpressions(builder *expr.Builder, metadata *model.Meta
 		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
 		switch {
 		case fieldMeta.IsUpdatedAt:
-			builder.AddUpdateSet(fieldMeta.DBName, time.Now())
+			if err := builder.AddUpdateSet(fieldMeta.DBName, time.Now()); err != nil {
+				return fmt.Errorf("failed to build updated_at update: %w", err)
+			}
 		case fieldMeta.IsVersion:
-			builder.AddUpdateAdd(fieldMeta.DBName, int64(1))
+			if err := builder.AddUpdateAdd(fieldMeta.DBName, int64(1)); err != nil {
+				return fmt.Errorf("failed to build version increment: %w", err)
+			}
 		default:
-			builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface())
+			if err := builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface()); err != nil {
+				return fmt.Errorf("failed to build update for %s: %w", fieldName, err)
+			}
 		}
 	}
 
 	return nil
 }
 
-func (q *query) addUpdatedAtUpdate(builder *expr.Builder, metadata *model.Metadata) {
+func (q *query) addUpdatedAtUpdate(builder *expr.Builder, metadata *model.Metadata) error {
 	if metadata.UpdatedAtField == nil {
-		return
+		return nil
 	}
-	builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now())
+	if err := builder.AddUpdateSet(metadata.UpdatedAtField.DBName, time.Now()); err != nil {
+		return fmt.Errorf("failed to build updated_at update: %w", err)
+	}
+	return nil
 }
 
 func (q *query) addUpdateVersionCondition(builder *expr.Builder, metadata *model.Metadata, modelValue reflect.Value) error {
