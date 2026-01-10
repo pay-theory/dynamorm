@@ -8,8 +8,18 @@ set -euo pipefail
 
 failures=0
 
-if ! rg -n --no-heading --glob '**/*_test.go' '^func\\s+Fuzz[A-Za-z0-9_]+' internal/expr pkg/marshal pkg/query >/dev/null 2>&1; then
-  echo "fuzz-smoke: FAIL (no fuzz targets found; add at least one Fuzz* in internal/expr, pkg/marshal, or pkg/query)"
+fuzzRegex='^func[[:space:]]+Fuzz[A-Za-z0-9_]+'
+missing=()
+
+for dir in internal/expr pkg/marshal pkg/query; do
+  if ! rg -n --no-heading --glob '**/*_test.go' "${fuzzRegex}" "${dir}" >/dev/null 2>&1; then
+    missing+=("${dir}")
+  fi
+done
+
+if [[ "${#missing[@]}" -ne 0 ]]; then
+  echo "fuzz-smoke: FAIL (no fuzz targets found in: ${missing[*]})"
+  echo "Add at least one 'func FuzzXxx(f *testing.F)' in each package group."
   exit 1
 fi
 
@@ -25,4 +35,3 @@ if [[ "${failures}" -ne 0 ]]; then
 fi
 
 echo "fuzz-smoke: PASS"
-
