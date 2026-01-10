@@ -12,10 +12,10 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
-| Quality | 7/10 | QUA-4, QUA-5 |
+| Quality | 9/10 | QUA-5 |
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
-| Security | 5/10 | SEC-4, SEC-5, SEC-7 |
+| Security | 10/10 | — |
 | Docs | 10/10 | — |
 
 Evidence (refresh whenever behavior changes):
