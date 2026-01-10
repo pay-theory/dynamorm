@@ -132,7 +132,6 @@ func createLambdaDB() (*LambdaDB, error) {
 		cfg.DynamoDBOptions = append(cfg.DynamoDBOptions, func(o *dynamodb.Options) {
 			// Lambda-specific optimizations
 			o.RetryMode = aws.RetryModeAdaptive
-			o.Retryer = aws.NopRetryer{} // Handle retries at application level for better control
 		})
 	}
 

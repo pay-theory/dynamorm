@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -76,7 +77,8 @@ func NewSession(cfg *Config) (*Session, error) {
 	options = append(options, config.WithRetryMaxAttempts(maxAttempts))
 
 	// Add HTTP client
-	options = append(options, config.WithHTTPClient(&http.Client{}))
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	options = append(options, config.WithHTTPClient(httpClient))
 
 	// Add custom options
 	options = append(options, cfg.AWSConfigOptions...)
@@ -113,7 +115,7 @@ func NewSession(cfg *Config) (*Session, error) {
 
 			// Ensure HTTP client is set
 			if o.HTTPClient == nil {
-				o.HTTPClient = &http.Client{}
+				o.HTTPClient = httpClient
 			}
 		},
 	}
