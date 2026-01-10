@@ -13,7 +13,7 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
 | Quality | 7/10 | QUA-3 |
-| Consistency | 4/10 | CON-2 |
+| Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
 | Security | 10/10 | — |
 | Docs | 10/10 | — |
@@ -22,11 +22,11 @@ Evidence (refresh whenever behavior changes):
 
 - ✅ `make test-unit`
 - ✅ `make integration`
-- ❌ `bash scripts/verify-coverage.sh` (current: **51.2%** vs threshold **90%**)
+- ❌ `bash scripts/verify-coverage.sh` (current: **51.0%** vs threshold **90%**)
 - ✅ `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
 - ✅ `bash scripts/fmt-check.sh`
 - ✅ `golangci-lint config verify -c .golangci-v2.yml`
-- ❌ `make lint` (current baseline: **579** issues; largest buckets: `errcheck` **326**, `govet` **171** (`fieldalignment`), `gocognit` **26**, `gocyclo` **26**, `dupl` **15**)
+- ✅ `make lint` (0 issues)
 - ✅ `bash scripts/verify-go-modules.sh`
 - ✅ `bash scripts/verify-ci-toolchain.sh`
 - ✅ `bash scripts/sec-gosec.sh`

@@ -6,9 +6,10 @@ Prerequisite: `make lint` is green (finish the lint roadmap first). Once coverag
 
 ## Current state (baseline)
 
-Snapshot (2026-01-09):
+Snapshot (2026-01-10):
 
-- `bash scripts/verify-coverage.sh`: **51.2%** vs threshold **90%** (fails)
+- Prerequisite check: ✅ `make lint` is green (M1 complete)
+- `bash scripts/verify-coverage.sh`: **51.0%** vs threshold **90%** (fails)
 
 ## Guardrails (no denominator games)
 

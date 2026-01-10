@@ -32,15 +32,9 @@ Known warning:
 - After Milestone 2 (2026-01-09): **579** issues (removed all `revive` findings; deferred context signature reorders via narrow `//nolint:revive` for compatibility)
 - After Milestone 3 (2026-01-09): **253** issues (removed all `errcheck` findings)
 - After Milestone 4 (2026-01-09): **84** issues (removed all `govet` findings, primarily `fieldalignment`)
+- After Milestone 5 (2026-01-10): **0** issues (`make lint` green)
 
-Current remaining (after Milestone 4):
-
-- `gocognit`: 27
-- `gocyclo`: 25
-- `dupl`: 15
-- `gocritic`: 9
-- `goconst`: 5
-- `prealloc`: 3
+Current remaining (after Milestone 5): none.
 
 ## Guardrails (no “green by exclusion”)
 
