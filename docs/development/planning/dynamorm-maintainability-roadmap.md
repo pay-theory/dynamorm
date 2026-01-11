@@ -15,6 +15,15 @@ Snapshot (2026-01-10):
   - `pkg/transaction/builder.go`: **1120**
 - Query logic exists in more than one place (`dynamorm.go` has a `query` implementation and `pkg/query` also implements a query builder/executor surface).
 
+Snapshot (2026-01-11):
+
+- Largest production files (line count):
+  - `pkg/query/query.go`: **2409**
+  - `pkg/query/executor.go`: **1262**
+  - `query_executor.go`: **1186**
+  - `pkg/transaction/builder.go`: **1153**
+- Query logic is canonical in `pkg/query` (root `type query struct` removed; root package delegates via a thin executor layer).
+
 ## Guardrails (keep refactors safe)
 
 - Keep `make test-unit` and `make lint` green between milestones.
@@ -88,11 +97,10 @@ Target: move “core” behavior behind stable interfaces and add focused tests 
 ## Helpful commands
 
 ```bash
-# Expected red until MAI-1/MAI-3 complete
+# Should be green after MAI-1/MAI-3
 bash scripts/verify-go-file-size.sh
 bash scripts/verify-query-singleton.sh
 
 # Should become green early and stay green
 bash scripts/verify-maintainability-roadmap.sh
 ```
-

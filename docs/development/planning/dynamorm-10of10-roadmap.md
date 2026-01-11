@@ -16,7 +16,7 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
 | Security | 10/10 | — |
-| Maintainability | 3/10 | `MAI-1`, `MAI-3` |
+| Maintainability | 10/10 | — |
 | Docs | 10/10 | — |
 
 Evidence (refresh whenever behavior changes):
@@ -38,9 +38,9 @@ Evidence (refresh whenever behavior changes):
 - `bash scripts/verify-safe-defaults.sh`
 - `bash scripts/verify-network-hygiene.sh`
 - `bash scripts/verify-encrypted-tag-implemented.sh`
-- `bash scripts/verify-go-file-size.sh` (**expected FAIL** until `dynamorm.go` is decomposed)
+- `bash scripts/verify-go-file-size.sh`
 - `bash scripts/verify-maintainability-roadmap.sh`
-- `bash scripts/verify-query-singleton.sh` (**expected FAIL** until query implementations converge)
+- `bash scripts/verify-query-singleton.sh`
 - `bash scripts/verify-validation-parity.sh`
 - `bash scripts/fuzz-smoke.sh`
 - `bash scripts/sec-gosec.sh`
