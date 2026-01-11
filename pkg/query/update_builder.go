@@ -92,7 +92,9 @@ func (ub *UpdateBuilder) Decrement(field string) core.UpdateBuilder {
 // Remove removes an attribute from the item
 func (ub *UpdateBuilder) Remove(field string) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateRemove(dbFieldName)
+	if err := ub.expr.AddUpdateRemove(dbFieldName); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Remove(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -158,7 +160,9 @@ func (ub *UpdateBuilder) PrependToList(field string, values any) core.UpdateBuil
 // RemoveFromListAt removes an element from a list at a specific index
 func (ub *UpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateRemove(fmt.Sprintf("%s[%d]", dbFieldName, index))
+	if err := ub.expr.AddUpdateRemove(fmt.Sprintf("%s[%d]", dbFieldName, index)); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("RemoveFromListAt(%s): %w", field, err)
+	}
 	return ub
 }
 

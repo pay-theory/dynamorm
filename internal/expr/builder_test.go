@@ -223,8 +223,8 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("REMOVE expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateRemove("tempField")
-		builder.AddUpdateRemove("oldData")
+		require.NoError(t, builder.AddUpdateRemove("tempField"))
+		require.NoError(t, builder.AddUpdateRemove("oldData"))
 
 		components := builder.Build()
 
@@ -249,7 +249,7 @@ func TestUpdateExpressions(t *testing.T) {
 
 		require.NoError(t, builder.AddUpdateSet("name", "Jane Doe"))
 		require.NoError(t, builder.AddUpdateAdd("version", 1))
-		builder.AddUpdateRemove("tempData")
+		require.NoError(t, builder.AddUpdateRemove("tempData"))
 		require.NoError(t, builder.AddUpdateDelete("tags", []string{"temp"}))
 
 		components := builder.Build()
@@ -259,6 +259,43 @@ func TestUpdateExpressions(t *testing.T) {
 		assert.Contains(t, components.UpdateExpression, "ADD")
 		assert.Contains(t, components.UpdateExpression, "REMOVE")
 		assert.Contains(t, components.UpdateExpression, "DELETE")
+	})
+
+	t.Run("list index update expressions", func(t *testing.T) {
+		t.Run("SET list element", func(t *testing.T) {
+			builder := expr.NewBuilder()
+
+			require.NoError(t, builder.AddUpdateSet("items[0]", "value"))
+
+			components := builder.Build()
+
+			assert.Contains(t, components.UpdateExpression, "SET")
+			assert.Contains(t, components.UpdateExpression, "[0] = :v1")
+
+			for _, attrName := range components.ExpressionAttributeNames {
+				assert.NotContains(t, attrName, "[")
+				assert.NotContains(t, attrName, "]")
+			}
+		})
+
+		t.Run("REMOVE list element", func(t *testing.T) {
+			builder := expr.NewBuilder()
+
+			require.NoError(t, builder.AddUpdateRemove("items[2]"))
+
+			components := builder.Build()
+
+			assert.Contains(t, components.UpdateExpression, "REMOVE")
+			assert.Contains(t, components.UpdateExpression, "[2]")
+		})
+
+		t.Run("reject list index injection", func(t *testing.T) {
+			builder := expr.NewBuilder()
+
+			require.Error(t, builder.AddUpdateSet("items[0] = :v2, other = :v3, items[1]", "value"))
+			require.Error(t, builder.AddUpdateSet("items[-1]", "value"))
+			require.Error(t, builder.AddUpdateRemove("items[0], other]"))
+		})
 	})
 }
 

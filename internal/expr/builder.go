@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -229,28 +230,72 @@ func (b *Builder) AddProjection(fields ...string) {
 	}
 }
 
-// AddUpdateSet adds a SET update expression
-func (b *Builder) AddUpdateSet(field string, value any) error {
-	// Check if this is a list index operation (e.g., "field[1]")
-	if strings.Contains(field, "[") && strings.Contains(field, "]") {
-		// Parse field[index] syntax
-		parts := strings.Split(field, "[")
-		if len(parts) == 2 {
-			fieldName := parts[0]
-			indexPart := parts[1]
-			if strings.HasSuffix(indexPart, "]") {
-				index := strings.TrimSuffix(indexPart, "]")
-				// Create placeholder for field name but keep index as-is
-				nameRef := b.addNameSecure(fieldName)
-				valueRef, err := b.addValueSecure(value)
-				if err != nil {
-					return err
-				}
-				expr := fmt.Sprintf("%s[%s] = %s", nameRef, index, valueRef)
-				b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
-				return nil
+func parseListIndexOperation(field string) (fieldName string, index int, ok bool, err error) {
+	if !strings.Contains(field, "[") || !strings.HasSuffix(field, "]") {
+		return "", 0, false, nil
+	}
+
+	openBracket := strings.LastIndex(field, "[")
+	if openBracket <= 0 || openBracket >= len(field)-1 {
+		return "", 0, false, &validation.SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "invalid list index syntax",
+		}
+	}
+
+	fieldName = field[:openBracket]
+	indexPart := field[openBracket+1 : len(field)-1]
+	if indexPart == "" {
+		return "", 0, false, &validation.SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "list index cannot be empty",
+		}
+	}
+
+	for _, r := range indexPart {
+		if r < '0' || r > '9' {
+			return "", 0, false, &validation.SecurityError{
+				Type:   "InvalidField",
+				Field:  "",
+				Detail: "list index must be numeric",
 			}
 		}
+	}
+
+	parsedIndex, convErr := strconv.Atoi(indexPart)
+	if convErr != nil || parsedIndex < 0 {
+		return "", 0, false, &validation.SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "list index out of range",
+		}
+	}
+
+	return fieldName, parsedIndex, true, nil
+}
+
+// AddUpdateSet adds a SET update expression
+func (b *Builder) AddUpdateSet(field string, value any) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
+	// Check if this is a list index operation (e.g., "field[1]")
+	fieldName, index, ok, err := parseListIndexOperation(field)
+	if err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+	if ok {
+		nameRef := b.addNameSecure(fieldName)
+		valueRef, addErr := b.addValueSecure(value)
+		if addErr != nil {
+			return addErr
+		}
+		expr := fmt.Sprintf("%s[%d] = %s", nameRef, index, valueRef)
+		b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
+		return nil
 	}
 
 	// Standard field set
@@ -266,6 +311,10 @@ func (b *Builder) AddUpdateSet(field string, value any) error {
 
 // AddUpdateAdd adds an ADD update expression (for numeric increment)
 func (b *Builder) AddUpdateAdd(field string, value any) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
 	nameRef := b.addNameSecure(field)
 	valueRef, err := b.addValueSecure(value)
 	if err != nil {
@@ -277,32 +326,34 @@ func (b *Builder) AddUpdateAdd(field string, value any) error {
 }
 
 // AddUpdateRemove adds a REMOVE update expression
-func (b *Builder) AddUpdateRemove(field string) {
-	// Check if this is a list index operation (e.g., "field[1]")
-	if strings.Contains(field, "[") && strings.Contains(field, "]") {
-		// Parse field[index] syntax
-		parts := strings.Split(field, "[")
-		if len(parts) == 2 {
-			fieldName := parts[0]
-			indexPart := parts[1]
-			if strings.HasSuffix(indexPart, "]") {
-				index := strings.TrimSuffix(indexPart, "]")
-				// Create placeholder for field name but keep index as-is
-				nameRef := b.addNameSecure(fieldName)
-				expression := fmt.Sprintf("%s[%s]", nameRef, index)
-				b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], expression)
-				return
-			}
-		}
+func (b *Builder) AddUpdateRemove(field string) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
+	fieldName, index, ok, err := parseListIndexOperation(field)
+	if err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+	if ok {
+		nameRef := b.addNameSecure(fieldName)
+		expression := fmt.Sprintf("%s[%d]", nameRef, index)
+		b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], expression)
+		return nil
 	}
 
 	// Standard field removal
 	nameRef := b.addNameSecure(field)
 	b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], nameRef)
+	return nil
 }
 
 // AddUpdateDelete adds a DELETE update expression (for removing elements from a set)
 func (b *Builder) AddUpdateDelete(field string, value any) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
 	nameRef := b.addNameSecure(field)
 	valueRef, err := b.addValueAsSet(value)
 	if err != nil {
