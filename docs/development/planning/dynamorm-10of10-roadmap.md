@@ -1,11 +1,11 @@
-# DynamORM: 10/10 Roadmap (Rubric v0.4)
+# DynamORM: 10/10 Roadmap (Rubric v0.5)
 
 This roadmap is the execution plan for achieving and maintaining **10/10** across **Quality**, **Consistency**,
 **Completeness**, **Security**, **Maintainability**, and **Docs** as defined by:
 
 - `docs/development/planning/dynamorm-10of10-rubric.md` (source of truth; versioned)
 
-## Current scorecard (Rubric v0.4)
+## Current scorecard (Rubric v0.5)
 
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned toolchain, stable commands, and no “green by exclusion” shortcuts).
@@ -13,9 +13,9 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
 | Quality | 10/10 | — |
-| Consistency | 10/10 | — |
-| Completeness | 10/10 | — |
-| Security | 10/10 | — |
+| Consistency | 8/10 | CON-3 |
+| Completeness | 7/10 | COM-7, COM-8 |
+| Security | 9/10 | SEC-6 |
 | Maintainability | 10/10 | — |
 | Docs | 10/10 | — |
 
@@ -28,15 +28,17 @@ Evidence (refresh whenever behavior changes):
 - `bash scripts/fmt-check.sh`
 - `golangci-lint config verify -c .golangci-v2.yml`
 - `make lint`
+- `bash scripts/verify-public-api-contracts.sh` (Rubric v0.5; expected to be added)
 - `bash scripts/verify-go-modules.sh`
 - `bash scripts/verify-ci-toolchain.sh`
 - `bash scripts/verify-ci-rubric-enforced.sh`
-- `bash scripts/verify-dynamodb-local-pin.sh`
+- `bash scripts/verify-dynamodb-local-pin.sh` (currently failing; pin `amazon/dynamodb-local` in examples too)
 - `bash scripts/verify-threat-controls-parity.sh`
 - `bash scripts/verify-doc-integrity.sh`
 - `bash scripts/verify-no-panics.sh`
 - `bash scripts/verify-safe-defaults.sh`
 - `bash scripts/verify-network-hygiene.sh`
+- `bash scripts/verify-expression-hardening.sh` (Rubric v0.5; expected to be added)
 - `bash scripts/verify-encrypted-tag-implemented.sh`
 - `bash scripts/verify-go-file-size.sh`
 - `bash scripts/verify-maintainability-roadmap.sh`
@@ -46,6 +48,43 @@ Evidence (refresh whenever behavior changes):
 - `bash scripts/sec-gosec.sh`
 - `bash scripts/sec-govulncheck.sh`
 - `go mod verify`
+
+## Rubric-to-milestone mapping
+
+| Rubric ID | Status | Milestone |
+| --- | --- | --- |
+| QUA-1 | ✅ | M1.5 |
+| QUA-2 | ✅ | M1.5 |
+| QUA-3 | ✅ | M1.5 |
+| QUA-4 | ✅ | M3.5 |
+| QUA-5 | ✅ | M3.5 |
+| CON-1 | ✅ | M1 |
+| CON-2 | ✅ | M1 |
+| CON-3 | ⬜ | M3.7 |
+| COM-1 | ✅ | M2 |
+| COM-2 | ✅ | M2 |
+| COM-3 | ✅ | M0 |
+| COM-4 | ✅ | M1 |
+| COM-5 | ✅ | M1.5 |
+| COM-6 | ✅ | M2 |
+| COM-7 | ⬜ | M2.5 |
+| COM-8 | ⬜ | M6 |
+| SEC-1 | ✅ | M2 |
+| SEC-2 | ✅ | M2 |
+| SEC-3 | ✅ | M2 |
+| SEC-4 | ✅ | M3 |
+| SEC-5 | ✅ | M3 |
+| SEC-6 | ⬜ | M3.6 |
+| SEC-7 | ✅ | M3 |
+| SEC-8 | ✅ | M3.75 |
+| MAI-1 | ✅ | M5 |
+| MAI-2 | ✅ | M5 |
+| MAI-3 | ✅ | M5 |
+| DOC-1 | ✅ | M0 |
+| DOC-2 | ✅ | M0 |
+| DOC-3 | ✅ | M0 |
+| DOC-4 | ✅ | M4 |
+| DOC-5 | ✅ | M4 |
 
 ## Milestones (map directly to rubric IDs)
 
@@ -63,13 +102,14 @@ Evidence (refresh whenever behavior changes):
 
 ### M1 — Lint remediation (get `make lint` green)
 
-**Closes:** CON-2  
+**Closes:** CON-1, CON-2, COM-4  
 **Goal:** remove surprises by making strict lint enforcement sustainable (no “works on my machine” exceptions).
 
 Tracking document: `docs/development/planning/dynamorm-lint-green-roadmap.md`
 
 **Acceptance criteria**
 - `golangci-lint config verify -c .golangci-v2.yml` is green.
+- `bash scripts/fmt-check.sh` is green (no diffs).
 - `make lint` is green (0 issues) with `.golangci-v2.yml` (no threshold loosening and no new blanket excludes).
 - Any `//nolint` usage is line-scoped and justified; remove stale linter names (e.g., `unusedparams`, `unusedwrite`).
 
@@ -77,7 +117,7 @@ Tracking document: `docs/development/planning/dynamorm-lint-green-roadmap.md`
 
 ### M1.5 — Coverage remediation (hit 90% and keep it honest)
 
-**Closes:** QUA-3  
+**Closes:** QUA-1, QUA-2, QUA-3, COM-5  
 **Goal:** raise library coverage to **≥ 90%** without reducing the measurement surface.
 
 Tracking document: `docs/development/planning/dynamorm-coverage-roadmap.md`
@@ -88,6 +128,7 @@ Tracking document: `docs/development/planning/dynamorm-coverage-roadmap.md`
 **Acceptance criteria**
 - `make test-unit` is green.
 - `make integration` is green (DynamoDB Local).
+- `bash scripts/verify-coverage-threshold.sh` is green (default threshold ≥ 90%).
 - `bash scripts/verify-coverage.sh` is green at the default threshold (≥ 90%).
 
 Guardrails (no denominator games):
@@ -98,7 +139,7 @@ Guardrails (no denominator games):
 
 ### M2 — Enforce the loop in CI (after remediation)
 
-**Closes:** COM-6  
+**Closes:** COM-1, COM-2, COM-6, SEC-1, SEC-2, SEC-3  
 **Goal:** run the recommended rubric surface on every PR with pinned tooling.
 
 **Acceptance criteria**
@@ -119,6 +160,7 @@ Guardrails (no denominator games):
 
 **Acceptance criteria**
 - `bash scripts/verify-dynamodb-local-pin.sh` is green.
+- No `amazon/dynamodb-local:latest` usage anywhere in the repo (including example `docker-compose.yml` files).
 
 ---
 
@@ -143,6 +185,30 @@ Guardrails (no denominator games):
 **Acceptance criteria**
 - `bash scripts/verify-validation-parity.sh` is green (no panics; errors are surfaced safely).
 - `bash scripts/fuzz-smoke.sh` is green (bounded fuzz pass with at least one Fuzz target per package group).
+
+---
+
+### M3.6 — Expression boundary hardening (list index updates)
+
+**Closes:** SEC-6  
+**Goal:** remove “injection-by-construction” risks in expression building paths (especially list index updates).
+
+**Acceptance criteria**
+- `bash scripts/verify-expression-hardening.sh` exists, is green, and is wired into `make rubric`.
+- Update-expression list index operations validate indexes (numeric-only) and fail closed on invalid syntax.
+- Invalid field paths never get spliced into UpdateExpressions as raw strings.
+
+---
+
+### M3.7 — Public API contract parity (unmarshal/tag semantics)
+
+**Closes:** CON-3  
+**Goal:** ensure exported helpers (especially unmarshalling helpers) respect canonical DynamORM model tags and metadata semantics.
+
+**Acceptance criteria**
+- `bash scripts/verify-public-api-contracts.sh` exists, is green, and is wired into `make rubric`.
+- `dynamorm.UnmarshalItem` and stream-image unmarshalling behavior is consistent with canonical tag semantics (`pk`/`sk`/`attr:`/`encrypted`) or the API is explicitly changed/deprecated with a documented migration path.
+- Contract tests cover the public boundary and fail on semantic drift (no “green by omission”).
 
 ---
 
@@ -182,3 +248,16 @@ Tracking document: `docs/development/planning/dynamorm-maintainability-roadmap.m
 - `bash scripts/verify-go-file-size.sh` is green.
 - `bash scripts/verify-maintainability-roadmap.sh` is green.
 - `bash scripts/verify-query-singleton.sh` is green.
+
+---
+
+### M6 — Branch + release supply chain (main release, premain prerelease)
+
+**Closes:** COM-8  
+**Goal:** make releases reproducible, reviewable, and automated (prerelease from `premain`, release from `main`).
+
+**Acceptance criteria**
+- `docs/development/planning/dynamorm-branch-release-policy.md` exists and is current (branch strategy + protections + release process).
+- `.github/workflows/prerelease.yml` exists and produces prereleases from merges to `premain`.
+- `.github/workflows/release.yml` exists and produces releases from merges to `main`.
+- Required protections for `premain` and `main` are documented and enforced (status checks required; direct pushes restricted).

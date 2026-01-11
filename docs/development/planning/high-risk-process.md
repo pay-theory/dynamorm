@@ -12,6 +12,7 @@ execution pattern: scope → controls → gates → evidence.
 - **Data classification**: CHD/SAD, PAN tokens, PHI, PII, secrets, telemetry.
 - **Scope boundaries**: which services, accounts, environments, and third parties are in-scope.
 - **Assurance target**: “best effort hardening” vs “audit-ready evidence” vs “certification/attestation”.
+- **Branch + release model**: release vs prerelease branches, required protections, and automation triggers (part of the supply chain).
 
 ## Outputs (the standardized artifacts)
 
@@ -20,6 +21,8 @@ execution pattern: scope → controls → gates → evidence.
 - **Roadmap**: milestones mapped directly to rubric IDs (keeps execution honest).
 - **Evidence plan**: where audit artifacts live and how they’re generated/re-generated.
 - **Gates**: CI/local verifiers that block regressions for the highest-risk controls.
+- **Public boundary inventory** (recommended): list exported entry points + validation/semantic contracts (used to drive contract tests and prevent drift).
+- **Branch/release policy** (recommended): protected branches + release automation expectations (treat as part of the supply chain).
 - **Maintainability plan** (recommended for AI-generated codebases): explicit convergence goals (avoid duplicate implementations), file-size budgets, and refactor milestones that keep the code reviewable over time.
 
 Templates live in:
@@ -37,6 +40,7 @@ Write a 1-page scope statement:
 - What data exists, where it flows, and what is explicitly out of scope.
 - What environments are in scope (dev/staging/prod) and what “prod-like” means.
 - Which third parties are in scope and what evidence you can realistically obtain from them.
+- Which branches are release/prerelease sources and which CI gates must be required before merging.
 
 ### Step 1 — Build the controls matrix (requirements → controls)
 
@@ -61,6 +65,7 @@ Convert the controls matrix into a small rubric:
 - each item has a single “how to verify” source of truth (command or deterministic artifact check).
 - include a **Maintainability** category when structural drift is a real risk (duplicate implementations, god files, unclear canonical paths).
 - if you introduce “security-affordance” flags/tags (e.g., `encrypted`, `redacted`, `masked`), add a rubric item that ensures they have **enforced semantics** (no metadata-only false positives).
+- if the system exposes multiple entry points (e.g., exported helpers + internal engines), add a rubric item that enforces **public API contract parity** (no silent semantic drift).
 
 ### Step 3 — Map rubric items to milestones (roadmap)
 
@@ -73,7 +78,7 @@ Create milestones that each close specific rubric IDs (no “floating” work). 
 ### Step 4 — Add gates for P0 controls
 
 For highest-risk controls, add CI-enforceable gates (examples: regression baselines, denylist patterns, IaC assertions,
-contract drift checks). The goal is to stop backsliding while improvements are in progress.
+contract drift checks, protected-branch + release automation checks). The goal is to stop backsliding while improvements are in progress.
 
 ### Step 5 — Iterate with evidence
 

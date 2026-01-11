@@ -27,15 +27,28 @@ if [[ -f Makefile ]]; then
   fi
 fi
 
-if rg -n --no-heading --glob '!scripts/verify-dynamodb-local-pin.sh' 'amazon/dynamodb-local:latest\b' . >/dev/null 2>&1; then
+# Scan repo for other docker-compose usage, but exclude documentation markdown to avoid false positives.
+if rg -n --no-heading \
+  --glob '!scripts/verify-dynamodb-local-pin.sh' \
+  --glob '!**/*.md' \
+  'amazon/dynamodb-local:latest\\b' . >/dev/null 2>&1; then
   echo "dynamodb-local: found amazon/dynamodb-local:latest in repo (pin a version)"
-  rg -n --glob '!scripts/verify-dynamodb-local-pin.sh' 'amazon/dynamodb-local:latest\b' .
+  rg -n \
+    --glob '!scripts/verify-dynamodb-local-pin.sh' \
+    --glob '!**/*.md' \
+    'amazon/dynamodb-local:latest\\b' .
   failures=$((failures + 1))
 fi
 
-if rg -n --no-heading --glob '!scripts/verify-dynamodb-local-pin.sh' 'amazon/dynamodb-local([[:space:]]|$)' . >/dev/null 2>&1; then
+if rg -n --no-heading \
+  --glob '!scripts/verify-dynamodb-local-pin.sh' \
+  --glob '!**/*.md' \
+  'amazon/dynamodb-local([[:space:]]|$)' . >/dev/null 2>&1; then
   echo "dynamodb-local: found untagged amazon/dynamodb-local in repo (implicit :latest; pin a version)"
-  rg -n --glob '!scripts/verify-dynamodb-local-pin.sh' 'amazon/dynamodb-local([[:space:]]|$)' .
+  rg -n \
+    --glob '!scripts/verify-dynamodb-local-pin.sh' \
+    --glob '!**/*.md' \
+    'amazon/dynamodb-local([[:space:]]|$)' .
   failures=$((failures + 1))
 fi
 

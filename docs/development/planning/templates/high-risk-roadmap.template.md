@@ -55,6 +55,22 @@ Evidence (most recent):
 
 ---
 
+### M1.5 — Branch + release supply chain (protected branches + automation)
+
+**Closes:** [SEC-5]  
+**Goal:** make releases reproducible and reduce CI/CD supply-chain risk (protected branches, automated release/prerelease).
+
+**Acceptance criteria**
+- Protected branches are defined and enforced (required status checks, no direct pushes).
+- Automated release/prerelease workflows exist and produce tags/changelogs deterministically.
+
+**Suggested verification**
+```bash
+[commands or artifact checks]
+```
+
+---
+
 ### M2 — Close top control gaps (highest risk first)
 
 **Closes:** [SEC-* PRV-* CMP-*]  

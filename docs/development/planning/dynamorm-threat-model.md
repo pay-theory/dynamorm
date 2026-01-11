@@ -28,11 +28,12 @@ generation; it is not a formal assessment or certification.
 ## Top threats (initial list)
 
 - **THR-1 — Data clobber via surprising update semantics:** empty-but-non-nil values overwriting stored attributes; mismatch between update APIs.
-- **THR-2 — Expression misuse / injection-by-construction:** unvalidated attribute names or raw expression strings leading to broken queries or unintended access patterns.
+- **THR-2 — Expression misuse / injection-by-construction:** unvalidated attribute names or raw expression strings (including list index update paths) leading to broken queries or unintended access patterns.
 - **THR-3 — Unsafe reflection hazards:** unsafe pointer math or reflect edge cases leading to panics, data corruption, or non-deterministic behavior.
 - **THR-4 — DoS / cost blowups:** unbounded scans/queries, large batch operations, or aggressive retries causing throttling storms.
 - **THR-5 — Sensitive data leakage:** user-provided values accidentally logged in examples/tests or surfaced in error strings.
 - **THR-6 — Supply-chain compromise:** vulnerable dependencies or drift in security tooling causing missed findings.
+- **THR-7 — Public API contract drift:** exported helpers that silently diverge from canonical DynamORM tag/metadata semantics (e.g., unmarshalling helpers ignoring `pk`/`sk`/`attr:`/`encrypted`), causing incorrect behavior and unsafe assumptions in consuming services.
 
 ## Mitigations (where we have controls today)
 

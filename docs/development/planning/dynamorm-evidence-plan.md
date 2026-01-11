@@ -20,11 +20,12 @@ report, or CI artifact is possible.
 - Controls matrix: `docs/development/planning/dynamorm-controls-matrix.md`
 - Versioned rubric: `docs/development/planning/dynamorm-10of10-rubric.md`
 - Roadmap mapped to rubric IDs: `docs/development/planning/dynamorm-10of10-roadmap.md`
+- Branch/release policy: `docs/development/planning/dynamorm-branch-release-policy.md`
 - Encryption tag roadmap: `docs/development/planning/dynamorm-encryption-tag-roadmap.md`
 - Maintainability roadmap: `docs/development/planning/dynamorm-maintainability-roadmap.md`
 - Threat model: `docs/development/planning/dynamorm-threat-model.md`
 
-## Rubric-to-evidence map (Rubric v0.4)
+## Rubric-to-evidence map (Rubric v0.5)
 
 | Rubric ID | Primary evidence | How to refresh |
 | --- | --- | --- |
@@ -35,6 +36,7 @@ report, or CI artifact is possible.
 | QUA-5 | Fuzz smoke output | `bash scripts/fuzz-smoke.sh` |
 | CON-1 | gofmt diff list | `bash scripts/fmt-check.sh` |
 | CON-2 | Lint output | `make lint` |
+| CON-3 | Public API contract verification output | `bash scripts/verify-public-api-contracts.sh` |
 | COM-1 | Multi-module compile output | `bash scripts/verify-go-modules.sh` |
 | COM-2 | CI alignment check output | `bash scripts/verify-ci-toolchain.sh` |
 | COM-3 | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
@@ -42,6 +44,7 @@ report, or CI artifact is possible.
 | COM-5 | Coverage threshold verification output | `bash scripts/verify-coverage-threshold.sh` |
 | COM-6 | CI rubric enforcement verification output | `bash scripts/verify-ci-rubric-enforced.sh` |
 | COM-7 | DynamoDB Local pin verification output | `bash scripts/verify-dynamodb-local-pin.sh` |
+| COM-8 | Branch/release policy + automation artifacts | Artifact check (`.github/workflows/release.yml`, `.github/workflows/prerelease.yml`, `docs/development/planning/dynamorm-branch-release-policy.md`) |
 | DOC-* | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
 | DOC-4 | Doc integrity verification output | `bash scripts/verify-doc-integrity.sh` |
 | DOC-5 | Threat-controls parity verification output | `bash scripts/verify-threat-controls-parity.sh` |
@@ -50,6 +53,7 @@ report, or CI artifact is possible.
 | SEC-3 | `go mod verify` output | `go mod verify` |
 | SEC-4 | No-panics verification output | `bash scripts/verify-no-panics.sh` |
 | SEC-5 | Safe-defaults verification output | `bash scripts/verify-safe-defaults.sh` |
+| SEC-6 | Expression hardening verification output | `bash scripts/verify-expression-hardening.sh` |
 | SEC-7 | Network hygiene verification output | `bash scripts/verify-network-hygiene.sh` |
 | SEC-8 | Encrypted-tag semantics verification output | `bash scripts/verify-encrypted-tag-implemented.sh` |
 | MAI-1 | File-size budget verification output | `bash scripts/verify-go-file-size.sh` |

@@ -32,15 +32,17 @@ Each rubric item must name exactly one verification mechanism:
 
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| SEC-1 | 3 | Static security scan stays green | [command] |
-| SEC-2 | 3 | Dependency vulnerability scan stays green | [command] |
+| SEC-1 | 2 | Static security scan stays green | [command] |
+| SEC-2 | 2 | Dependency vulnerability scan stays green | [command] |
 | SEC-3 | 2 | Supply-chain / provenance verification stays green | [command] |
-| SEC-4 | 2 | P0 regression gates stay green (baselines/assertions) | [command] |
+| SEC-4 | 2 | Public boundary contract + regression gates stay green (no “green by omission”) | [command/test] |
+| SEC-5 | 2 | Branch/release supply chain is enforced (protected branches + automated release/prerelease) | [artifact check/command] |
 
-**10/10 definition:** SEC-1 through SEC-4 pass.
+**10/10 definition:** SEC-1 through SEC-5 pass.
 
 Notes:
 - If the system exposes “security-affordance” tags/flags (e.g., `encrypted`, `redacted`, `masked`), add a scored item that ensures they have **enforced semantics** and fail closed when misconfigured.
+- If the system exposes multiple entry points (e.g., SDK wrappers + internal packages), add contract tests/verifiers that ensure exported helpers have the same semantics (no silent tag/validation differences).
 
 ---
 

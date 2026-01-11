@@ -18,6 +18,7 @@ Start here:
 - `docs/development/planning/dynamorm-maintainability-roadmap.md` (execution plan to decompose + converge critical paths)
 - `docs/development/planning/dynamorm-evidence-plan.md` (where evidence comes from + how to regenerate)
 - `docs/development/planning/dynamorm-threat-model.md` (threats + mitigations for this codebase)
+- `docs/development/planning/dynamorm-branch-release-policy.md` (branch/release strategy for supply-chain hardening)
 - `docs/development/planning/ai-drift-recovery.md` (common AI failure modes + how we recover)
 
 Templates:
@@ -25,6 +26,7 @@ Templates:
 - `docs/development/planning/templates/high-risk-controls-matrix.template.md`
 - `docs/development/planning/templates/high-risk-rubric.template.md`
 - `docs/development/planning/templates/high-risk-roadmap.template.md`
+- `docs/development/planning/templates/high-risk-branch-release-policy.template.md`
 
 Notes:
 

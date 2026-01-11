@@ -22,4 +22,4 @@ This template is intended to be copied and filled per project.
 - Keep requirements granular (don’t merge unrelated controls).
 - Prefer verification that can be automated; use deterministic artifacts for the rest (docs, diagrams, runbooks).
 - “Evidence” should be reproducible: a command, a config export, or a stable document location.
-
+- Include CI/CD and supply-chain controls explicitly (protected branches, pinned tooling, automated releases, dependency update policy).
