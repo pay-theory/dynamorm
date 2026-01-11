@@ -24,11 +24,14 @@ type cov6BatchWriteExecutor struct {
 	err    error
 	result *core.BatchWriteResult
 
+	calls int
+
 	gotTableName string
 	gotRequests  []types.WriteRequest
 }
 
 func (e *cov6BatchWriteExecutor) ExecuteBatchWriteItem(tableName string, writeRequests []types.WriteRequest) (*core.BatchWriteResult, error) {
+	e.calls++
 	e.gotTableName = tableName
 	e.gotRequests = append([]types.WriteRequest(nil), writeRequests...)
 	return e.result, e.err
@@ -66,14 +69,21 @@ func TestQuery_BatchCreate_ValidatesInputAndExecutorSupport_COV6(t *testing.T) {
 	})
 
 	t.Run("empty slice", func(t *testing.T) {
-		q := New(&cov6BatchCreateItem{}, cov6Metadata{table: "tbl"}, &cov6BatchWriteExecutor{})
-		require.ErrorContains(t, q.BatchCreate([]cov6BatchCreateItem{}), "no items to create")
+		exec := &cov6BatchWriteExecutor{result: &core.BatchWriteResult{UnprocessedItems: map[string][]types.WriteRequest{}}}
+		q := New(&cov6BatchCreateItem{}, cov6Metadata{table: "tbl"}, exec)
+		require.NoError(t, q.BatchCreate([]cov6BatchCreateItem{}))
+		require.Equal(t, 0, exec.calls)
 	})
 
 	t.Run("too many items", func(t *testing.T) {
 		items := make([]cov6BatchCreateItem, 26)
-		q := New(&cov6BatchCreateItem{}, cov6Metadata{table: "tbl"}, &cov6BatchWriteExecutor{})
-		require.ErrorContains(t, q.BatchCreate(items), "maximum 25 items")
+		exec := &cov6BatchWriteExecutor{result: &core.BatchWriteResult{UnprocessedItems: map[string][]types.WriteRequest{}}}
+		q := New(&cov6BatchCreateItem{}, cov6Metadata{table: "tbl"}, exec)
+
+		require.NoError(t, q.BatchCreate(items))
+		require.Equal(t, 2, exec.calls)
+		require.Equal(t, "tbl", exec.gotTableName)
+		require.Len(t, exec.gotRequests, 1)
 	})
 
 	t.Run("batch write executor success", func(t *testing.T) {
@@ -96,13 +106,13 @@ func TestQuery_BatchCreate_ValidatesInputAndExecutorSupport_COV6(t *testing.T) {
 			},
 		}
 		q := New(&cov6BatchCreateItem{}, cov6Metadata{table: "tbl"}, exec)
-		require.ErrorContains(t, q.BatchCreate([]cov6BatchCreateItem{{ID: "1"}}), "items were not processed")
+		require.ErrorContains(t, q.BatchCreate([]cov6BatchCreateItem{{ID: "1"}}), "failed to process")
 	})
 
 	t.Run("item conversion error (non-struct)", func(t *testing.T) {
 		exec := &cov6BatchWriteExecutor{result: &core.BatchWriteResult{}}
 		q := New(&cov6BatchCreateItem{}, cov6Metadata{table: "tbl"}, exec)
-		require.ErrorContains(t, q.BatchCreate([]any{123}), "failed to convert item 0")
+		require.ErrorContains(t, q.BatchCreate([]any{123}), "failed to marshal item 0")
 	})
 
 	t.Run("legacy batch executor fallback", func(t *testing.T) {

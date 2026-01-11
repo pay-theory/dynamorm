@@ -70,7 +70,7 @@ func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
 	envelope, err := encSvc.EncryptAttributeValue(context.Background(), "secret", &types.AttributeValueMemberS{Value: "top-secret"})
 	require.NoError(t, err)
 
-	q := &query{db: db, ctx: context.Background()}
+	executor := &queryExecutor{db: db, metadata: metadata, ctx: context.Background()}
 
 	t.Run("Unmarshal decrypts into struct fields", func(t *testing.T) {
 		item := map[string]types.AttributeValue{
@@ -80,7 +80,8 @@ func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
 		}
 
 		var out encryptedTagWriteModel
-		require.NoError(t, q.unmarshalItem(item, &out, metadata))
+		require.NoError(t, executor.decryptItem(item))
+		require.NoError(t, executor.unmarshalItem(item, &out))
 		require.Equal(t, "top-secret", out.Secret)
 
 		decrypt := findCapturedRequest(t, httpClient, "TrentService.Decrypt")
@@ -94,8 +95,7 @@ func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
 			"secret": &types.AttributeValueMemberS{Value: "plaintext"},
 		}
 
-		var out encryptedTagWriteModel
-		err := q.unmarshalItem(item, &out, metadata)
+		err := executor.decryptItem(item)
 		require.Error(t, err)
 
 		var fieldErr *dynamormErrors.EncryptedFieldError

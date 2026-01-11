@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,9 +15,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/pay-theory/dynamorm/pkg/model"
+	queryPkg "github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
@@ -80,10 +83,8 @@ func TestDB_ContextAndTimeoutHelpers_COV4(t *testing.T) {
 	require.NotSame(t, buffered, lambdaDB)
 	require.False(t, lambdaDB.lambdaDeadline.IsZero())
 
-	qAny := lambdaDB.Model(&cov4RootItem{})
-	q, ok := qAny.(*query)
-	require.True(t, ok)
-	require.Error(t, q.checkLambdaTimeout())
+	executor := &queryExecutor{db: lambdaDB}
+	require.Error(t, executor.checkLambdaTimeout())
 }
 
 func TestQuery_GetItemWithProjectionAndConsistency_COV4(t *testing.T) {
@@ -125,65 +126,39 @@ func TestQuery_ConditionExpressionMerging_COV4(t *testing.T) {
 	require.NoError(t, err)
 	db := mustDB(t, dbAny)
 
-	require.NoError(t, db.registry.Register(&cov4RootItem{}))
-	metadata, err := db.registry.GetMetadata(&cov4RootItem{})
-	require.NoError(t, err)
+	require.NoError(t, db.Model(&cov4RootItem{ID: "u1", Name: "alice"}).
+		WithConditionExpression("name = :raw", map[string]any{":raw": "alice"}).
+		Create())
 
-	qAny := db.Model(&cov4RootItem{}).WithConditionExpression("name = :raw", map[string]any{":raw": "alice"})
-	q, ok := qAny.(*query)
+	putReq := findRequestByTarget(httpClient.Requests(), "DynamoDB_20120810.PutItem")
+	require.NotNil(t, putReq)
+	require.Equal(t, "name = :raw", putReq.Payload["ConditionExpression"])
+
+	values, ok := putReq.Payload["ExpressionAttributeValues"].(map[string]any)
 	require.True(t, ok)
-
-	condExpr, _, values, err := q.buildConditionExpression(metadata, false, false, false)
-	require.NoError(t, err)
-	require.Equal(t, "name = :raw", condExpr)
 	require.Contains(t, values, ":raw")
 
-	qAny = db.Model(&cov4RootItem{}).
-		IfExists().
-		WithConditionExpression("name = :raw", map[string]any{":raw": "alice"})
-	q, ok = qAny.(*query)
-	require.True(t, ok)
-
-	condExpr, _, values, err = q.buildConditionExpression(metadata, false, false, false)
-	require.NoError(t, err)
-	require.Contains(t, condExpr, "AND")
-	require.Contains(t, values, ":raw")
-
-	qAny = db.Model(&cov4RootItem{}).
+	require.NoError(t, db.Model(&cov4RootItem{ID: "u2", Name: "alice"}).
 		IfExists().
 		WithConditionExpression("name = :raw", map[string]any{":raw": "alice"}).
-		WithConditionExpression("other = :raw", map[string]any{":raw": "bob"})
-	q, ok = qAny.(*query)
-	require.True(t, ok)
+		Create())
 
-	_, _, _, err = q.buildConditionExpression(metadata, false, false, false)
+	putReq = findRequestByTarget(httpClient.Requests(), "DynamoDB_20120810.PutItem")
+	require.NotNil(t, putReq)
+	condExpr, ok := putReq.Payload["ConditionExpression"].(string)
+	require.True(t, ok)
+	require.Contains(t, condExpr, ") AND (")
+
+	values, ok = putReq.Payload["ExpressionAttributeValues"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, values, ":raw")
+
+	err = db.Model(&cov4RootItem{ID: "u3", Name: "alice"}).
+		IfExists().
+		WithConditionExpression("name = :raw", map[string]any{":raw": "alice"}).
+		WithConditionExpression("other = :raw", map[string]any{":raw": "bob"}).
+		Create()
 	require.ErrorContains(t, err, "duplicate placeholder :raw")
-
-	require.Equal(t, "x", mergeAndExpression("", "x"))
-	require.Equal(t, "(a) AND (b)", mergeAndExpression("a", "b"))
-}
-
-func TestQuery_DefaultNotExistsCondition_COV4(t *testing.T) {
-	httpClient := newCapturingHTTPClient(nil)
-
-	stubSessionConfigLoad(t, func(context.Context, ...func(*config.LoadOptions) error) (aws.Config, error) {
-		return minimalAWSConfig(httpClient), nil
-	})
-
-	dbAny, err := New(session.Config{Region: "us-east-1"})
-	require.NoError(t, err)
-	db := mustDB(t, dbAny)
-
-	qAny := db.Model(&cov4CompositeItem{})
-	q, ok := qAny.(*query)
-	require.True(t, ok)
-
-	metadata, err := db.registry.GetMetadata(&cov4CompositeItem{})
-	require.NoError(t, err)
-
-	condExpr, _, _, err := q.buildConditionExpression(metadata, false, false, true)
-	require.NoError(t, err)
-	require.Contains(t, condExpr, "attribute_not_exists")
 }
 
 func TestQuery_AllPaginated_QueryAndScanPaths_COV4(t *testing.T) {
@@ -239,12 +214,25 @@ func TestQuery_AllPaginated_QueryAndScanPaths_COV4(t *testing.T) {
 	require.Equal(t, "by-id", scanReq.Payload["IndexName"])
 	require.Equal(t, float64(5), scanReq.Payload["Limit"])
 
-	qAny := db.Model(&cov4RootItem{}).Cursor("cursor")
-	q, ok := qAny.(*query)
+	cursor, err := queryPkg.EncodeCursor(map[string]types.AttributeValue{
+		"id": &types.AttributeValueMemberS{Value: "u1"},
+	}, "", "")
+	require.NoError(t, err)
+
+	var cursorOut []cov4RootItem
+	require.NoError(t, db.Model(&cov4RootItem{}).
+		Cursor(cursor).
+		Limit(1).
+		Where("ID", "=", "u1").
+		All(&cursorOut))
+
+	cursorReq := findRequestByTarget(httpClient.Requests(), "DynamoDB_20120810.Query")
+	require.NotNil(t, cursorReq)
+	exclusiveStartKey, ok := cursorReq.Payload["ExclusiveStartKey"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "cursor", q.exclusiveStartKey)
-	require.NoError(t, q.SetCursor("cursor2"))
-	require.Equal(t, "cursor2", q.exclusiveStartKey)
+	idAttr, ok := exclusiveStartKey["id"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "u1", idAttr["S"])
 }
 
 type scanSegmentHTTPClient struct {
@@ -325,12 +313,9 @@ func TestQuery_ScanAllSegments_COV4(t *testing.T) {
 		Where("Name", "=", "x").
 		ParallelScan(0, 3)
 
-	q, ok := qAny.(*query)
-	require.True(t, ok)
+	require.ErrorContains(t, qAny.ScanAllSegments(cov4RootItem{}, 3), "destination must be a pointer to slice")
 
-	require.ErrorContains(t, q.ScanAllSegments(cov4RootItem{}, 3), "dest must be a pointer to a slice")
-
-	require.NoError(t, q.ScanAllSegments(&out, 3))
+	require.NoError(t, qAny.ScanAllSegments(&out, 3))
 	require.Len(t, out, 3)
 
 	gotIDs := make([]string, 0, len(out))
@@ -372,7 +357,7 @@ func TestQuery_UpdateBuilderAndExecutor_COV4(t *testing.T) {
 	require.NotEmpty(t, adapter.Indexes())
 	require.Equal(t, "version", adapter.VersionFieldName())
 
-	badQ := &query{db: db, model: map[string]any{}}
+	badQ := &errorQuery{err: errors.New("boom")}
 	errBuilder := badQ.UpdateBuilder()
 	require.NotNil(t, errBuilder)
 	require.Error(t, errBuilder.Set("x", "y").Execute())

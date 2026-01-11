@@ -65,7 +65,7 @@ test-all: docker-up
 fmt:
 	@echo "Formatting code..."
 	@go fmt ./...
-	@files="$$(git ls-files '*.go')"; \
+	@files="$$(git ls-files '*.go' | while read -r f; do if [ -f "$$f" ]; then echo "$$f"; fi; done)"; \
 	if [ -n "$$files" ]; then \
 		gofmt -s -w $$files; \
 	fi

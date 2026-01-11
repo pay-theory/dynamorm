@@ -12,6 +12,7 @@ import (
 
 	"github.com/pay-theory/dynamorm/pkg/marshal"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	queryPkg "github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
@@ -26,20 +27,14 @@ func (cov6SelectModel) TableName() string { return "cov6_select_models" }
 type cov6CtxKey struct{}
 
 func TestQuery_Select_Branches_COV6(t *testing.T) {
-	t.Run("no fields sets empty projection", func(t *testing.T) {
-		q := &query{}
-		q.Select()
-		require.Nil(t, q.fields)
-	})
+	db := newBareDB()
+	qAny := db.Model(&cov6SelectModel{}).Select("Name").Select()
+	q, ok := qAny.(*queryPkg.Query)
+	require.True(t, ok)
 
-	t.Run("metadata error is recorded", func(t *testing.T) {
-		q := &query{
-			db:    &DB{registry: model.NewRegistry()},
-			model: &cov6SelectModel{},
-		}
-		q.Select("Name")
-		require.Error(t, q.checkBuilderError())
-	})
+	compiled, err := q.Compile()
+	require.NoError(t, err)
+	require.Empty(t, compiled.ProjectionExpression)
 }
 
 func TestDB_ContextHelpers_CopyMetadataCache_And_DefaultLambdaBuffer_COV6(t *testing.T) {

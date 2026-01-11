@@ -20,6 +20,9 @@ while IFS= read -r f; do
   if [[ -z "${f}" ]]; then
     continue
   fi
+  if [[ ! -f "${f}" ]]; then
+    continue
+  fi
   lines="$(wc -l <"${f}" | tr -d ' ')"
   if [[ "${lines}" -gt "${max_lines}" ]]; then
     echo "go-file-size: ${f}: ${lines} lines (max ${max_lines})"

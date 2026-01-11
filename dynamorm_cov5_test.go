@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/pay-theory/dynamorm/pkg/core"
+	queryPkg "github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	transactionPkg "github.com/pay-theory/dynamorm/pkg/transaction"
 )
@@ -41,7 +42,7 @@ func TestDB_Transaction_SetsDBOnTx_COV5(t *testing.T) {
 	require.NoError(t, db.Transaction(func(tx *core.Tx) error {
 		called = true
 		q := tx.Model(&cov4RootItem{})
-		_, ok := q.(*query)
+		_, ok := q.(*queryPkg.Query)
 		require.True(t, ok)
 		return nil
 	}))

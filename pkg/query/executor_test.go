@@ -101,6 +101,7 @@ func TestMainExecutorImplementsInterfaces(t *testing.T) {
 
 	// Test interface implementations
 	var _ QueryExecutor = executor
+	var _ GetItemExecutor = executor
 	var _ PutItemExecutor = executor
 	var _ UpdateItemExecutor = executor
 	var _ DeleteItemExecutor = executor

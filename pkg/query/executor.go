@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
@@ -202,6 +203,14 @@ func NewExecutor(client DynamoDBAPI, ctx context.Context) *MainExecutor { //noli
 	}
 }
 
+// SetContext updates the context used for subsequent DynamoDB calls.
+func (e *MainExecutor) SetContext(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	e.ctx = ctx
+}
+
 // ExecuteQuery implements QueryExecutor.ExecuteQuery
 func (e *MainExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 	if input == nil {
@@ -240,6 +249,46 @@ func (e *MainExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 
 	// Unmarshal the results into dest
 	return UnmarshalItems(allItems, dest)
+}
+
+// ExecuteGetItem implements GetItemExecutor.ExecuteGetItem.
+func (e *MainExecutor) ExecuteGetItem(input *core.CompiledQuery, key map[string]types.AttributeValue, dest any) error {
+	if input == nil {
+		return fmt.Errorf("compiled query cannot be nil")
+	}
+	if len(key) == 0 {
+		return fmt.Errorf("key cannot be empty")
+	}
+
+	getInput := &dynamodb.GetItemInput{
+		TableName: aws.String(input.TableName),
+		Key:       key,
+	}
+
+	if input.ProjectionExpression != "" {
+		getInput.ProjectionExpression = aws.String(input.ProjectionExpression)
+	}
+	if len(input.ExpressionAttributeNames) > 0 {
+		getInput.ExpressionAttributeNames = input.ExpressionAttributeNames
+	}
+	if input.ConsistentRead != nil {
+		getInput.ConsistentRead = input.ConsistentRead
+	}
+
+	output, err := e.client.GetItem(e.ctx, getInput)
+	if err != nil {
+		return fmt.Errorf("failed to execute get item: %w", err)
+	}
+	if output.Item == nil {
+		return customerrors.ErrItemNotFound
+	}
+
+	if rawDest, ok := dest.(*map[string]types.AttributeValue); ok && rawDest != nil {
+		*rawDest = output.Item
+		return nil
+	}
+
+	return UnmarshalItem(output.Item, dest)
 }
 
 func applyCompiledQueryWriteConditions(

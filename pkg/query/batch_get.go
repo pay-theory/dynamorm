@@ -48,6 +48,10 @@ func (q *Query) BatchGetWithOptions(keys []any, dest any, opts *core.BatchGetOpt
 		return nil
 	}
 
+	if q.rawMetadata != nil && q.converter != nil {
+		return q.unmarshalItemsWithMetadata(flattened, dest)
+	}
+
 	return UnmarshalItems(flattened, dest)
 }
 
@@ -234,7 +238,7 @@ func (q *Query) buildBatchGetKey(key any) (map[string]types.AttributeValue, erro
 		}
 		converted := make(map[string]types.AttributeValue, len(typed))
 		for attr, value := range typed {
-			av, err := expr.ConvertToAttributeValue(value)
+			av, err := q.toAttributeValue(value)
 			if err != nil {
 				return nil, fmt.Errorf("failed to convert key attribute %s: %w", attr, err)
 			}
@@ -263,7 +267,7 @@ func (q *Query) keyPairToAttributes(pair core.KeyPair) (map[string]types.Attribu
 	}
 
 	attrs := make(map[string]types.AttributeValue, 2)
-	pk, err := expr.ConvertToAttributeValue(pair.PartitionKey)
+	pk, err := q.toAttributeValue(pair.PartitionKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert partition key: %w", err)
 	}
@@ -274,7 +278,7 @@ func (q *Query) keyPairToAttributes(pair core.KeyPair) (map[string]types.Attribu
 		if pair.SortKey == nil {
 			return nil, fmt.Errorf("sort key value is required for %s", schema.SortKey)
 		}
-		sk, err := expr.ConvertToAttributeValue(pair.SortKey)
+		sk, err := q.toAttributeValue(pair.SortKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert sort key: %w", err)
 		}
@@ -293,7 +297,7 @@ func (q *Query) partitionOnlyKey(value any) (map[string]types.AttributeValue, er
 		return nil, fmt.Errorf("composite key requires both %s and %s", schema.PartitionKey, schema.SortKey)
 	}
 
-	av, err := expr.ConvertToAttributeValue(value)
+	av, err := q.toAttributeValue(value)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert partition key value: %w", err)
 	}
@@ -556,4 +560,109 @@ func (q *Query) remapKeyAttributes(key map[string]types.AttributeValue) map[stri
 		remapped[q.resolveAttributeName(field)] = val
 	}
 	return remapped
+}
+
+func (q *Query) unmarshalItemsWithMetadata(items []map[string]types.AttributeValue, dest any) error {
+	if q == nil || q.rawMetadata == nil || q.converter == nil {
+		return UnmarshalItems(items, dest)
+	}
+
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.IsNil() || destValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("dest must be a pointer to slice")
+	}
+
+	sliceValue := destValue.Elem()
+	elemType := sliceValue.Type().Elem()
+	newSlice := reflect.MakeSlice(sliceValue.Type(), len(items), len(items))
+
+	for i, item := range items {
+		var elem reflect.Value
+		if elemType.Kind() == reflect.Ptr {
+			elem = reflect.New(elemType.Elem())
+		} else {
+			elem = reflect.New(elemType)
+		}
+
+		if err := q.unmarshalItemWithMetadata(item, elem.Interface()); err != nil {
+			return fmt.Errorf("failed to unmarshal item %d: %w", i, err)
+		}
+
+		if elemType.Kind() == reflect.Ptr {
+			newSlice.Index(i).Set(elem)
+		} else {
+			newSlice.Index(i).Set(elem.Elem())
+		}
+	}
+
+	sliceValue.Set(newSlice)
+	return nil
+}
+
+func (q *Query) unmarshalItemWithMetadata(item map[string]types.AttributeValue, dest any) error {
+	if q == nil || q.rawMetadata == nil || q.converter == nil {
+		return UnmarshalItem(item, dest)
+	}
+
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.IsNil() {
+		return fmt.Errorf("destination must be a pointer")
+	}
+	destValue = destValue.Elem()
+
+	if destValue.Kind() == reflect.Map {
+		if destValue.IsNil() {
+			destValue.Set(reflect.MakeMap(destValue.Type()))
+		}
+
+		keyType := destValue.Type().Key()
+		if keyType.Kind() != reflect.String {
+			return fmt.Errorf("destination map must have string keys")
+		}
+
+		for attrName, attrValue := range item {
+			var val any
+			if err := q.converter.FromAttributeValue(attrValue, &val); err != nil {
+				return fmt.Errorf("failed to unmarshal field %s: %w", attrName, err)
+			}
+
+			key := reflect.ValueOf(attrName).Convert(keyType)
+			value := reflect.ValueOf(val)
+			if !value.IsValid() {
+				value = reflect.Zero(destValue.Type().Elem())
+			} else if !value.Type().AssignableTo(destValue.Type().Elem()) {
+				if value.Type().ConvertibleTo(destValue.Type().Elem()) {
+					value = value.Convert(destValue.Type().Elem())
+				} else {
+					continue
+				}
+			}
+
+			destValue.SetMapIndex(key, value)
+		}
+
+		return nil
+	}
+
+	if destValue.Kind() != reflect.Struct {
+		return fmt.Errorf("destination must be a pointer to a struct or map")
+	}
+
+	for attrName, attrValue := range item {
+		fieldMeta, ok := q.rawMetadata.FieldsByDBName[attrName]
+		if !ok || fieldMeta == nil {
+			continue
+		}
+
+		structField := destValue.FieldByIndex(fieldMeta.IndexPath)
+		if !structField.CanSet() {
+			continue
+		}
+
+		if err := q.converter.FromAttributeValue(attrValue, structField.Addr().Interface()); err != nil {
+			return fmt.Errorf("failed to unmarshal field %s: %w", fieldMeta.Name, err)
+		}
+	}
+
+	return nil
 }

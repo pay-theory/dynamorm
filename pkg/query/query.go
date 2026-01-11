@@ -12,9 +12,12 @@ import (
 
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/internal/numutil"
+	"github.com/pay-theory/dynamorm/internal/reflectutil"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/index"
+	"github.com/pay-theory/dynamorm/pkg/marshal"
+	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
 // Query represents a DynamoDB query builder
@@ -22,6 +25,9 @@ type Query struct {
 	builderErr              error
 	executor                QueryExecutor
 	metadata                core.ModelMetadata
+	rawMetadata             *model.Metadata
+	converter               AttributeValueConverter
+	marshaler               marshal.MarshalerInterface
 	ctx                     context.Context
 	model                   any
 	exclusive               map[string]types.AttributeValue
@@ -52,6 +58,24 @@ type Condition struct {
 type conditionExpression struct {
 	Values     map[string]any
 	Expression string
+}
+
+// AttributeValueConverter allows DynamORM callers to inject custom converter behavior.
+// It intentionally mirrors the relevant subset of `pkg/types.Converter` without requiring
+// callers to depend on that concrete type.
+type AttributeValueConverter interface {
+	HasCustomConverter(typ reflect.Type) bool
+	ToAttributeValue(value any) (types.AttributeValue, error)
+	FromAttributeValue(av types.AttributeValue, target any) error
+	ConvertToSet(slice any, isSet bool) (types.AttributeValue, error)
+}
+
+type rawMetadataProvider interface {
+	RawMetadata() *model.Metadata
+}
+
+type executorContextSetter interface {
+	SetContext(ctx context.Context)
 }
 
 // normalizeCondition resolves a condition's field to its canonical DynamoDB attribute name
@@ -167,7 +191,7 @@ func cloneConditionValues(values map[string]any) map[string]any {
 
 func (q *Query) buildConditionExpression(builder *expr.Builder, includeWhereConditions bool, skipKeyConditions bool, defaultIfEmpty bool) (string, map[string]string, map[string]types.AttributeValue, error) {
 	if builder == nil {
-		builder = expr.NewBuilder()
+		builder = q.newBuilder()
 	}
 	hasCondition, err := q.addWriteConditions(builder)
 	if err != nil {
@@ -193,7 +217,7 @@ func (q *Query) buildConditionExpression(builder *expr.Builder, includeWhereCond
 	names := components.ExpressionAttributeNames
 	values := components.ExpressionAttributeValues
 
-	mergedExpr, mergedValues, err := mergeConditionExpressions(conditionExpr, values, q.rawConditionExpressions)
+	mergedExpr, mergedValues, err := mergeConditionExpressions(conditionExpr, values, q.rawConditionExpressions, q.converter)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -255,7 +279,7 @@ func (q *Query) addDefaultCondition(builder *expr.Builder) error {
 	return nil
 }
 
-func mergeConditionExpressions(baseExpr string, baseValues map[string]types.AttributeValue, rawExpressions []conditionExpression) (string, map[string]types.AttributeValue, error) {
+func mergeConditionExpressions(baseExpr string, baseValues map[string]types.AttributeValue, rawExpressions []conditionExpression, converter AttributeValueConverter) (string, map[string]types.AttributeValue, error) {
 	mergedExpr := baseExpr
 	mergedValues := baseValues
 
@@ -281,7 +305,13 @@ func mergeConditionExpressions(baseExpr string, baseValues map[string]types.Attr
 			if _, exists := mergedValues[key]; exists {
 				return "", nil, fmt.Errorf("duplicate placeholder %s in condition expression", key)
 			}
-			av, err := expr.ConvertToAttributeValue(val)
+			var av types.AttributeValue
+			var err error
+			if converter != nil {
+				av, err = converter.ToAttributeValue(val)
+			} else {
+				av, err = expr.ConvertToAttributeValue(val)
+			}
 			if err != nil {
 				return "", nil, fmt.Errorf("failed to convert condition value %s: %w", key, err)
 			}
@@ -343,6 +373,12 @@ type PaginatedQueryExecutor interface {
 	ExecuteScanWithPagination(input *core.CompiledQuery, dest any) (*ScanResult, error)
 }
 
+// GetItemExecutor extends QueryExecutor with GetItem support.
+type GetItemExecutor interface {
+	QueryExecutor
+	ExecuteGetItem(input *core.CompiledQuery, key map[string]types.AttributeValue, dest any) error
+}
+
 // PutItemExecutor extends QueryExecutor with PutItem support
 type PutItemExecutor interface {
 	QueryExecutor
@@ -375,14 +411,20 @@ type BatchWriteItemExecutor interface {
 
 // New creates a new Query instance
 func New(model any, metadata core.ModelMetadata, executor QueryExecutor) *Query {
-	return &Query{
+	q := &Query{
 		model:                   model,
 		metadata:                metadata,
 		executor:                executor,
+		ctx:                     context.Background(),
 		filters:                 make([]Filter, 0),
 		writeConditions:         make([]Condition, 0),
 		rawConditionExpressions: make([]conditionExpression, 0),
 	}
+	if provider, ok := metadata.(rawMetadataProvider); ok {
+		q.rawMetadata = provider.RawMetadata()
+	}
+	q.setExecutorContext(q.ctx)
+	return q
 }
 
 // Where adds a condition to the query
@@ -407,10 +449,10 @@ func (q *Query) Filter(field string, op string, value any) core.Query {
 	}
 	// Initialize builder if not already done
 	if q.builder == nil {
-		q.builder = expr.NewBuilder()
+		q.builder = q.newBuilder()
 	}
 
-	if err := q.builder.AddFilterCondition("AND", field, op, value); err != nil {
+	if err := q.builder.AddFilterCondition("AND", q.resolveAttributeName(field), op, value); err != nil {
 		q.recordBuilderError(err)
 	}
 	return q
@@ -445,7 +487,16 @@ func (q *Query) OrderBy(field string, order string) core.Query {
 
 // Select specifies which fields to return
 func (q *Query) Select(fields ...string) core.Query {
-	q.projection = fields
+	if len(fields) == 0 {
+		q.projection = nil
+		return q
+	}
+
+	resolved := make([]string, 0, len(fields))
+	for _, field := range fields {
+		resolved = append(resolved, q.resolveAttributeName(field))
+	}
+	q.projection = resolved
 	return q
 }
 
@@ -469,18 +520,10 @@ func (q *Query) First(dest any) error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	// Set limit to 1 for efficiency
-	q.limit = 1
-
-	compiled, err := q.Compile()
-	if err != nil {
-		return err
+	if q.retryConfig != nil {
+		return q.firstWithRetry(dest)
 	}
-
-	if compiled.Operation == operationQuery {
-		return q.executor.ExecuteQuery(compiled, dest)
-	}
-	return q.executor.ExecuteScan(compiled, dest)
+	return q.firstInternal(dest)
 }
 
 // All executes the query and returns all results
@@ -488,15 +531,10 @@ func (q *Query) All(dest any) error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	compiled, err := q.Compile()
-	if err != nil {
-		return err
+	if q.retryConfig != nil {
+		return q.allWithRetry(dest)
 	}
-
-	if compiled.Operation == operationQuery {
-		return q.executor.ExecuteQuery(compiled, dest)
-	}
-	return q.executor.ExecuteScan(compiled, dest)
+	return q.allInternal(dest)
 }
 
 // Count returns the count of matching items
@@ -526,13 +564,145 @@ func (q *Query) Count() (int64, error) {
 	return result.Count, err
 }
 
+func (q *Query) firstInternal(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
+
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.IsNil() {
+		return fmt.Errorf("destination must be a pointer")
+	}
+	if destValue.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("destination must be a pointer to a struct")
+	}
+
+	clone := *q
+	clone.limit = 1
+
+	if getExecutor, ok := clone.executor.(GetItemExecutor); ok {
+		getCompiled, key, ok, err := clone.compileGetItem()
+		if err != nil {
+			return err
+		}
+		if ok {
+			return getExecutor.ExecuteGetItem(getCompiled, key, dest)
+		}
+	}
+
+	results := reflect.New(reflect.SliceOf(destValue.Elem().Type()))
+	if err := clone.allInternal(results.Interface()); err != nil {
+		return err
+	}
+
+	resultsValue := results.Elem()
+	if resultsValue.Len() == 0 {
+		return dynamormErrors.ErrItemNotFound
+	}
+
+	destValue.Elem().Set(resultsValue.Index(0))
+	return nil
+}
+
+func (q *Query) firstWithRetry(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
+
+	delay := q.retryConfig.InitialDelay
+	maxDelay := 5 * time.Second
+
+	for attempt := 0; attempt <= q.retryConfig.MaxRetries; attempt++ {
+		err := q.firstInternal(dest)
+		if err == nil {
+			return nil
+		}
+
+		if !errors.Is(err, dynamormErrors.ErrItemNotFound) {
+			return err
+		}
+
+		if attempt >= q.retryConfig.MaxRetries {
+			return err
+		}
+
+		if delay > 0 {
+			time.Sleep(delay)
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+
+	return dynamormErrors.ErrItemNotFound
+}
+
+func (q *Query) allInternal(dest any) error {
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.IsNil() || destValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("destination must be a pointer to slice")
+	}
+
+	compiled, err := q.Compile()
+	if err != nil {
+		return err
+	}
+
+	if compiled.Operation == operationQuery {
+		return q.executor.ExecuteQuery(compiled, dest)
+	}
+	return q.executor.ExecuteScan(compiled, dest)
+}
+
+func (q *Query) allWithRetry(dest any) error {
+	if err := q.checkBuilderError(); err != nil {
+		return err
+	}
+
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr || destValue.IsNil() || destValue.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("destination must be a pointer to slice")
+	}
+
+	delay := q.retryConfig.InitialDelay
+	maxDelay := 5 * time.Second
+	var lastErr error
+
+	for attempt := 0; attempt <= q.retryConfig.MaxRetries; attempt++ {
+		destValue.Elem().Set(reflect.MakeSlice(destValue.Elem().Type(), 0, 0))
+
+		err := q.allInternal(dest)
+		lastErr = err
+		if err != nil {
+			if attempt >= q.retryConfig.MaxRetries {
+				return err
+			}
+		} else if destValue.Elem().Len() > 0 {
+			return nil
+		} else if attempt >= q.retryConfig.MaxRetries {
+			return nil
+		}
+
+		if delay > 0 {
+			time.Sleep(delay)
+			delay *= 2
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
+
+	return lastErr
+}
+
 // Create creates a new item
 func (q *Query) Create() error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
 	// Marshal the model to AttributeValues
-	item, err := convertItemToAttributeValue(q.model)
+	item, err := q.marshalItem(q.model)
 	if err != nil {
 		return fmt.Errorf("failed to marshal item: %w", err)
 	}
@@ -559,7 +729,14 @@ func (q *Query) Create() error {
 
 	// Execute through a specialized PutItem executor
 	if putExecutor, ok := q.executor.(PutItemExecutor); ok {
-		return putExecutor.ExecutePutItem(compiled, item)
+		if err := putExecutor.ExecutePutItem(compiled, item); err != nil {
+			if errors.Is(err, dynamormErrors.ErrConditionFailed) {
+				return fmt.Errorf("%w: item with the same key already exists", dynamormErrors.ErrConditionFailed)
+			}
+			return err
+		}
+		q.updateTimestampsInModel()
+		return nil
 	}
 
 	// Fallback: return error if executor doesn't support PutItem
@@ -571,49 +748,9 @@ func (q *Query) CreateOrUpdate() error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	// Build the item to put
-	item := make(map[string]types.AttributeValue)
-
-	modelValue := reflect.ValueOf(q.model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
-	}
-	modelType := modelValue.Type()
-
-	// Convert all fields to AttributeValues
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-
-		// Skip unexported fields
-		if !field.IsExported() {
-			continue
-		}
-
-		// Parse dynamorm tags
-		tag := field.Tag.Get("dynamorm")
-		if tag == "-" {
-			continue
-		}
-
-		// Get field value
-		fieldValue := modelValue.Field(i)
-		if !fieldValue.IsValid() {
-			continue
-		}
-
-		// Skip zero values if omitempty is set
-		if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
-			continue
-		}
-
-		// Convert to AttributeValue
-		av, err := expr.ConvertToAttributeValue(fieldValue.Interface())
-		if err != nil {
-			return fmt.Errorf("failed to convert field %s: %w", field.Name, err)
-		}
-
-		// Use field name as key
-		item[field.Name] = av
+	item, err := q.marshalItem(q.model)
+	if err != nil {
+		return fmt.Errorf("failed to marshal item: %w", err)
 	}
 
 	// Compile the query for PutItem (without condition expression)
@@ -624,7 +761,11 @@ func (q *Query) CreateOrUpdate() error {
 
 	// Execute through a specialized PutItem executor
 	if putExecutor, ok := q.executor.(PutItemExecutor); ok {
-		return putExecutor.ExecutePutItem(compiled, item)
+		if err := putExecutor.ExecutePutItem(compiled, item); err != nil {
+			return err
+		}
+		q.updateTimestampsInModel()
+		return nil
 	}
 
 	// Fallback: return error if executor doesn't support PutItem
@@ -672,50 +813,141 @@ func (q *Query) Update(fields ...string) error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	primaryKey := q.metadata.PrimaryKey()
-	keyValues, err := extractKeyValues(primaryKey, q.conditions)
-	if err != nil {
-		return err
-	}
-	err = validateKeyValues(primaryKey, keyValues, "update")
+
+	key, err := q.buildPrimaryKeyMap("update")
 	if err != nil {
 		return err
 	}
 
-	updateExpression, expressionAttributeNames, expressionAttributeValues, err := q.buildUpdateComponents(fields)
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() == reflect.Ptr {
+		if modelValue.IsNil() {
+			return fmt.Errorf("model cannot be nil")
+		}
+		modelValue = modelValue.Elem()
+	}
+	if modelValue.Kind() != reflect.Struct {
+		return fmt.Errorf("model must be a struct or pointer to struct")
+	}
+
+	builder := q.newBuilder()
+
+	// Build SET updates either from registry metadata (preferred) or from struct tags.
+	if q.rawMetadata != nil {
+		fieldsToUpdate := fields
+		if len(fieldsToUpdate) == 0 {
+			fieldsToUpdate = make([]string, 0, len(q.rawMetadata.Fields))
+			for fieldName, fieldMeta := range q.rawMetadata.Fields {
+				if fieldMeta == nil || fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt || fieldMeta.IsVersion {
+					continue
+				}
+				fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+				if fieldMeta.OmitEmpty && reflectutil.IsEmpty(fieldValue) {
+					continue
+				}
+				fieldsToUpdate = append(fieldsToUpdate, fieldName)
+			}
+		}
+
+		for _, fieldName := range fieldsToUpdate {
+			fieldMeta, ok := q.rawMetadata.Fields[fieldName]
+			if !ok {
+				fieldMeta, ok = q.rawMetadata.FieldsByDBName[fieldName]
+			}
+			if !ok || fieldMeta == nil {
+				return fmt.Errorf("field '%s' not found in model metadata (use Go field name or DB attribute name)", fieldName)
+			}
+
+			switch {
+			case fieldMeta.IsPK || fieldMeta.IsSK:
+				return fmt.Errorf("field '%s' is part of the primary key and cannot be updated", fieldName)
+			case fieldMeta.IsCreatedAt:
+				continue
+			case fieldMeta.IsUpdatedAt, fieldMeta.IsVersion:
+				continue // handled below
+			}
+
+			fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+			if err := builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface()); err != nil {
+				return fmt.Errorf("failed to build update for %s: %w", fieldName, err)
+			}
+		}
+
+		// Always update updated_at and increment version when present.
+		if q.rawMetadata.UpdatedAtField != nil {
+			if err := builder.AddUpdateSet(q.rawMetadata.UpdatedAtField.DBName, time.Now()); err != nil {
+				return fmt.Errorf("failed to build updated_at update: %w", err)
+			}
+		}
+
+		if q.rawMetadata.VersionField != nil {
+			current := modelValue.FieldByIndex(q.rawMetadata.VersionField.IndexPath).Int()
+			if err := builder.AddConditionExpression(q.rawMetadata.VersionField.DBName, "=", current); err != nil {
+				return fmt.Errorf("failed to add version condition: %w", err)
+			}
+			if err := builder.AddUpdateAdd(q.rawMetadata.VersionField.DBName, int64(1)); err != nil {
+				return fmt.Errorf("failed to build version increment: %w", err)
+			}
+		}
+	} else {
+		if len(fields) > 0 {
+			for _, field := range fields {
+				fieldValue := modelValue.FieldByName(field)
+				if !fieldValue.IsValid() {
+					return fmt.Errorf("field %s not found in model", field)
+				}
+				if err := builder.AddUpdateSet(q.resolveAttributeName(field), fieldValue.Interface()); err != nil {
+					return fmt.Errorf("failed to build update for %s: %w", field, err)
+				}
+			}
+		} else {
+			primaryKey := q.metadata.PrimaryKey()
+			modelType := modelValue.Type()
+			for i := 0; i < modelType.NumField(); i++ {
+				field := modelType.Field(i)
+				if !field.IsExported() {
+					continue
+				}
+
+				tag := field.Tag.Get("dynamorm")
+				if shouldSkipUpdateField(field, tag, primaryKey) {
+					continue
+				}
+
+				fieldValue := modelValue.Field(i)
+				if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
+					continue
+				}
+
+				attrName := q.resolveAttributeName(field.Name)
+				if err := builder.AddUpdateSet(attrName, fieldValue.Interface()); err != nil {
+					return fmt.Errorf("failed to build update for %s: %w", field.Name, err)
+				}
+			}
+		}
+	}
+
+	conditionExpr, names, values, err := q.buildConditionExpression(builder, true, true, false)
 	if err != nil {
 		return err
 	}
 
-	conditionExpr, condNames, condValues, err := q.buildConditionExpression(nil, true, true, false)
-	if err != nil {
-		return err
+	components := builder.Build()
+	if components.UpdateExpression == "" {
+		return fmt.Errorf("no non-key fields to update")
 	}
 
-	mergeExpressionAttributeNames(expressionAttributeNames, condNames)
-	err = mergeExpressionAttributeValues(expressionAttributeValues, condValues)
-	if err != nil {
-		return err
-	}
-
-	// Compile the update query
 	compiled := &core.CompiledQuery{
 		Operation:                 "UpdateItem",
 		TableName:                 q.metadata.TableName(),
-		UpdateExpression:          updateExpression,
+		UpdateExpression:          components.UpdateExpression,
 		ConditionExpression:       conditionExpr,
-		ExpressionAttributeNames:  expressionAttributeNames,
-		ExpressionAttributeValues: expressionAttributeValues,
+		ExpressionAttributeNames:  names,
+		ExpressionAttributeValues: values,
 	}
 
-	keyAV, err := convertAnyMapToAttributeValues(keyValues, "failed to convert key value")
-	if err != nil {
-		return err
-	}
-
-	// Execute update
 	if updateExecutor, ok := q.executor.(UpdateItemExecutor); ok {
-		return updateExecutor.ExecuteUpdateItem(compiled, keyAV)
+		return updateExecutor.ExecuteUpdateItem(compiled, key)
 	}
 
 	return fmt.Errorf("executor does not support UpdateItem operation")
@@ -900,37 +1132,34 @@ func (q *Query) Delete() error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
-	// Validate we have key conditions
-	primaryKey := q.metadata.PrimaryKey()
-	keyValues := make(map[string]any)
 
-	// Extract key values from conditions
-	for _, cond := range q.conditions {
-		if cond.Field == primaryKey.PartitionKey ||
-			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
-			if cond.Operator != "=" {
-				return fmt.Errorf("key condition must use '=' operator")
-			}
-			keyValues[cond.Field] = cond.Value
-		}
-	}
-
-	// Validate we have complete key
-	if _, ok := keyValues[primaryKey.PartitionKey]; !ok {
-		return fmt.Errorf("partition key %s is required for delete", primaryKey.PartitionKey)
-	}
-	if primaryKey.SortKey != "" {
-		if _, ok := keyValues[primaryKey.SortKey]; !ok {
-			return fmt.Errorf("sort key %s is required for delete", primaryKey.SortKey)
-		}
-	}
-
-	conditionExpr, condNames, condValues, err := q.buildConditionExpression(nil, true, true, false)
+	key, err := q.buildPrimaryKeyMap("delete")
 	if err != nil {
 		return err
 	}
 
-	// Compile the delete query
+	builder := q.newBuilder()
+	if q.rawMetadata != nil && q.rawMetadata.VersionField != nil && q.model != nil {
+		modelValue := reflect.ValueOf(q.model)
+		if modelValue.Kind() == reflect.Ptr && !modelValue.IsNil() {
+			modelValue = modelValue.Elem()
+		}
+
+		if modelValue.Kind() == reflect.Struct {
+			versionValue := modelValue.FieldByIndex(q.rawMetadata.VersionField.IndexPath)
+			if !versionValue.IsZero() {
+				if err := builder.AddConditionExpression(q.rawMetadata.VersionField.DBName, "=", versionValue.Int()); err != nil {
+					return fmt.Errorf("failed to add version condition: %w", err)
+				}
+			}
+		}
+	}
+
+	conditionExpr, condNames, condValues, err := q.buildConditionExpression(builder, true, true, false)
+	if err != nil {
+		return err
+	}
+
 	compiled := &core.CompiledQuery{
 		Operation:                 "DeleteItem",
 		TableName:                 q.metadata.TableName(),
@@ -939,19 +1168,8 @@ func (q *Query) Delete() error {
 		ExpressionAttributeValues: condValues,
 	}
 
-	// Convert key to AttributeValues
-	keyAV := make(map[string]types.AttributeValue)
-	for k, v := range keyValues {
-		av, err := expr.ConvertToAttributeValue(v)
-		if err != nil {
-			return fmt.Errorf("failed to convert key value: %w", err)
-		}
-		keyAV[k] = av
-	}
-
-	// Execute delete
 	if deleteExecutor, ok := q.executor.(DeleteItemExecutor); ok {
-		return deleteExecutor.ExecuteDeleteItem(compiled, keyAV)
+		return deleteExecutor.ExecuteDeleteItem(compiled, key)
 	}
 
 	return fmt.Errorf("executor does not support DeleteItem operation")
@@ -1002,22 +1220,27 @@ func (q *Query) ScanAllSegments(dest any, totalSegments int32) error {
 		go func(segment int32) {
 			// Create a new query for this segment
 			segmentQuery := &Query{
-				model:         q.model,
-				conditions:    q.conditions,
-				filters:       q.filters,
-				rawFilters:    q.rawFilters,
-				index:         q.index,
-				limit:         q.limit,
-				offset:        q.offset,
-				projection:    q.projection,
-				orderBy:       q.orderBy,
-				exclusive:     q.exclusive,
-				ctx:           q.ctx,
-				metadata:      q.metadata,
-				executor:      q.executor,
-				builder:       q.builder,
-				segment:       &segment,
-				totalSegments: &totalSegments,
+				builderErr:     q.builderErr,
+				model:          q.model,
+				conditions:     q.conditions,
+				filters:        q.filters,
+				rawFilters:     q.rawFilters,
+				index:          q.index,
+				limit:          q.limit,
+				offset:         q.offset,
+				projection:     q.projection,
+				orderBy:        q.orderBy,
+				exclusive:      q.exclusive,
+				consistentRead: q.consistentRead,
+				ctx:            q.ctx,
+				metadata:       q.metadata,
+				rawMetadata:    q.rawMetadata,
+				converter:      q.converter,
+				marshaler:      q.marshaler,
+				executor:       q.executor,
+				builder:        q.builder,
+				segment:        &segment,
+				totalSegments:  &totalSegments,
 			}
 
 			// Create a slice to hold this segment's results
@@ -1076,48 +1299,38 @@ func (q *Query) BatchCreate(items any) error {
 	}
 
 	if itemsValue.Len() == 0 {
-		return errors.New("no items to create")
-	}
-
-	if itemsValue.Len() > 25 {
-		return errors.New("BatchCreate supports maximum 25 items per request")
+		return nil
 	}
 
 	// Try to use the new BatchWriteItemExecutor first
-	if batchWriteExecutor, ok := q.executor.(BatchWriteItemExecutor); ok {
-		// Convert items to write requests
-		writeRequests := make([]types.WriteRequest, 0, itemsValue.Len())
+	if _, ok := q.executor.(BatchWriteItemExecutor); ok {
+		tableName := q.metadata.TableName()
+		const batchSize = 25
+		totalItems := itemsValue.Len()
 
-		for i := 0; i < itemsValue.Len(); i++ {
-			item := itemsValue.Index(i).Interface()
-
-			// Convert item to AttributeValues
-			av, err := convertItemToAttributeValue(item)
-			if err != nil {
-				return fmt.Errorf("failed to convert item %d: %w", i, err)
+		for i := 0; i < totalItems; i += batchSize {
+			end := i + batchSize
+			if end > totalItems {
+				end = totalItems
 			}
 
-			writeRequests = append(writeRequests, types.WriteRequest{
-				PutRequest: &types.PutRequest{
-					Item: av,
-				},
-			})
-		}
+			writeRequests := make([]types.WriteRequest, 0, end-i)
+			for j := i; j < end; j++ {
+				item := itemsValue.Index(j).Interface()
+				av, err := q.marshalItem(item)
+				if err != nil {
+					return fmt.Errorf("failed to marshal item %d: %w", j, err)
+				}
 
-		// Execute batch write
-		result, err := batchWriteExecutor.ExecuteBatchWriteItem(q.metadata.TableName(), writeRequests)
-		if err != nil {
-			return err
-		}
-
-		// Check for unprocessed items
-		if len(result.UnprocessedItems) > 0 {
-			unprocessedCount := 0
-			for _, items := range result.UnprocessedItems {
-				unprocessedCount += len(items)
+				writeRequests = append(writeRequests, types.WriteRequest{
+					PutRequest: &types.PutRequest{
+						Item: av,
+					},
+				})
 			}
-			if unprocessedCount > 0 {
-				return fmt.Errorf("%d items were not processed", unprocessedCount)
+
+			if err := q.executeBatchWriteWithRetries(tableName, writeRequests, nil); err != nil {
+				return err
 			}
 		}
 
@@ -1137,7 +1350,7 @@ func (q *Query) BatchCreate(items any) error {
 			item := itemsValue.Index(i).Interface()
 
 			// Convert item to map[string]types.AttributeValue
-			av, err := convertItemToAttributeValue(item)
+			av, err := q.marshalItem(item)
 			if err != nil {
 				return fmt.Errorf("failed to convert item %d: %w", i, err)
 			}
@@ -1151,9 +1364,38 @@ func (q *Query) BatchCreate(items any) error {
 	return errors.New("executor does not support batch operations")
 }
 
+// WithConverter configures the query to use the provided converter for expression and key/value conversion.
+//
+// This is optional; when unset, the query falls back to the internal expression converter.
+func (q *Query) WithConverter(converter AttributeValueConverter) *Query {
+	q.converter = converter
+	return q
+}
+
+// WithMarshaler configures the query to use the provided marshaler for PutItem-style operations.
+//
+// This is optional; when unset, the query falls back to reflection-based conversion.
+func (q *Query) WithMarshaler(marshaler marshal.MarshalerInterface) *Query {
+	q.marshaler = marshaler
+	return q
+}
+
+func (q *Query) setExecutorContext(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	if setter, ok := q.executor.(executorContextSetter); ok && setter != nil {
+		setter.SetContext(ctx)
+	}
+}
+
 // WithContext sets the context for the query
 func (q *Query) WithContext(ctx context.Context) core.Query {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	q.ctx = ctx
+	q.setExecutorContext(ctx)
 	return q
 }
 
@@ -1204,248 +1446,73 @@ func (q *Query) selectBestIndex() (*core.IndexSchema, error) {
 	return selector.SelectOptimal(requiredKeys, nil)
 }
 
-// AllPaginated executes the query and returns paginated results
-func (q *Query) AllPaginated(dest any) (*core.PaginatedResult, error) {
-	if err := q.checkBuilderError(); err != nil {
-		return nil, err
-	}
-	// Set a reasonable limit if not specified
-	if q.limit == 0 {
-		q.limit = 100
-	}
-
-	compiled, err := q.Compile()
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute the query
-	var result any
-	if compiled.Operation == operationQuery {
-		result, err = q.executePaginatedQuery(compiled, dest)
-	} else {
-		result, err = q.executePaginatedScan(compiled, dest)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Extract pagination info
-	queryResult, ok := result.(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("unexpected pagination result type: %T", result)
-	}
-
-	// Build the paginated result
-	paginatedResult := &core.PaginatedResult{
-		Items:        dest,
-		NextCursor:   q.encodeCursor(queryResult["LastEvaluatedKey"]),
-		Count:        0,
-		ScannedCount: 0,
-	}
-
-	// Safely extract counts
-	if count, ok := queryResult["Count"].(int64); ok {
-		paginatedResult.Count = int(count)
-	} else if count, ok := queryResult["Count"].(int); ok {
-		paginatedResult.Count = count
-	}
-
-	if scannedCount, ok := queryResult["ScannedCount"].(int64); ok {
-		paginatedResult.ScannedCount = int(scannedCount)
-	} else if scannedCount, ok := queryResult["ScannedCount"].(int); ok {
-		paginatedResult.ScannedCount = scannedCount
-	}
-
-	// Set HasMore based on cursor
-	paginatedResult.HasMore = paginatedResult.NextCursor != ""
-
-	// Extract LastEvaluatedKey
-	if lastKey, ok := queryResult["LastEvaluatedKey"].(map[string]types.AttributeValue); ok {
-		paginatedResult.LastEvaluatedKey = lastKey
-	}
-
-	return paginatedResult, nil
-}
-
-// SetCursor sets the pagination cursor for the query
-func (q *Query) SetCursor(cursor string) error {
-	if cursor == "" {
-		return nil
-	}
-
-	// Decode the cursor to ExclusiveStartKey
-	startKey, err := q.decodeCursor(cursor)
-	if err != nil {
-		return fmt.Errorf("invalid cursor: %w", err)
-	}
-
-	q.exclusive = startKey
-	return nil
-}
-
-// Cursor is a fluent method to set the pagination cursor
-func (q *Query) Cursor(cursor string) core.Query {
-	if err := q.SetCursor(cursor); err != nil {
-		q.recordBuilderError(err)
-	}
-	return q
-}
-
-func paginationInfoMap(count int64, scannedCount int64, lastEvaluatedKey map[string]types.AttributeValue) map[string]any {
-	return map[string]any{
-		"Count":            count,
-		"ScannedCount":     scannedCount,
-		"LastEvaluatedKey": lastEvaluatedKey,
-	}
-}
-
-func emptyPaginationInfoMap() map[string]any {
-	return map[string]any{
-		"Count":            0,
-		"ScannedCount":     0,
-		"LastEvaluatedKey": nil,
-	}
-}
-
-func (q *Query) executeWithOptionalPagination(
-	compiled *core.CompiledQuery,
-	dest any,
-	execPaginated func(PaginatedQueryExecutor, *core.CompiledQuery, any) (int64, int64, map[string]types.AttributeValue, error),
-	exec func(*core.CompiledQuery, any) error,
-) (any, error) {
-	// Check if executor supports pagination
-	if paginatedExecutor, ok := q.executor.(PaginatedQueryExecutor); ok {
-		count, scannedCount, lastEvaluatedKey, err := execPaginated(paginatedExecutor, compiled, dest)
-		if err != nil {
-			return nil, err
-		}
-		return paginationInfoMap(count, scannedCount, lastEvaluatedKey), nil
-	}
-
-	// Fall back to regular execution without pagination info
-	if err := exec(compiled, dest); err != nil {
-		return nil, err
-	}
-
-	// Return mock result for backward compatibility
-	return emptyPaginationInfoMap(), nil
-}
-
-// executePaginatedQuery executes a query with pagination support
-func (q *Query) executePaginatedQuery(compiled *core.CompiledQuery, dest any) (any, error) {
-	return q.executeWithOptionalPagination(
-		compiled,
-		dest,
-		func(exec PaginatedQueryExecutor, compiled *core.CompiledQuery, dest any) (int64, int64, map[string]types.AttributeValue, error) {
-			result, err := exec.ExecuteQueryWithPagination(compiled, dest)
-			if err != nil {
-				return 0, 0, nil, err
-			}
-			return result.Count, result.ScannedCount, result.LastEvaluatedKey, nil
-		},
-		q.executor.ExecuteQuery,
-	)
-}
-
-// executePaginatedScan executes a scan with pagination support
-func (q *Query) executePaginatedScan(compiled *core.CompiledQuery, dest any) (any, error) {
-	return q.executeWithOptionalPagination(
-		compiled,
-		dest,
-		func(exec PaginatedQueryExecutor, compiled *core.CompiledQuery, dest any) (int64, int64, map[string]types.AttributeValue, error) {
-			result, err := exec.ExecuteScanWithPagination(compiled, dest)
-			if err != nil {
-				return 0, 0, nil, err
-			}
-			return result.Count, result.ScannedCount, result.LastEvaluatedKey, nil
-		},
-		q.executor.ExecuteScan,
-	)
-}
-
-// encodeCursor encodes the LastEvaluatedKey as a cursor string
-func (q *Query) encodeCursor(lastKey any) string {
-	if lastKey == nil {
-		return ""
-	}
-
-	// Convert to map[string]types.AttributeValue if needed
-	var avMap map[string]types.AttributeValue
-	switch v := lastKey.(type) {
-	case map[string]types.AttributeValue:
-		avMap = v
-	case map[string]any:
-		// Handle the case where lastKey is map[string]any
-		// This would come from the executor results
-		if val, ok := v["LastEvaluatedKey"]; ok {
-			if m, ok := val.(map[string]types.AttributeValue); ok {
-				avMap = m
-			}
-		}
-	default:
-		return ""
-	}
-
-	if len(avMap) == 0 {
-		return ""
-	}
-
-	// Use the new EncodeCursor function
-	encoded, err := EncodeCursor(avMap, q.index, q.orderBy.Order)
-	if err != nil {
-		// Log error in production
-		return ""
-	}
-	return encoded
-}
-
-// decodeCursor decodes a cursor string to ExclusiveStartKey
-func (q *Query) decodeCursor(cursor string) (map[string]types.AttributeValue, error) {
-	if cursor == "" {
-		return nil, nil
-	}
-
-	// Use the new DecodeCursor function
-	decodedCursor, err := DecodeCursor(cursor)
-	if err != nil {
-		return nil, err
-	}
-
-	if decodedCursor == nil {
-		return nil, nil
-	}
-
-	// Convert back to AttributeValues
-	return decodedCursor.ToAttributeValues()
-}
-
 // Compile compiles the query into executable form
 func (q *Query) Compile() (*core.CompiledQuery, error) {
 	builder := q.effectiveBuilder()
-
-	bestIndex, err := q.selectBestIndex()
-	if err != nil {
-		return nil, err
-	}
 
 	compiled := &core.CompiledQuery{
 		TableName: q.metadata.TableName(),
 	}
 
-	if bestIndex != nil {
-		compiled.Operation = operationQuery
-		if bestIndex.Name != "" {
-			compiled.IndexName = bestIndex.Name
+	if q.index != "" {
+		compiled.IndexName = q.index
+
+		var indexSchema *core.IndexSchema
+		for _, idx := range q.metadata.Indexes() {
+			if idx.Name == q.index {
+				copyIdx := idx
+				indexSchema = &copyIdx
+				break
+			}
 		}
-		if err := q.applyQueryConditions(builder, bestIndex); err != nil {
-			return nil, err
+
+		keys := q.keyNamesForIndex(indexSchema)
+		keyConditions, filterConditions := q.partitionConditionsForKeys(keys)
+		hasPartitionKey := false
+		for _, cond := range keyConditions {
+			if strings.EqualFold(cond.Field, keys.pkAttr) {
+				hasPartitionKey = true
+				break
+			}
+		}
+
+		if hasPartitionKey {
+			compiled.Operation = operationQuery
+			for _, cond := range keyConditions {
+				if err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value); err != nil {
+					return nil, err
+				}
+			}
+			for _, cond := range filterConditions {
+				if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
+					return nil, err
+				}
+			}
+		} else {
+			compiled.Operation = operationScan
+			if err := q.applyScanConditions(builder); err != nil {
+				return nil, err
+			}
 		}
 	} else {
-		compiled.Operation = operationScan
-		if err := q.applyScanConditions(builder); err != nil {
+		bestIndex, err := q.selectBestIndex()
+		if err != nil {
 			return nil, err
+		}
+
+		if bestIndex != nil {
+			compiled.Operation = operationQuery
+			if bestIndex.Name != "" {
+				compiled.IndexName = bestIndex.Name
+			}
+			if err := q.applyQueryConditions(builder, bestIndex); err != nil {
+				return nil, err
+			}
+		} else {
+			compiled.Operation = operationScan
+			if err := q.applyScanConditions(builder); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -1456,11 +1523,177 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 	return compiled, nil
 }
 
+func (q *Query) partitionConditionsForKeys(keys keyNameSet) ([]Condition, []Condition) {
+	keyConditions := make([]Condition, 0)
+	filterConditions := make([]Condition, 0)
+
+	for _, original := range q.conditions {
+		normalized, goField, attrName := q.normalizeCondition(original)
+		condGoName, condAttrName := q.resolveConditionNames(goField, attrName)
+
+		if !keys.isKey(condGoName, condAttrName) {
+			filterConditions = append(filterConditions, normalized)
+			continue
+		}
+
+		operator := strings.ToUpper(strings.TrimSpace(normalized.Operator))
+		if keys.isPartitionKey(condGoName, condAttrName) {
+			if operator == "=" {
+				keyConditions = append(keyConditions, normalized)
+			} else {
+				filterConditions = append(filterConditions, normalized)
+			}
+			continue
+		}
+
+		switch operator {
+		case "=", "<", "<=", ">", ">=", "BETWEEN", "BEGINS_WITH":
+			keyConditions = append(keyConditions, normalized)
+		default:
+			filterConditions = append(filterConditions, normalized)
+		}
+	}
+
+	return keyConditions, filterConditions
+}
+
 func (q *Query) effectiveBuilder() *expr.Builder {
 	if q.builder != nil {
-		return q.builder
+		return q.builder.Clone()
+	}
+	return q.newBuilder()
+}
+
+func (q *Query) newBuilder() *expr.Builder {
+	if q.converter != nil {
+		return expr.NewBuilderWithConverter(q.converter)
 	}
 	return expr.NewBuilder()
+}
+
+func (q *Query) toAttributeValue(value any) (types.AttributeValue, error) {
+	if q != nil && q.converter != nil {
+		return q.converter.ToAttributeValue(value)
+	}
+	return expr.ConvertToAttributeValue(value)
+}
+
+func (q *Query) buildPrimaryKeyMap(operation string) (map[string]types.AttributeValue, error) {
+	if q == nil {
+		return nil, fmt.Errorf("query cannot be nil")
+	}
+	if q.metadata == nil {
+		return nil, fmt.Errorf("model metadata is required for %s operations", operation)
+	}
+
+	schema := q.metadata.PrimaryKey()
+	if schema.PartitionKey == "" {
+		return nil, fmt.Errorf("partition key is required for %s", operation)
+	}
+
+	pkGo := schema.PartitionKey
+	pkAttr := q.resolveAttributeName(pkGo)
+	skGo := schema.SortKey
+	skAttr := ""
+	if skGo != "" {
+		skAttr = q.resolveAttributeName(skGo)
+	}
+
+	var pkValue any
+	var skValue any
+	pkFound := false
+	skFound := false
+
+	for _, cond := range q.conditions {
+		_, goField, attrName := q.normalizeCondition(cond)
+
+		if strings.EqualFold(goField, pkGo) || strings.EqualFold(attrName, pkAttr) {
+			if strings.TrimSpace(cond.Operator) != "=" {
+				return nil, fmt.Errorf("key condition must use '=' operator")
+			}
+			pkValue = cond.Value
+			pkFound = true
+			continue
+		}
+
+		if skGo != "" && (strings.EqualFold(goField, skGo) || strings.EqualFold(attrName, skAttr)) {
+			if strings.TrimSpace(cond.Operator) != "=" {
+				return nil, fmt.Errorf("key condition must use '=' operator")
+			}
+			skValue = cond.Value
+			skFound = true
+		}
+	}
+
+	if (!pkFound || (skGo != "" && !skFound)) && q.model != nil {
+		modelValue := reflect.ValueOf(q.model)
+		if modelValue.IsValid() && modelValue.Kind() == reflect.Ptr {
+			if modelValue.IsNil() {
+				modelValue = reflect.Value{}
+			} else {
+				modelValue = modelValue.Elem()
+			}
+		}
+
+		if modelValue.IsValid() && modelValue.Kind() == reflect.Struct {
+			if q.rawMetadata != nil && q.rawMetadata.PrimaryKey != nil && q.rawMetadata.PrimaryKey.PartitionKey != nil {
+				field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.PartitionKey.IndexPath)
+				if !field.IsZero() && !pkFound {
+					pkValue = field.Interface()
+					pkFound = true
+				}
+
+				if skGo != "" && q.rawMetadata.PrimaryKey.SortKey != nil {
+					field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.SortKey.IndexPath)
+					if !field.IsZero() && !skFound {
+						skValue = field.Interface()
+						skFound = true
+					}
+				}
+			} else {
+				if !pkFound {
+					field := modelValue.FieldByName(pkGo)
+					if field.IsValid() && !field.IsZero() {
+						pkValue = field.Interface()
+						pkFound = true
+					}
+				}
+
+				if skGo != "" && !skFound {
+					field := modelValue.FieldByName(skGo)
+					if field.IsValid() && !field.IsZero() {
+						skValue = field.Interface()
+						skFound = true
+					}
+				}
+			}
+		}
+	}
+
+	if !pkFound {
+		return nil, fmt.Errorf("partition key %s is required for %s", pkGo, operation)
+	}
+	if skGo != "" && !skFound {
+		return nil, fmt.Errorf("sort key %s is required for %s", skGo, operation)
+	}
+
+	pkAV, err := q.toAttributeValue(pkValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert partition key: %w", err)
+	}
+
+	key := map[string]types.AttributeValue{
+		pkAttr: pkAV,
+	}
+	if skGo != "" {
+		skAV, err := q.toAttributeValue(skValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert sort key: %w", err)
+		}
+		key[skAttr] = skAV
+	}
+
+	return key, nil
 }
 
 type keyNameSet struct {
@@ -1624,7 +1857,7 @@ func (q *Query) applyCompiledSettings(compiled *core.CompiledQuery) {
 		compiled.Limit = &limit
 	}
 
-	if q.orderBy.Order == "desc" {
+	if strings.EqualFold(q.orderBy.Order, "desc") {
 		forward := false
 		compiled.ScanIndexForward = &forward
 	}
@@ -1640,18 +1873,14 @@ func (q *Query) applyCompiledSettings(compiled *core.CompiledQuery) {
 
 // compileScan compiles a scan operation
 func (q *Query) compileScan() (*core.CompiledQuery, error) {
-	// Use existing builder if available (contains filters from Filter/OrFilter calls)
-	// Otherwise create a new one
-	var builder *expr.Builder
-	if q.builder != nil {
-		builder = q.builder
-	} else {
-		builder = expr.NewBuilder()
-	}
+	builder := q.effectiveBuilder()
 
 	compiled := &core.CompiledQuery{
 		TableName: q.metadata.TableName(),
 		Operation: operationScan,
+	}
+	if q.index != "" {
+		compiled.IndexName = q.index
 	}
 
 	// Add filter conditions from Where clauses
@@ -1705,6 +1934,151 @@ func (q *Query) compileScan() (*core.CompiledQuery, error) {
 	return compiled, nil
 }
 
+func (q *Query) compileGetItem() (*core.CompiledQuery, map[string]types.AttributeValue, bool, error) {
+	if q == nil {
+		return nil, nil, false, fmt.Errorf("query cannot be nil")
+	}
+	if q.metadata == nil {
+		return nil, nil, false, fmt.Errorf("model metadata is required for get item operations")
+	}
+	if q.index != "" {
+		return nil, nil, false, nil
+	}
+	if q.builder != nil {
+		// Filters (Filter/OrFilter/FilterGroup) cannot be applied via GetItem.
+		return nil, nil, false, nil
+	}
+
+	schema := q.metadata.PrimaryKey()
+	if schema.PartitionKey == "" {
+		return nil, nil, false, fmt.Errorf("partition key is required for get item operations")
+	}
+
+	pkGo := schema.PartitionKey
+	pkAttr := q.resolveAttributeName(pkGo)
+	skGo := schema.SortKey
+	skAttr := ""
+	if skGo != "" {
+		skAttr = q.resolveAttributeName(skGo)
+	}
+
+	var pkValue any
+	var skValue any
+	pkFound := false
+	skFound := false
+
+	for _, cond := range q.conditions {
+		_, goField, attrName := q.normalizeCondition(cond)
+
+		if strings.EqualFold(goField, pkGo) || strings.EqualFold(attrName, pkAttr) {
+			if strings.TrimSpace(cond.Operator) != "=" {
+				return nil, nil, false, nil
+			}
+			pkValue = cond.Value
+			pkFound = true
+			continue
+		}
+
+		if skGo != "" && (strings.EqualFold(goField, skGo) || strings.EqualFold(attrName, skAttr)) {
+			if strings.TrimSpace(cond.Operator) != "=" {
+				return nil, nil, false, nil
+			}
+			skValue = cond.Value
+			skFound = true
+			continue
+		}
+
+		// Non-key WHERE conditions must use Query/Scan semantics.
+		return nil, nil, false, nil
+	}
+
+	// Fall back to extracting key values from the model.
+	if (!pkFound || (skGo != "" && !skFound)) && q.model != nil {
+		modelValue := reflect.ValueOf(q.model)
+		if modelValue.IsValid() && modelValue.Kind() == reflect.Ptr {
+			if modelValue.IsNil() {
+				modelValue = reflect.Value{}
+			} else {
+				modelValue = modelValue.Elem()
+			}
+		}
+
+		if modelValue.IsValid() && modelValue.Kind() == reflect.Struct {
+			if q.rawMetadata != nil && q.rawMetadata.PrimaryKey != nil && q.rawMetadata.PrimaryKey.PartitionKey != nil {
+				field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.PartitionKey.IndexPath)
+				if !field.IsZero() && !pkFound {
+					pkValue = field.Interface()
+					pkFound = true
+				}
+
+				if skGo != "" && q.rawMetadata.PrimaryKey.SortKey != nil {
+					field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.SortKey.IndexPath)
+					if !field.IsZero() && !skFound {
+						skValue = field.Interface()
+						skFound = true
+					}
+				}
+			} else {
+				if !pkFound {
+					field := modelValue.FieldByName(pkGo)
+					if field.IsValid() && !field.IsZero() {
+						pkValue = field.Interface()
+						pkFound = true
+					}
+				}
+
+				if skGo != "" && !skFound {
+					field := modelValue.FieldByName(skGo)
+					if field.IsValid() && !field.IsZero() {
+						skValue = field.Interface()
+						skFound = true
+					}
+				}
+			}
+		}
+	}
+
+	if !pkFound {
+		return nil, nil, false, nil
+	}
+	if skGo != "" && !skFound {
+		return nil, nil, false, nil
+	}
+
+	pkAV, err := q.toAttributeValue(pkValue)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("failed to convert partition key: %w", err)
+	}
+
+	key := map[string]types.AttributeValue{
+		pkAttr: pkAV,
+	}
+	if skGo != "" {
+		skAV, err := q.toAttributeValue(skValue)
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("failed to convert sort key: %w", err)
+		}
+		key[skAttr] = skAV
+	}
+
+	compiled := &core.CompiledQuery{
+		Operation: "GetItem",
+		TableName: q.metadata.TableName(),
+	}
+	if len(q.projection) > 0 {
+		builder := q.newBuilder()
+		builder.AddProjection(q.projection...)
+		components := builder.Build()
+		compiled.ProjectionExpression = components.ProjectionExpression
+		compiled.ExpressionAttributeNames = components.ExpressionAttributeNames
+	}
+	if q.consistentRead {
+		compiled.ConsistentRead = &q.consistentRead
+	}
+
+	return compiled, key, true, nil
+}
+
 // convertItemToAttributeValue converts an item to DynamoDB AttributeValue map
 func convertItemToAttributeValue(item any) (map[string]types.AttributeValue, error) {
 	// Use our new converter
@@ -1721,6 +2095,176 @@ func convertItemToAttributeValue(item any) (map[string]types.AttributeValue, err
 	return nil, fmt.Errorf("expected map type for struct conversion, got %T", av)
 }
 
+func (q *Query) marshalItem(item any) (map[string]types.AttributeValue, error) {
+	if q == nil {
+		return nil, fmt.Errorf("query cannot be nil")
+	}
+
+	if q.rawMetadata != nil {
+		if q.marshaler != nil {
+			return q.marshaler.MarshalItem(item, q.rawMetadata)
+		}
+		return q.marshalItemReflect(item)
+	}
+
+	return q.marshalItemTagged(item)
+}
+
+func (q *Query) marshalItemReflect(item any) (map[string]types.AttributeValue, error) {
+	if q == nil || q.rawMetadata == nil {
+		return nil, fmt.Errorf("model metadata is required for reflection marshal")
+	}
+
+	modelValue := reflect.ValueOf(item)
+	if modelValue.Kind() == reflect.Ptr {
+		if modelValue.IsNil() {
+			return nil, fmt.Errorf("item cannot be nil")
+		}
+		modelValue = modelValue.Elem()
+	}
+	if modelValue.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("item must be a struct or pointer to struct")
+	}
+
+	itemMap := make(map[string]types.AttributeValue)
+	now := time.Now()
+
+	for _, fieldMeta := range q.rawMetadata.Fields {
+		if fieldMeta == nil {
+			continue
+		}
+
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if fieldMeta.OmitEmpty && fieldValue.IsZero() {
+			continue
+		}
+
+		valueToConvert := fieldValue.Interface()
+		switch {
+		case fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt:
+			valueToConvert = now
+		case fieldMeta.IsVersion:
+			if fieldValue.IsZero() {
+				valueToConvert = int64(0)
+			}
+		case fieldMeta.IsTTL:
+			if fieldValue.Type() == reflect.TypeOf(time.Time{}) && !fieldValue.IsZero() {
+				ttlTime, ok := fieldValue.Interface().(time.Time)
+				if !ok {
+					return nil, fmt.Errorf("expected time.Time for TTL field %s, got %T", fieldMeta.DBName, fieldValue.Interface())
+				}
+				valueToConvert = ttlTime.Unix()
+			}
+		}
+
+		var av types.AttributeValue
+		var err error
+		if q.converter != nil {
+			if fieldMeta.IsSet {
+				av, err = q.converter.ConvertToSet(valueToConvert, true)
+			} else {
+				av, err = q.converter.ToAttributeValue(valueToConvert)
+			}
+		} else {
+			av, err = expr.ConvertToAttributeValue(valueToConvert)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert field %s: %w", fieldMeta.DBName, err)
+		}
+
+		if _, isNull := av.(*types.AttributeValueMemberNULL); isNull && fieldMeta.OmitEmpty {
+			continue
+		}
+
+		itemMap[fieldMeta.DBName] = av
+	}
+
+	return itemMap, nil
+}
+
+func (q *Query) marshalItemTagged(item any) (map[string]types.AttributeValue, error) {
+	modelValue := reflect.ValueOf(item)
+	if !modelValue.IsValid() {
+		return nil, fmt.Errorf("item must be a struct")
+	}
+	if modelValue.Kind() == reflect.Ptr {
+		if modelValue.IsNil() {
+			return nil, fmt.Errorf("item must be a struct")
+		}
+		modelValue = modelValue.Elem()
+	}
+	if modelValue.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("item must be a struct")
+	}
+
+	modelType := modelValue.Type()
+	out := make(map[string]types.AttributeValue)
+
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		tag := field.Tag.Get("dynamorm")
+		if tag == "-" {
+			continue
+		}
+
+		fieldValue := modelValue.Field(i)
+		if !fieldValue.IsValid() {
+			continue
+		}
+
+		if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
+			continue
+		}
+
+		var av types.AttributeValue
+		var err error
+		if q != nil && q.converter != nil {
+			av, err = q.converter.ToAttributeValue(fieldValue.Interface())
+		} else {
+			av, err = expr.ConvertToAttributeValue(fieldValue.Interface())
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert field %s: %w", field.Name, err)
+		}
+
+		out[field.Name] = av
+	}
+
+	return out, nil
+}
+
+func (q *Query) updateTimestampsInModel() {
+	if q == nil || q.rawMetadata == nil || q.model == nil {
+		return
+	}
+
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() != reflect.Ptr || modelValue.IsNil() {
+		return
+	}
+	modelValue = modelValue.Elem()
+	if modelValue.Kind() != reflect.Struct {
+		return
+	}
+
+	now := time.Now()
+
+	for _, fieldMeta := range q.rawMetadata.Fields {
+		if fieldMeta == nil || (!fieldMeta.IsCreatedAt && !fieldMeta.IsUpdatedAt) {
+			continue
+		}
+
+		field := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if field.CanSet() && field.Type() == reflect.TypeOf(time.Time{}) {
+			field.Set(reflect.ValueOf(now))
+		}
+	}
+}
+
 // OrFilter adds an OR filter condition
 func (q *Query) OrFilter(field string, op string, value any) core.Query {
 	if err := q.rejectEncryptedConditionField(field); err != nil {
@@ -1729,10 +2273,10 @@ func (q *Query) OrFilter(field string, op string, value any) core.Query {
 	}
 	// Initialize builder if not already done
 	if q.builder == nil {
-		q.builder = expr.NewBuilder()
+		q.builder = q.newBuilder()
 	}
 
-	if err := q.builder.AddFilterCondition("OR", field, op, value); err != nil {
+	if err := q.builder.AddFilterCondition("OR", q.resolveAttributeName(field), op, value); err != nil {
 		q.recordBuilderError(err)
 	}
 	return q
@@ -1741,17 +2285,21 @@ func (q *Query) OrFilter(field string, op string, value any) core.Query {
 func (q *Query) addFilterGroup(groupOperator string, fn func(core.Query)) core.Query {
 	// Initialize builder if not already done
 	if q.builder == nil {
-		q.builder = expr.NewBuilder()
+		q.builder = q.newBuilder()
 	}
 
 	// Create a new sub-query and builder for the group
-	subBuilder := expr.NewBuilder()
+	subBuilder := q.newBuilder()
 	subQuery := &Query{
 		model:    q.model,
 		metadata: q.metadata,
 		executor: q.executor,
 		ctx:      q.ctx,
 		builder:  subBuilder,
+		// Ensure grouped conditions behave identically to the parent query.
+		rawMetadata: q.rawMetadata,
+		converter:   q.converter,
+		marshaler:   q.marshaler,
 	}
 
 	// Execute the user's function to build the sub-query
@@ -1839,15 +2387,23 @@ func (q *Query) UpdateBuilder() core.UpdateBuilder {
 
 // NewWithConditions creates a new Query instance with all necessary fields
 func NewWithConditions(model any, metadata core.ModelMetadata, executor QueryExecutor, conditions []Condition, ctx context.Context) *Query { //nolint:revive // context-as-argument: keep signature for compatibility
-	return &Query{
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	q := &Query{
 		model:                   model,
 		metadata:                metadata,
 		executor:                executor,
 		conditions:              conditions,
 		ctx:                     ctx,
 		filters:                 make([]Filter, 0),
-		builder:                 expr.NewBuilder(),
 		writeConditions:         make([]Condition, 0),
 		rawConditionExpressions: make([]conditionExpression, 0),
 	}
+	if provider, ok := metadata.(rawMetadataProvider); ok {
+		q.rawMetadata = provider.RawMetadata()
+	}
+	q.setExecutorContext(q.ctx)
+	return q
 }

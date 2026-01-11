@@ -2,6 +2,7 @@ package consistency
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,13 +23,27 @@ type cov5ConsistencyExecutor struct {
 	last *core.CompiledQuery
 }
 
-func (e *cov5ConsistencyExecutor) ExecuteQuery(input *core.CompiledQuery, _ any) error {
+func (e *cov5ConsistencyExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 	e.last = input
+	if dest != nil {
+		destValue := reflect.ValueOf(dest)
+		if destValue.Kind() == reflect.Ptr && destValue.Elem().Kind() == reflect.Slice && destValue.Elem().Len() == 0 {
+			zero := reflect.Zero(destValue.Elem().Type().Elem())
+			destValue.Elem().Set(reflect.Append(destValue.Elem(), zero))
+		}
+	}
 	return nil
 }
 
-func (e *cov5ConsistencyExecutor) ExecuteScan(input *core.CompiledQuery, _ any) error {
+func (e *cov5ConsistencyExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 	e.last = input
+	if dest != nil {
+		destValue := reflect.ValueOf(dest)
+		if destValue.Kind() == reflect.Ptr && destValue.Elem().Kind() == reflect.Slice && destValue.Elem().Len() == 0 {
+			zero := reflect.Zero(destValue.Elem().Type().Elem())
+			destValue.Elem().Set(reflect.Append(destValue.Elem(), zero))
+		}
+	}
 	return nil
 }
 
@@ -52,7 +67,7 @@ func TestConsistentQueryBuilder_First_UseMainTableUsesConsistentRead(t *testing.
 		UseMainTable: true,
 	})
 
-	var out []struct{}
+	var out struct{}
 	require.NoError(t, builder.First(&out))
 	require.NotNil(t, exec.last)
 	require.NotNil(t, exec.last.ConsistentRead)

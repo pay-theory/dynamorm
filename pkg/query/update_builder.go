@@ -255,7 +255,6 @@ func (ub *UpdateBuilder) populateKeyValues() error {
 		return fmt.Errorf("query metadata is nil")
 	}
 
-	ub.keyValues = make(map[string]any)
 	primaryKey := ub.query.metadata.PrimaryKey()
 	resolveAttr := func(field string) string {
 		if field == "" || ub.query.metadata == nil {
@@ -270,6 +269,26 @@ func (ub *UpdateBuilder) populateKeyValues() error {
 	pkAttr := resolveAttr(primaryKey.PartitionKey)
 	skAttr := resolveAttr(primaryKey.SortKey)
 
+	if len(ub.keyValues) > 0 {
+		normalized := make(map[string]any, len(ub.keyValues))
+		for field, value := range ub.keyValues {
+			normalized[resolveAttr(field)] = value
+		}
+		ub.keyValues = normalized
+
+		if _, ok := ub.keyValues[pkAttr]; !ok {
+			return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
+		}
+		if primaryKey.SortKey != "" {
+			if _, ok := ub.keyValues[skAttr]; !ok {
+				return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
+			}
+		}
+
+		return nil
+	}
+
+	ub.keyValues = make(map[string]any)
 	for _, cond := range ub.query.conditions {
 		condAttr := resolveAttr(cond.Field)
 		if condAttr == pkAttr || (primaryKey.SortKey != "" && condAttr == skAttr) {

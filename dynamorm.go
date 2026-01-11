@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
-	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/marshal"
 	"github.com/pay-theory/dynamorm/pkg/model"
@@ -225,15 +224,23 @@ func (db *DB) Model(model any) core.Query {
 		ctx = context.Background()
 	}
 
-	return &query{
-		db:              db,
-		model:           model,
-		ctx:             ctx,
-		builder:         expr.NewBuilderWithConverter(db.converter),
-		conditions:      make([]condition, 0, 4), // Pre-allocate for typical use case
-		writeConditions: make([]condition, 0),
-		rawConditions:   make([]rawConditionExpression, 0),
+	meta, err := db.registry.GetMetadata(model)
+	if err != nil {
+		return &errorQuery{err: fmt.Errorf("failed to get metadata for model %T: %w", model, err)}
 	}
+
+	adapter := &metadataAdapter{metadata: meta}
+	executor := &queryExecutor{
+		db:       db,
+		metadata: meta,
+		ctx:      ctx,
+	}
+
+	q := queryPkg.New(model, adapter, executor).
+		WithConverter(db.converter).
+		WithMarshaler(db.marshaler)
+	q.WithContext(ctx)
+	return q
 }
 
 // Transaction executes a function within a database transaction

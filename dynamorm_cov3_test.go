@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/pay-theory/dynamorm/pkg/core"
+	queryPkg "github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
@@ -94,22 +95,33 @@ func TestQuery_BuilderErrorsAndState(t *testing.T) {
 			_ = sub.Filter("Name", "=", "alice")
 		})
 
-	q, ok := qAny.(*query)
+	q, ok := qAny.(*queryPkg.Query)
 	require.True(t, ok)
-	require.Equal(t, "by-id", q.indexName)
-	require.NotNil(t, q.offset)
-	require.Equal(t, 10, *q.offset)
-	require.Equal(t, []string{"name"}, q.fields)
-	require.NotEmpty(t, q.writeConditions)
-	require.NotEmpty(t, q.rawConditions)
+	compiled, err := q.Compile()
+	require.NoError(t, err)
+	require.Equal(t, "by-id", compiled.IndexName)
+	require.NotEmpty(t, compiled.ProjectionExpression)
+	require.Contains(t, mapValues(compiled.ExpressionAttributeNames), "name")
 
 	// First recorded builder error should be returned.
 	bad := db.Model(&cov3Item{}).
 		Filter("Name", "", "x").
 		WithConditionExpression("", nil)
-	badQ, ok := bad.(*query)
-	require.True(t, ok)
-	require.Error(t, badQ.checkBuilderError())
+	var out []cov3Item
+	err = bad.All(&out)
+	require.Error(t, err)
+}
+
+func mapValues(values map[string]string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		out = append(out, v)
+	}
+	return out
 }
 
 func TestQuery_BatchWriteCreateAndDelete(t *testing.T) {
@@ -455,7 +467,9 @@ func TestErrorQuery_ImplementsCoreQuery(t *testing.T) {
 	require.Error(t, q.BatchWrite([]any{}, []any{}))
 	require.Error(t, q.BatchUpdateWithOptions(nil, []string{"Name"}))
 
-	require.Nil(t, q.UpdateBuilder())
+	updateBuilder := q.UpdateBuilder()
+	require.NotNil(t, updateBuilder)
+	require.Error(t, updateBuilder.Set("Name", "x").Execute())
 	require.Error(t, q.ScanAllSegments(&out, 1))
 	require.Error(t, q.SetCursor("c"))
 

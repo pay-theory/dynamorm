@@ -30,7 +30,7 @@ func BenchmarkMarshalItem_Current(b *testing.B) {
 	db := &DB{
 		converter: pkgTypes.NewConverter(),
 	}
-	q := &query{db: db}
+	marshaler := marshal.New(db.converter)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -121,7 +121,7 @@ func BenchmarkMarshalItem_Current(b *testing.B) {
 
 	// Run benchmark
 	for i := 0; i < b.N; i++ {
-		_, err := q.marshalItem(user, metadata)
+		_, err := marshaler.MarshalItem(user, metadata)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -140,7 +140,7 @@ func BenchmarkMarshalItem_SimpleStruct(b *testing.B) {
 	db := &DB{
 		converter: pkgTypes.NewConverter(),
 	}
-	q := &query{db: db}
+	marshaler := marshal.New(db.converter)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -181,7 +181,7 @@ func BenchmarkMarshalItem_SimpleStruct(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, err := q.marshalItem(user, metadata)
+		_, err := marshaler.MarshalItem(user, metadata)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func BenchmarkMarshalItem_PrimitivesOnly(b *testing.B) {
 	db := &DB{
 		converter: pkgTypes.NewConverter(),
 	}
-	q := &query{db: db}
+	marshaler := marshal.New(db.converter)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -247,7 +247,7 @@ func BenchmarkMarshalItem_PrimitivesOnly(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, err := q.marshalItem(user, metadata)
+		_, err := marshaler.MarshalItem(user, metadata)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -420,11 +420,11 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 		db := &DB{
 			converter: pkgTypes.NewConverter(),
 		}
-		q := &query{db: db}
+		marshaler := marshal.New(db.converter)
 
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_, err := q.marshalItem(user, metadata)
+			_, err := marshaler.MarshalItem(user, metadata)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -437,17 +437,16 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 			converter: converter,
 			marshaler: marshal.New(converter),
 		}
-		q := &query{db: db}
 
 		// Warm up cache
-		if _, err := q.marshalItem(user, metadata); err != nil {
+		if _, err := db.marshaler.MarshalItem(user, metadata); err != nil {
 			b.Fatal(err)
 		}
 
 		b.ResetTimer()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_, err := q.marshalItem(user, metadata)
+			_, err := db.marshaler.MarshalItem(user, metadata)
 			if err != nil {
 				b.Fatal(err)
 			}

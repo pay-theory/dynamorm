@@ -16,11 +16,30 @@ type cov5QueryExecutor struct {
 	scanCalls  int
 }
 
+func appendZeroElementToSlice(dest any) {
+	rv := reflect.ValueOf(dest)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		return
+	}
+	slice := rv.Elem()
+	if slice.Kind() != reflect.Slice {
+		return
+	}
+
+	elemType := slice.Type().Elem()
+	if elemType.Kind() == reflect.Ptr {
+		slice.Set(reflect.Append(slice, reflect.New(elemType.Elem())))
+		return
+	}
+	slice.Set(reflect.Append(slice, reflect.New(elemType).Elem()))
+}
+
 func (e *cov5QueryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
 	e.queryCalls++
 	e.lastQuery = input
 
 	rv := reflect.ValueOf(dest)
+	appendZeroElementToSlice(dest)
 	if rv.Kind() == reflect.Ptr && rv.Elem().Kind() == reflect.Struct {
 		count := rv.Elem().FieldByName("Count")
 		if count.IsValid() && count.CanSet() && count.Kind() == reflect.Int64 {
@@ -38,7 +57,7 @@ func (e *cov5QueryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) er
 func (e *cov5QueryExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 	e.scanCalls++
 	e.lastScan = input
-	_ = dest
+	appendZeroElementToSlice(dest)
 	return nil
 }
 
@@ -51,7 +70,7 @@ func TestQuery_First_UsesQueryOrScan(t *testing.T) {
 	}, exec)
 	q.Where("pk", "=", "p1")
 
-	var out []struct{}
+	var out struct{}
 	require.NoError(t, q.First(&out))
 	require.Equal(t, 1, exec.queryCalls)
 	require.NotNil(t, exec.lastQuery)

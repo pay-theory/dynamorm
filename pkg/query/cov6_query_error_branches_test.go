@@ -86,7 +86,7 @@ func TestMergeConditionExpressions_Branches_COV6(t *testing.T) {
 		mergedExpr, mergedValues, err := mergeConditionExpressions("", nil, []conditionExpression{
 			{Expression: "a = :x", Values: map[string]any{":x": "1"}},
 			{Expression: "", Values: map[string]any{":y": "2"}},
-		})
+		}, nil)
 		require.NoError(t, err)
 		require.Equal(t, "a = :x", mergedExpr)
 		require.Contains(t, mergedValues, ":x")
@@ -97,14 +97,14 @@ func TestMergeConditionExpressions_Branches_COV6(t *testing.T) {
 			":x": &types.AttributeValueMemberS{Value: "1"},
 		}, []conditionExpression{
 			{Expression: "b = :x", Values: map[string]any{":x": "dup"}},
-		})
+		}, nil)
 		require.ErrorContains(t, err, "duplicate placeholder")
 	})
 
 	t.Run("fails when conversion fails", func(t *testing.T) {
 		_, _, err := mergeConditionExpressions("", nil, []conditionExpression{
 			{Expression: "a = :x", Values: map[string]any{":x": make(chan int)}},
-		})
+		}, nil)
 		require.Error(t, err)
 	})
 }

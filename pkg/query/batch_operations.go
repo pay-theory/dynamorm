@@ -326,22 +326,60 @@ func (q *Query) executeDeleteBatch(batch []any, opts *BatchUpdateOptions) error 
 
 // extractKey extracts primary key values from an item
 func (q *Query) extractKey(item any) (map[string]any, error) {
-	key := make(map[string]any)
+	if q == nil || q.metadata == nil {
+		return nil, fmt.Errorf("model metadata is required for batch key extraction")
+	}
 	primaryKey := q.metadata.PrimaryKey()
+	if primaryKey.PartitionKey == "" {
+		return nil, fmt.Errorf("partition key is required for batch key extraction")
+	}
+	if item == nil {
+		return nil, fmt.Errorf("key cannot be nil")
+	}
+
+	if pair, ok := item.(core.KeyPair); ok {
+		if pair.PartitionKey == nil {
+			return nil, fmt.Errorf("partition key value is required for %s", primaryKey.PartitionKey)
+		}
+		if primaryKey.SortKey != "" && pair.SortKey == nil {
+			return nil, fmt.Errorf("sort key value is required for %s", primaryKey.SortKey)
+		}
+
+		key := map[string]any{
+			primaryKey.PartitionKey: pair.PartitionKey,
+		}
+		if primaryKey.SortKey != "" {
+			key[primaryKey.SortKey] = pair.SortKey
+		}
+		return key, nil
+	}
 
 	itemValue := reflect.ValueOf(item)
 	if itemValue.Kind() == reflect.Ptr {
+		if itemValue.IsNil() {
+			if primaryKey.SortKey != "" {
+				return nil, fmt.Errorf("composite key requires both %s and %s", primaryKey.PartitionKey, primaryKey.SortKey)
+			}
+			return map[string]any{primaryKey.PartitionKey: item}, nil
+		}
 		itemValue = itemValue.Elem()
 	}
 
-	// Extract partition key
+	if itemValue.Kind() != reflect.Struct {
+		if primaryKey.SortKey != "" {
+			return nil, fmt.Errorf("composite key requires both %s and %s", primaryKey.PartitionKey, primaryKey.SortKey)
+		}
+		return map[string]any{primaryKey.PartitionKey: item}, nil
+	}
+
+	key := make(map[string]any, 2)
+
 	pkField, ok := q.findKeyField(itemValue, primaryKey.PartitionKey)
 	if !ok {
 		return nil, fmt.Errorf("partition key field %s not found", primaryKey.PartitionKey)
 	}
 	key[primaryKey.PartitionKey] = pkField.Interface()
 
-	// Extract sort key if present
 	if primaryKey.SortKey != "" {
 		skField, ok := q.findKeyField(itemValue, primaryKey.SortKey)
 		if !ok {
@@ -366,6 +404,11 @@ func (q *Query) extractKeyAttributeValues(key any) (map[string]types.AttributeVa
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert key value: %w", err)
 		}
+		switch av.(type) {
+		case *types.AttributeValueMemberS, *types.AttributeValueMemberN, *types.AttributeValueMemberB:
+		default:
+			return nil, fmt.Errorf("invalid key value for %s: %T", k, av)
+		}
 		attrName := q.resolveAttributeName(k)
 		keyAV[attrName] = av
 	}
@@ -374,6 +417,10 @@ func (q *Query) extractKeyAttributeValues(key any) (map[string]types.AttributeVa
 }
 
 func (q *Query) findKeyField(itemValue reflect.Value, keyName string) (reflect.Value, bool) {
+	if !itemValue.IsValid() || itemValue.Kind() != reflect.Struct {
+		return reflect.Value{}, false
+	}
+
 	goName := q.resolveGoFieldName(keyName)
 	if field := itemValue.FieldByName(goName); field.IsValid() {
 		return field, true
@@ -390,7 +437,7 @@ func (q *Query) findKeyField(itemValue reflect.Value, keyName string) (reflect.V
 }
 
 func findFieldByTag(itemValue reflect.Value, attrName string) (reflect.Value, bool) {
-	if attrName == "" {
+	if attrName == "" || !itemValue.IsValid() || itemValue.Kind() != reflect.Struct {
 		return reflect.Value{}, false
 	}
 	typ := itemValue.Type()
@@ -568,6 +615,9 @@ func (q *Query) executeBatchWriteWithRetries(tableName string, writeRequests []t
 		result, err := batchExecutor.ExecuteBatchWriteItem(tableName, remainingRequests)
 		if err != nil {
 			return fmt.Errorf("batch write failed: %w", err)
+		}
+		if result == nil {
+			return fmt.Errorf("batch write executor returned nil result")
 		}
 
 		// Check for unprocessed items

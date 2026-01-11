@@ -9,7 +9,13 @@ set -euo pipefail
 
 failures=0
 
-root_files="$(git ls-files '*.go' | rg -v '/' | rg -v '_test\.go$' || true)"
+root_files="$(
+  git ls-files '*.go' | rg -v '/' | rg -v '_test\.go$' | while read -r f; do
+    if [[ -f "${f}" ]]; then
+      echo "${f}"
+    fi
+  done || true
+)"
 
 set +e
 root_match=""

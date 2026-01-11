@@ -25,6 +25,7 @@ import (
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/marshal"
 	"github.com/pay-theory/dynamorm/pkg/model"
+	queryPkg "github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
@@ -293,14 +294,8 @@ func TestDBModelCachesMetadata(t *testing.T) {
 	db := newBareDB()
 
 	q := db.Model(&testOrderModel{})
-	qq, ok := q.(*query)
+	_, ok := q.(*queryPkg.Query)
 	require.True(t, ok)
-	require.Equal(t, db, qq.db)
-	require.NotNil(t, qq.builder)
-	require.Equal(t, 0, len(qq.conditions))
-	require.Nil(t, qq.limit)
-	require.Nil(t, qq.orderBy)
-	require.Equal(t, db.ctx, qq.ctx)
 
 	typ := reflect.TypeOf(testOrderModel{})
 	metaValue, ok := db.metadataCache.Load(typ)
@@ -342,16 +337,18 @@ func TestQueryBuilderAllBuildsExpressions(t *testing.T) {
 		OrderBy("CreatedAt", "DESC").
 		Limit(5)
 
-	internalQuery, ok := q.(*query)
+	internalQuery, ok := q.(*queryPkg.Query)
 	require.True(t, ok)
-	filterComponents := internalQuery.builder.Build()
-	require.NotEmpty(t, filterComponents.FilterExpression)
-	resolvedFilter := filterComponents.FilterExpression
-	for placeholder, actual := range filterComponents.ExpressionAttributeNames {
+
+	compiled, err := internalQuery.Compile()
+	require.NoError(t, err)
+	require.NotEmpty(t, compiled.FilterExpression)
+	resolvedFilter := compiled.FilterExpression
+	for placeholder, actual := range compiled.ExpressionAttributeNames {
 		resolvedFilter = strings.ReplaceAll(resolvedFilter, placeholder, actual)
 	}
 	require.Contains(t, strings.ToLower(resolvedFilter), "status")
-	require.NotEmpty(t, filterComponents.ExpressionAttributeValues)
+	require.NotEmpty(t, compiled.ExpressionAttributeValues)
 
 	var results []testOrderModel
 	err = q.All(&results)
