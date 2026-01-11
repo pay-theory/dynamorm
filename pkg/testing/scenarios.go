@@ -3,9 +3,21 @@ package testing
 import (
 	"errors"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
+
+func mustUpdateBuilder(v any) core.UpdateBuilder {
+	if v == nil {
+		return nil
+	}
+	builder, ok := v.(core.UpdateBuilder)
+	if !ok {
+		panic("unexpected type: expected core.UpdateBuilder")
+	}
+	return builder
+}
 
 // CommonScenarios provides pre-built test scenarios
 type CommonScenarios struct {
@@ -102,7 +114,10 @@ func (s *CommonScenarios) SetupTransactionScenario(success bool) {
 	if success {
 		s.db.MockDB.On("Transaction", mock.AnythingOfType("func(*core.Tx) error")).
 			Run(func(args mock.Arguments) {
-				fn := args.Get(0).(func(*core.Tx) error)
+				fn, ok := args.Get(0).(func(*core.Tx) error)
+				if !ok {
+					panic("unexpected type: expected func(*core.Tx) error")
+				}
 				// Execute the transaction function with a mock transaction
 				if err := fn(&core.Tx{}); err != nil {
 					panic(err)
@@ -153,87 +168,87 @@ type MockUpdateBuilder struct {
 
 func (m *MockUpdateBuilder) Set(field string, value any) core.UpdateBuilder {
 	args := m.Called(field, value)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) SetIfNotExists(field string, value any, defaultValue any) core.UpdateBuilder {
 	args := m.Called(field, value, defaultValue)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Add(field string, value any) core.UpdateBuilder {
 	args := m.Called(field, value)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Increment(field string) core.UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Decrement(field string) core.UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Remove(field string) core.UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Delete(field string, value any) core.UpdateBuilder {
 	args := m.Called(field, value)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) AppendToList(field string, values any) core.UpdateBuilder {
 	args := m.Called(field, values)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) PrependToList(field string, values any) core.UpdateBuilder {
 	args := m.Called(field, values)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder {
 	args := m.Called(field, index)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
 	args := m.Called(field, index, value)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
 	args := m.Called(field, operator, value)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
 	args := m.Called(field, operator, value)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ConditionExists(field string) core.UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ConditionNotExists(field string) core.UpdateBuilder {
 	args := m.Called(field)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ConditionVersion(currentVersion int64) core.UpdateBuilder {
 	args := m.Called(currentVersion)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) ReturnValues(option string) core.UpdateBuilder {
 	args := m.Called(option)
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 func (m *MockUpdateBuilder) Execute() error {

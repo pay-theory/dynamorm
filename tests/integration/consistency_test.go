@@ -7,18 +7,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/pay-theory/dynamorm/pkg/consistency"
 )
 
 // TestModel for consistency tests
 type ConsistencyTestModel struct {
-	PK        string `dynamorm:"pk"`
-	SK        string `dynamorm:"sk"`
-	Email     string `dynamorm:"index:email-index,pk"`
-	Username  string `dynamorm:"index:username-index,pk"`
-	Name      string
 	UpdatedAt time.Time `dynamorm:"updated_at"`
-	Version   int       `dynamorm:"version"`
+	PK        string    `dynamorm:"pk"`
+	SK        string    `dynamorm:"sk"`
+	Email     string    `dynamorm:"index:email-index,pk"`
+	Username  string    `dynamorm:"index:username-index,pk"`
+	Name      string
+	Version   int `dynamorm:"version"`
 }
 
 func TestConsistentRead(t *testing.T) {
@@ -278,8 +279,8 @@ func TestReadAfterWritePatterns(t *testing.T) {
 		err = helper.QueryAfterWrite(&ConsistencyTestModel{}, &consistency.QueryAfterWriteOptions{
 			RetryConfig: consistency.RecommendedRetryConfig(),
 			VerifyFunc: func(result any) bool {
-				r := result.(*ConsistencyTestModel)
-				return r.Name == item.Name
+				r, ok := result.(*ConsistencyTestModel)
+				return ok && r.Name == item.Name
 			},
 		}).
 			Index("username-index").

@@ -177,9 +177,9 @@ func TestDynamORMError_Unwrap(t *testing.T) {
 // TestDynamORMError_Is tests the Is method
 func TestDynamORMError_Is(t *testing.T) {
 	tests := []struct {
-		name   string
-		err    *DynamORMError
 		target error
+		err    *DynamORMError
+		name   string
 		want   bool
 	}{
 		{
@@ -269,8 +269,8 @@ func TestNewErrorWithContext(t *testing.T) {
 // TestIsNotFound tests the IsNotFound helper function
 func TestIsNotFound(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{
@@ -322,8 +322,8 @@ func TestIsNotFound(t *testing.T) {
 // TestIsInvalidModel tests the IsInvalidModel helper function
 func TestIsInvalidModel(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{
@@ -369,8 +369,8 @@ func TestIsInvalidModel(t *testing.T) {
 // TestIsConditionFailed tests the IsConditionFailed helper function
 func TestIsConditionFailed(t *testing.T) {
 	tests := []struct {
-		name string
 		err  error
+		name string
 		want bool
 	}{
 		{
@@ -451,6 +451,36 @@ func TestErrorChaining(t *testing.T) {
 	assert.Contains(t, errMsg, "operation failed")
 }
 
+func TestTransactionError_ErrorAndUnwrap(t *testing.T) {
+	t.Run("nil receiver", func(t *testing.T) {
+		var txErr *TransactionError
+		assert.Equal(t, "dynamorm: transaction failed", txErr.Error())
+		assert.Nil(t, txErr.Unwrap())
+	})
+
+	t.Run("includes operation, index, and reason", func(t *testing.T) {
+		baseErr := errors.New("boom")
+		txErr := &TransactionError{
+			Err:            baseErr,
+			Operation:      "update",
+			Reason:         "ConditionalCheckFailed",
+			OperationIndex: 3,
+		}
+
+		assert.Contains(t, txErr.Error(), "transaction operation update (index 3) failed: ConditionalCheckFailed")
+		assert.ErrorIs(t, txErr.Unwrap(), baseErr)
+	})
+
+	t.Run("omits index when negative and omits reason when empty", func(t *testing.T) {
+		txErr := &TransactionError{
+			Operation:      "delete",
+			OperationIndex: -1,
+		}
+
+		assert.Equal(t, "dynamorm: transaction operation delete failed", txErr.Error())
+	})
+}
+
 // TestConcurrentErrorAccess tests thread safety of error operations
 func TestConcurrentErrorAccess(t *testing.T) {
 	err := NewErrorWithContext("ConcurrentOp", "TestModel", ErrTransactionFailed,
@@ -461,7 +491,10 @@ func TestConcurrentErrorAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			_ = err.Error()
-			_ = err.Unwrap()
+			unwrapped := err.Unwrap()
+			if unwrapped != nil {
+				_ = unwrapped.Error()
+			}
 			_ = err.Is(ErrTransactionFailed)
 			done <- true
 		}()
@@ -477,14 +510,14 @@ func TestConcurrentErrorAccess(t *testing.T) {
 func BenchmarkErrorCreation(b *testing.B) {
 	b.Run("NewError", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = NewError("Operation", "Model", ErrItemNotFound)
+			_ = NewError("Operation", "Model", ErrItemNotFound).Error()
 		}
 	})
 
 	b.Run("NewErrorWithContext", func(b *testing.B) {
 		ctx := map[string]any{"key": "value", "count": 42}
 		for i := 0; i < b.N; i++ {
-			_ = NewErrorWithContext("Operation", "Model", ErrItemNotFound, ctx)
+			_ = NewErrorWithContext("Operation", "Model", ErrItemNotFound, ctx).Error()
 		}
 	})
 }

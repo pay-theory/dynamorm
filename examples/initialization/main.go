@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
@@ -21,8 +22,8 @@ type User struct {
 	ID        string `dynamorm:"pk"`
 	Email     string `dynamorm:"sk"`
 	Name      string
-	Active    bool
 	CreatedAt string `dynamorm:"created_at"`
+	Active    bool
 }
 
 func main() {

@@ -12,17 +12,17 @@ import (
 
 // Test struct for various scenarios
 type TestStruct struct {
-	ID           string         `dynamorm:"id,pk"`
-	Name         string         `dynamorm:"attr:name"`
-	Age          int            `dynamorm:"age"`
-	Active       bool           `dynamorm:"active"`
-	Score        float64        `dynamorm:"score"`
-	Tags         []string       `dynamorm:"tags,set"`
 	CreatedAt    time.Time      `dynamorm:"created_at"`
 	UpdatedAt    time.Time      `dynamorm:"updated_at,omitempty"`
 	Metadata     map[string]any `dynamorm:"metadata"`
+	ID           string         `dynamorm:"id,pk"`
+	Name         string         `dynamorm:"attr:name"`
 	IgnoreField  string         `dynamorm:"-"`
-	privateField string         // Should be ignored
+	privateField string
+	Tags         []string `dynamorm:"tags,set"`
+	Age          int      `dynamorm:"age"`
+	Score        float64  `dynamorm:"score"`
+	Active       bool     `dynamorm:"active"`
 }
 
 // Test struct with JSON tags
@@ -33,9 +33,9 @@ type JSONStruct struct {
 
 func TestConvertToAttributeValue_BasicTypes(t *testing.T) {
 	tests := []struct {
-		name     string
 		input    any
 		expected types.AttributeValue
+		name     string
 	}{
 		{
 			name:     "string",
@@ -137,10 +137,10 @@ func TestConvertToAttributeValue_Struct(t *testing.T) {
 
 func TestConvertFromAttributeValue_BasicTypes(t *testing.T) {
 	tests := []struct {
-		name     string
 		av       types.AttributeValue
 		target   any
 		expected any
+		name     string
 	}{
 		{
 			name:     "string",
@@ -295,4 +295,80 @@ func TestBidirectionalConversion(t *testing.T) {
 	assert.Equal(t, original.Score, result.Score)
 	assert.Equal(t, original.Tags, result.Tags)
 	assert.Equal(t, original.CreatedAt, result.CreatedAt)
+}
+
+func TestConvertFromAttributeValue_JSONTags_FieldNameResolution(t *testing.T) {
+	item := map[string]types.AttributeValue{
+		"id":   &types.AttributeValueMemberS{Value: "j1"},
+		"data": &types.AttributeValueMemberS{Value: "payload"},
+	}
+
+	var out JSONStruct
+	err := ConvertFromAttributeValue(&types.AttributeValueMemberM{Value: item}, &out)
+	require.NoError(t, err)
+	require.Equal(t, "j1", out.ID)
+	require.Equal(t, "payload", out.Data)
+}
+
+func TestConvertFromAttributeValue_Sets(t *testing.T) {
+	t.Run("StringSet", func(t *testing.T) {
+		var out []string
+		err := ConvertFromAttributeValue(&types.AttributeValueMemberSS{Value: []string{"a", "b"}}, &out)
+		require.NoError(t, err)
+		require.Equal(t, []string{"a", "b"}, out)
+	})
+
+	t.Run("NumberSet", func(t *testing.T) {
+		var out []int
+		err := ConvertFromAttributeValue(&types.AttributeValueMemberNS{Value: []string{"1", "2"}}, &out)
+		require.NoError(t, err)
+		require.Equal(t, []int{1, 2}, out)
+	})
+
+	t.Run("BinarySet", func(t *testing.T) {
+		var out [][]byte
+		err := ConvertFromAttributeValue(&types.AttributeValueMemberBS{Value: [][]byte{[]byte("a"), []byte("b")}}, &out)
+		require.NoError(t, err)
+		require.Equal(t, [][]byte{[]byte("a"), []byte("b")}, out)
+	})
+}
+
+func TestConvertFromAttributeValue_EmptyInterfaceConversions(t *testing.T) {
+	t.Run("ListAndMap", func(t *testing.T) {
+		var out any
+		err := ConvertFromAttributeValue(&types.AttributeValueMemberL{Value: []types.AttributeValue{
+			&types.AttributeValueMemberS{Value: "x"},
+			&types.AttributeValueMemberN{Value: "42"},
+			&types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+				"k": &types.AttributeValueMemberS{Value: "v"},
+			}},
+		}}, &out)
+		require.NoError(t, err)
+
+		list, ok := out.([]any)
+		require.True(t, ok, "expected []any, got %T", out)
+		require.Len(t, list, 3)
+		require.Equal(t, "x", list[0])
+		require.Equal(t, int64(42), list[1])
+
+		m, ok := list[2].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "v", m["k"])
+	})
+
+	t.Run("NumberSet", func(t *testing.T) {
+		var out any
+		err := ConvertFromAttributeValue(&types.AttributeValueMemberNS{Value: []string{"1", "2.5"}}, &out)
+		require.NoError(t, err)
+
+		list, ok := out.([]any)
+		require.True(t, ok, "expected []any, got %T", out)
+		require.Equal(t, []any{int64(1), 2.5}, list)
+	})
+
+	t.Run("InvalidNumber", func(t *testing.T) {
+		var out any
+		err := ConvertFromAttributeValue(&types.AttributeValueMemberN{Value: "not-a-number"}, &out)
+		require.Error(t, err)
+	})
 }

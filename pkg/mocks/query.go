@@ -7,9 +7,62 @@ import (
 	"context"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
+
+func mustCoreQuery(v any) core.Query {
+	if v == nil {
+		return nil
+	}
+	q, ok := v.(core.Query)
+	if !ok {
+		panic("unexpected type: expected core.Query")
+	}
+	return q
+}
+
+func mustCoreDB(v any) core.DB {
+	if v == nil {
+		return nil
+	}
+	db, ok := v.(core.DB)
+	if !ok {
+		panic("unexpected type: expected core.DB")
+	}
+	return db
+}
+
+func mustPaginatedResult(v any) *core.PaginatedResult {
+	if v == nil {
+		return nil
+	}
+	result, ok := v.(*core.PaginatedResult)
+	if !ok {
+		panic("unexpected type: expected *core.PaginatedResult")
+	}
+	return result
+}
+
+func mustInt64(v any) int64 {
+	n, ok := v.(int64)
+	if !ok {
+		panic("unexpected type: expected int64")
+	}
+	return n
+}
+
+func mustUpdateBuilder(v any) core.UpdateBuilder {
+	if v == nil {
+		return nil
+	}
+	builder, ok := v.(core.UpdateBuilder)
+	if !ok {
+		panic("unexpected type: expected core.UpdateBuilder")
+	}
+	return builder
+}
 
 // MockQuery is a mock implementation of the core.Query interface.
 // It can be used for unit testing code that depends on DynamORM queries.
@@ -26,85 +79,85 @@ type MockQuery struct {
 // Where adds a condition to the query
 func (m *MockQuery) Where(field string, op string, value any) core.Query {
 	args := m.Called(field, op, value)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // Index specifies which index to use
 func (m *MockQuery) Index(indexName string) core.Query {
 	args := m.Called(indexName)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // Filter adds a filter expression to the query
 func (m *MockQuery) Filter(field string, op string, value any) core.Query {
 	args := m.Called(field, op, value)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // OrFilter adds an OR filter expression to the query
 func (m *MockQuery) OrFilter(field string, op string, value any) core.Query {
 	args := m.Called(field, op, value)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // FilterGroup adds a group of filters with AND logic
 func (m *MockQuery) FilterGroup(fn func(core.Query)) core.Query {
 	args := m.Called(fn)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // OrFilterGroup adds a group of filters with OR logic
 func (m *MockQuery) OrFilterGroup(fn func(core.Query)) core.Query {
 	args := m.Called(fn)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // IfNotExists adds a condition that the item must not exist
 func (m *MockQuery) IfNotExists() core.Query {
 	args := m.Called()
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // IfExists adds a condition that the item must exist
 func (m *MockQuery) IfExists() core.Query {
 	args := m.Called()
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // WithCondition adds a generic condition expression
 func (m *MockQuery) WithCondition(field, operator string, value any) core.Query {
 	args := m.Called(field, operator, value)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // WithConditionExpression adds a raw condition expression
 func (m *MockQuery) WithConditionExpression(expr string, values map[string]any) core.Query {
 	args := m.Called(expr, values)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // OrderBy sets the sort order
 func (m *MockQuery) OrderBy(field string, order string) core.Query {
 	args := m.Called(field, order)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // Limit sets the maximum number of items to return
 func (m *MockQuery) Limit(limit int) core.Query {
 	args := m.Called(limit)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // Offset sets the starting position for the query
 func (m *MockQuery) Offset(offset int) core.Query {
 	args := m.Called(offset)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // Select specifies which fields to retrieve
 func (m *MockQuery) Select(fields ...string) core.Query {
 	args := m.Called(fields)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // First retrieves the first matching item
@@ -122,16 +175,13 @@ func (m *MockQuery) All(dest any) error {
 // AllPaginated retrieves all matching items with pagination metadata
 func (m *MockQuery) AllPaginated(dest any) (*core.PaginatedResult, error) {
 	args := m.Called(dest)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*core.PaginatedResult), args.Error(1)
+	return mustPaginatedResult(args.Get(0)), args.Error(1)
 }
 
 // Count returns the number of matching items
 func (m *MockQuery) Count() (int64, error) {
 	args := m.Called()
-	return args.Get(0).(int64), args.Error(1)
+	return mustInt64(args.Get(0)), args.Error(1)
 }
 
 // Create creates a new item
@@ -155,7 +205,7 @@ func (m *MockQuery) Update(fields ...string) error {
 // UpdateBuilder returns a builder for complex update operations
 func (m *MockQuery) UpdateBuilder() core.UpdateBuilder {
 	args := m.Called()
-	return args.Get(0).(core.UpdateBuilder)
+	return mustUpdateBuilder(args.Get(0))
 }
 
 // Delete deletes the matching items
@@ -173,7 +223,7 @@ func (m *MockQuery) Scan(dest any) error {
 // ParallelScan configures parallel scanning
 func (m *MockQuery) ParallelScan(segment int32, totalSegments int32) core.Query {
 	args := m.Called(segment, totalSegments)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // ScanAllSegments performs parallel scan across all segments
@@ -218,7 +268,7 @@ func (m *MockQuery) BatchDelete(keys []any) error {
 // Cursor sets the pagination cursor
 func (m *MockQuery) Cursor(cursor string) core.Query {
 	args := m.Called(cursor)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // SetCursor sets the cursor from a string
@@ -230,19 +280,19 @@ func (m *MockQuery) SetCursor(cursor string) error {
 // WithContext sets the context for the query
 func (m *MockQuery) WithContext(ctx context.Context) core.Query {
 	args := m.Called(ctx)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // ConsistentRead enables strongly consistent reads for Query operations
 func (m *MockQuery) ConsistentRead() core.Query {
 	args := m.Called()
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // WithRetry configures retry behavior for eventually consistent reads
 func (m *MockQuery) WithRetry(maxRetries int, initialDelay time.Duration) core.Query {
 	args := m.Called(maxRetries, initialDelay)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // BatchWrite performs mixed batch write operations

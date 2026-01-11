@@ -49,14 +49,59 @@ var (
 
 	// ErrInvalidOperator is returned when an invalid query operator is used
 	ErrInvalidOperator = errors.New("invalid query operator")
+
+	// ErrEncryptionNotConfigured is returned when a model uses dynamorm:"encrypted" fields but no KMS key ARN is configured.
+	ErrEncryptionNotConfigured = errors.New("encryption not configured")
+
+	// ErrInvalidEncryptedEnvelope is returned when an encrypted attribute value is not a valid DynamORM envelope.
+	ErrInvalidEncryptedEnvelope = errors.New("invalid encrypted envelope")
+
+	// ErrEncryptedFieldNotQueryable is returned when a dynamorm:"encrypted" field is used in query/filter conditions.
+	ErrEncryptedFieldNotQueryable = errors.New("encrypted fields are not queryable/filterable")
 )
+
+// EncryptedFieldError wraps failures related to dynamorm:"encrypted" fields (encryption/decryption).
+// It is safe-by-default: the error string must never include decrypted plaintext.
+type EncryptedFieldError struct {
+	Err       error
+	Field     string
+	Operation string
+}
+
+func (e *EncryptedFieldError) Error() string {
+	if e == nil {
+		return "dynamorm: encrypted field error"
+	}
+
+	op := e.Operation
+	if op == "" {
+		op = "operation"
+	}
+
+	field := e.Field
+	if field == "" {
+		field = "field"
+	}
+
+	if e.Err == nil {
+		return fmt.Sprintf("dynamorm: encrypted %s failed for %s", op, field)
+	}
+	return fmt.Sprintf("dynamorm: encrypted %s failed for %s: %v", op, field, e.Err)
+}
+
+func (e *EncryptedFieldError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // DynamORMError represents a detailed error with context
 type DynamORMError struct {
-	Op      string         // Operation that failed
-	Model   string         // Model type name
-	Err     error          // Underlying error
-	Context map[string]any // Additional context
+	Err     error
+	Context map[string]any
+	Op      string
+	Model   string
 }
 
 // Error implements the error interface
@@ -112,11 +157,11 @@ func IsConditionFailed(err error) bool {
 
 // TransactionError provides context for transactional failures.
 type TransactionError struct {
-	OperationIndex int
+	Err            error
 	Operation      string
 	Model          string
 	Reason         string
-	Err            error
+	OperationIndex int
 }
 
 // Error implements the error interface.

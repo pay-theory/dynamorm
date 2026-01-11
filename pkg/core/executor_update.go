@@ -21,7 +21,7 @@ type UpdateExecutor struct {
 }
 
 // NewUpdateExecutor creates a new UpdateExecutor instance
-func NewUpdateExecutor(client DynamoDBUpdateAPI, ctx context.Context) *UpdateExecutor {
+func NewUpdateExecutor(client DynamoDBUpdateAPI, ctx context.Context) *UpdateExecutor { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &UpdateExecutor{
 		client: client,
 		ctx:    ctx,

@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/schema"
 	"github.com/pay-theory/dynamorm/tests"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // Migration test models
@@ -19,9 +20,9 @@ type UserV1 struct {
 	ID       string `dynamorm:"pk"`
 	Email    string `dynamorm:"sk"`
 	Name     string `dynamorm:"attr:fullName"`
-	Age      int    `dynamorm:"attr:age"`
 	Status   string `dynamorm:"attr:status"`
 	Settings string `dynamorm:"attr:settings"`
+	Age      int    `dynamorm:"attr:age"`
 	Version  int64  `dynamorm:"version"`
 }
 
@@ -30,15 +31,15 @@ func (u *UserV1) TableName() string {
 }
 
 type UserV2 struct {
+	CreatedAt time.Time         `dynamorm:"attr:createdAt"`
+	Settings  map[string]string `dynamorm:"attr:settings"`
 	ID        string            `dynamorm:"pk"`
 	Email     string            `dynamorm:"sk"`
 	FirstName string            `dynamorm:"attr:firstName"`
 	LastName  string            `dynamorm:"attr:lastName"`
 	Age       int               `dynamorm:"attr:age"`
-	Active    bool              `dynamorm:"attr:active"`
-	Settings  map[string]string `dynamorm:"attr:settings"`
-	CreatedAt time.Time         `dynamorm:"attr:createdAt"`
 	Version   int64             `dynamorm:"version"`
+	Active    bool              `dynamorm:"attr:active"`
 }
 
 func (u *UserV2) TableName() string {
@@ -49,8 +50,8 @@ type ProductV1 struct {
 	ID          string  `dynamorm:"pk"`
 	Category    string  `dynamorm:"sk"`
 	Name        string  `dynamorm:"attr:productName"`
-	Price       float64 `dynamorm:"attr:price"`
 	Description string  `dynamorm:"attr:description"`
+	Price       float64 `dynamorm:"attr:price"`
 	Version     int64   `dynamorm:"version"`
 }
 
@@ -59,15 +60,15 @@ func (p *ProductV1) TableName() string {
 }
 
 type ProductV2 struct {
+	UpdatedAt   time.Time         `dynamorm:"attr:updatedAt"`
+	Metadata    map[string]string `dynamorm:"attr:metadata"`
 	ID          string            `dynamorm:"pk"`
 	Category    string            `dynamorm:"sk"`
 	Name        string            `dynamorm:"attr:productName"`
-	Price       float64           `dynamorm:"attr:price"`
 	Currency    string            `dynamorm:"attr:currency"`
 	Description string            `dynamorm:"attr:description"`
 	Tags        []string          `dynamorm:"attr:tags"`
-	Metadata    map[string]string `dynamorm:"attr:metadata"`
-	UpdatedAt   time.Time         `dynamorm:"attr:updatedAt"`
+	Price       float64           `dynamorm:"attr:price"`
 	Version     int64             `dynamorm:"version"`
 }
 

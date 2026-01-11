@@ -4,9 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pay-theory/dynamorm/pkg/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/mocks"
 )
 
 // 🧪 SIMPLE DYNAMORM MOCKING EXAMPLES
@@ -25,7 +26,10 @@ func TestUserService_GetUser_Success(t *testing.T) {
 	mockQuery.On("Where", "ID", "=", "user123").Return(mockQuery)
 	mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
 		// 📥 POPULATE RESULT: Put data into the result pointer
-		user := args.Get(0).(*mocks.User)
+		user, ok := args.Get(0).(*mocks.User)
+		if !ok {
+			t.Fatalf("expected *mocks.User, got %T", args.Get(0))
+		}
 		user.ID = "user123"
 		user.Name = "John Doe"
 		user.Email = "john@example.com"
@@ -119,7 +123,10 @@ func TestUserService_GetActiveUsers(t *testing.T) {
 	mockQuery.On("OrderBy", "Name", "ASC").Return(mockQuery) // Chain: returns self
 	mockQuery.On("All", mock.Anything).Run(func(args mock.Arguments) {
 		// Populate the slice pointer with our expected users
-		users := args.Get(0).(*[]mocks.User)
+		users, ok := args.Get(0).(*[]mocks.User)
+		if !ok {
+			t.Fatalf("expected *[]mocks.User, got %T", args.Get(0))
+		}
 		*users = expectedUsers
 	}).Return(nil)
 
@@ -183,14 +190,20 @@ func TestMockingCheatSheet(t *testing.T) {
 
 	// ✅ Pattern 4: Populate output parameter
 	mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
-		user := args.Get(0).(*mocks.User)
+		user, ok := args.Get(0).(*mocks.User)
+		if !ok {
+			t.Fatalf("expected *mocks.User, got %T", args.Get(0))
+		}
 		user.ID = "test"
 		user.Name = "Test User"
 	}).Return(nil)
 
 	// ✅ Pattern 5: Populate slice
 	mockQuery.On("All", mock.Anything).Run(func(args mock.Arguments) {
-		users := args.Get(0).(*[]mocks.User)
+		users, ok := args.Get(0).(*[]mocks.User)
+		if !ok {
+			t.Fatalf("expected *[]mocks.User, got %T", args.Get(0))
+		}
 		*users = []mocks.User{{ID: "1", Name: "User 1"}}
 	}).Return(nil)
 

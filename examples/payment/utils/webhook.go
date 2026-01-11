@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/payment"
 	"github.com/pay-theory/dynamorm/pkg/core"
@@ -21,29 +22,29 @@ import (
 // WebhookSender handles async webhook deliveries
 type WebhookSender struct {
 	db       core.ExtendedDB
+	ctx      context.Context
 	client   *http.Client
 	workers  chan struct{}
-	retryMax int
 	queue    chan *WebhookJob
-	wg       sync.WaitGroup
-	ctx      context.Context
 	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	retryMax int
 }
 
 // WebhookJob represents a webhook to be sent
 type WebhookJob struct {
+	Data       any
 	MerchantID string
 	EventType  string
 	PaymentID  string
-	Data       any
 }
 
 // WebhookPayload represents the webhook request body
 type WebhookPayload struct {
-	ID        string    `json:"id"`
-	EventType string    `json:"event_type"`
 	Created   time.Time `json:"created"`
 	Data      any       `json:"data"`
+	ID        string    `json:"id"`
+	EventType string    `json:"event_type"`
 }
 
 // NewWebhookSender creates a new webhook sender
@@ -247,8 +248,8 @@ func (w *WebhookSender) generateSignature(payload []byte, secret string, timesta
 type RetryWorker struct {
 	db            *dynamorm.DB
 	webhookSender *WebhookSender
-	interval      time.Duration
 	stop          chan struct{}
+	interval      time.Duration
 }
 
 // NewRetryWorker creates a new retry worker

@@ -98,38 +98,50 @@ func attributeValueToJSON(av types.AttributeValue) (any, error) {
 	case *types.AttributeValueMemberNULL:
 		return map[string]any{"NULL": true}, nil
 	case *types.AttributeValueMemberL:
-		list := make([]any, len(v.Value))
-		for i, item := range v.Value {
-			jsonItem, err := attributeValueToJSON(item)
-			if err != nil {
-				return nil, err
-			}
-			list[i] = jsonItem
-		}
-		return map[string]any{"L": list}, nil
+		return attributeValueListToJSON(v.Value)
 	case *types.AttributeValueMemberM:
-		m := make(map[string]any)
-		for k, val := range v.Value {
-			jsonVal, err := attributeValueToJSON(val)
-			if err != nil {
-				return nil, err
-			}
-			m[k] = jsonVal
-		}
-		return map[string]any{"M": m}, nil
+		return attributeValueMapToJSON(v.Value)
 	case *types.AttributeValueMemberSS:
 		return map[string]any{"SS": v.Value}, nil
 	case *types.AttributeValueMemberNS:
 		return map[string]any{"NS": v.Value}, nil
 	case *types.AttributeValueMemberBS:
-		encoded := make([]string, len(v.Value))
-		for i, b := range v.Value {
-			encoded[i] = base64.StdEncoding.EncodeToString(b)
-		}
-		return map[string]any{"BS": encoded}, nil
+		return attributeValueBinarySetToJSON(v.Value)
 	default:
 		return nil, fmt.Errorf("unknown AttributeValue type: %T", av)
 	}
+}
+
+func attributeValueListToJSON(values []types.AttributeValue) (any, error) {
+	list := make([]any, len(values))
+	for i, item := range values {
+		jsonItem, err := attributeValueToJSON(item)
+		if err != nil {
+			return nil, err
+		}
+		list[i] = jsonItem
+	}
+	return map[string]any{"L": list}, nil
+}
+
+func attributeValueMapToJSON(values map[string]types.AttributeValue) (any, error) {
+	m := make(map[string]any, len(values))
+	for k, val := range values {
+		jsonVal, err := attributeValueToJSON(val)
+		if err != nil {
+			return nil, err
+		}
+		m[k] = jsonVal
+	}
+	return map[string]any{"M": m}, nil
+}
+
+func attributeValueBinarySetToJSON(values [][]byte) (any, error) {
+	encoded := make([]string, len(values))
+	for i, b := range values {
+		encoded[i] = base64.StdEncoding.EncodeToString(b)
+	}
+	return map[string]any{"BS": encoded}, nil
 }
 
 // jsonToAttributeValue converts a JSON-friendly format back to DynamoDB AttributeValue
@@ -139,139 +151,161 @@ func jsonToAttributeValue(v any) (types.AttributeValue, error) {
 		return nil, fmt.Errorf("expected map[string]any, got %T", v)
 	}
 
-	// String
-	if val, ok := m["S"]; ok {
-		strVal, ok := val.(string)
-		if !ok {
-			return nil, fmt.Errorf("s value must be string")
-		}
-		return &types.AttributeValueMemberS{Value: strVal}, nil
+	if len(m) != 1 {
+		return nil, fmt.Errorf("invalid attribute value format: %v", m)
 	}
 
-	// Number
-	if val, ok := m["N"]; ok {
-		strVal, ok := val.(string)
-		if !ok {
-			return nil, fmt.Errorf("n value must be string")
+	for key, val := range m {
+		switch key {
+		case "S":
+			return jsonStringToAttributeValue(val)
+		case "N":
+			return jsonNumberToAttributeValue(val)
+		case "B":
+			return jsonBinaryToAttributeValue(val)
+		case "BOOL":
+			return jsonBoolToAttributeValue(val)
+		case "NULL":
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		case "L":
+			return jsonListToAttributeValue(val)
+		case "M":
+			return jsonMapToAttributeValue(val)
+		case "SS":
+			return jsonStringSetToAttributeValue(val)
+		case "NS":
+			return jsonNumberSetToAttributeValue(val)
+		case "BS":
+			return jsonBinarySetToAttributeValue(val)
+		default:
+			return nil, fmt.Errorf("unknown attribute value format: %v", m)
 		}
-		return &types.AttributeValueMemberN{Value: strVal}, nil
 	}
 
-	// Binary
-	if val, ok := m["B"]; ok {
-		strVal, ok := val.(string)
+	return nil, fmt.Errorf("invalid attribute value format: %v", m)
+}
+
+func jsonStringToAttributeValue(val any) (types.AttributeValue, error) {
+	strVal, ok := val.(string)
+	if !ok {
+		return nil, fmt.Errorf("s value must be string")
+	}
+	return &types.AttributeValueMemberS{Value: strVal}, nil
+}
+
+func jsonNumberToAttributeValue(val any) (types.AttributeValue, error) {
+	strVal, ok := val.(string)
+	if !ok {
+		return nil, fmt.Errorf("n value must be string")
+	}
+	return &types.AttributeValueMemberN{Value: strVal}, nil
+}
+
+func jsonBinaryToAttributeValue(val any) (types.AttributeValue, error) {
+	strVal, ok := val.(string)
+	if !ok {
+		return nil, fmt.Errorf("b value must be string")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strVal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode binary: %w", err)
+	}
+	return &types.AttributeValueMemberB{Value: decoded}, nil
+}
+
+func jsonBoolToAttributeValue(val any) (types.AttributeValue, error) {
+	boolVal, ok := val.(bool)
+	if !ok {
+		return nil, fmt.Errorf("bool value must be bool")
+	}
+	return &types.AttributeValueMemberBOOL{Value: boolVal}, nil
+}
+
+func jsonListToAttributeValue(val any) (types.AttributeValue, error) {
+	listVal, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("l value must be []any")
+	}
+
+	list := make([]types.AttributeValue, len(listVal))
+	for i, item := range listVal {
+		av, err := jsonToAttributeValue(item)
+		if err != nil {
+			return nil, err
+		}
+		list[i] = av
+	}
+	return &types.AttributeValueMemberL{Value: list}, nil
+}
+
+func jsonMapToAttributeValue(val any) (types.AttributeValue, error) {
+	mapVal, ok := val.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("m value must be map[string]any")
+	}
+
+	avMap := make(map[string]types.AttributeValue, len(mapVal))
+	for k, v := range mapVal {
+		av, err := jsonToAttributeValue(v)
+		if err != nil {
+			return nil, err
+		}
+		avMap[k] = av
+	}
+	return &types.AttributeValueMemberM{Value: avMap}, nil
+}
+
+func jsonStringSetToAttributeValue(val any) (types.AttributeValue, error) {
+	listVal, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("ss value must be []any")
+	}
+
+	strSet := make([]string, len(listVal))
+	for i, item := range listVal {
+		strVal, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("b value must be string")
+			return nil, fmt.Errorf("ss items must be strings")
+		}
+		strSet[i] = strVal
+	}
+	return &types.AttributeValueMemberSS{Value: strSet}, nil
+}
+
+func jsonNumberSetToAttributeValue(val any) (types.AttributeValue, error) {
+	listVal, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("ns value must be []any")
+	}
+
+	numSet := make([]string, len(listVal))
+	for i, item := range listVal {
+		strVal, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("ns items must be strings")
+		}
+		numSet[i] = strVal
+	}
+	return &types.AttributeValueMemberNS{Value: numSet}, nil
+}
+
+func jsonBinarySetToAttributeValue(val any) (types.AttributeValue, error) {
+	listVal, ok := val.([]any)
+	if !ok {
+		return nil, fmt.Errorf("bs value must be []any")
+	}
+
+	binSet := make([][]byte, len(listVal))
+	for i, item := range listVal {
+		strVal, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("bs items must be strings")
 		}
 		decoded, err := base64.StdEncoding.DecodeString(strVal)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode binary: %w", err)
 		}
-		return &types.AttributeValueMemberB{Value: decoded}, nil
+		binSet[i] = decoded
 	}
-
-	// Boolean
-	if val, ok := m["BOOL"]; ok {
-		boolVal, ok := val.(bool)
-		if !ok {
-			return nil, fmt.Errorf("bool value must be bool")
-		}
-		return &types.AttributeValueMemberBOOL{Value: boolVal}, nil
-	}
-
-	// Null
-	if _, ok := m["NULL"]; ok {
-		return &types.AttributeValueMemberNULL{Value: true}, nil
-	}
-
-	// List
-	if val, ok := m["L"]; ok {
-		listVal, ok := val.([]any)
-		if !ok {
-			return nil, fmt.Errorf("l value must be []any")
-		}
-		list := make([]types.AttributeValue, len(listVal))
-		for i, item := range listVal {
-			av, err := jsonToAttributeValue(item)
-			if err != nil {
-				return nil, err
-			}
-			list[i] = av
-		}
-		return &types.AttributeValueMemberL{Value: list}, nil
-	}
-
-	// Map
-	if val, ok := m["M"]; ok {
-		mapVal, ok := val.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("m value must be map[string]any")
-		}
-		avMap := make(map[string]types.AttributeValue)
-		for k, v := range mapVal {
-			av, err := jsonToAttributeValue(v)
-			if err != nil {
-				return nil, err
-			}
-			avMap[k] = av
-		}
-		return &types.AttributeValueMemberM{Value: avMap}, nil
-	}
-
-	// String Set
-	if val, ok := m["SS"]; ok {
-		listVal, ok := val.([]any)
-		if !ok {
-			return nil, fmt.Errorf("ss value must be []any")
-		}
-		strSet := make([]string, len(listVal))
-		for i, item := range listVal {
-			strVal, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("ss items must be strings")
-			}
-			strSet[i] = strVal
-		}
-		return &types.AttributeValueMemberSS{Value: strSet}, nil
-	}
-
-	// Number Set
-	if val, ok := m["NS"]; ok {
-		listVal, ok := val.([]any)
-		if !ok {
-			return nil, fmt.Errorf("ns value must be []any")
-		}
-		numSet := make([]string, len(listVal))
-		for i, item := range listVal {
-			strVal, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("ns items must be strings")
-			}
-			numSet[i] = strVal
-		}
-		return &types.AttributeValueMemberNS{Value: numSet}, nil
-	}
-
-	// Binary Set
-	if val, ok := m["BS"]; ok {
-		listVal, ok := val.([]any)
-		if !ok {
-			return nil, fmt.Errorf("bs value must be []any")
-		}
-		binSet := make([][]byte, len(listVal))
-		for i, item := range listVal {
-			strVal, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("bs items must be strings")
-			}
-			decoded, err := base64.StdEncoding.DecodeString(strVal)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode binary: %w", err)
-			}
-			binSet[i] = decoded
-		}
-		return &types.AttributeValueMemberBS{Value: binSet}, nil
-	}
-
-	return nil, fmt.Errorf("unknown attribute value format: %v", m)
+	return &types.AttributeValueMemberBS{Value: binSet}, nil
 }

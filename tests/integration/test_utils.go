@@ -14,11 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
-	"github.com/pay-theory/dynamorm/tests/models"
-	"github.com/stretchr/testify/require"
 )
 
 // TestContext holds test database and cleanup functions
@@ -372,135 +372,135 @@ func isTableExistsError(err error) bool {
 			strings.Contains(err.Error(), "already exists"))
 }
 
+var testModelTableNames = map[string]string{
+	"TestUser":     "TestUsers",
+	"TestOrder":    "TestOrders",
+	"TestProduct":  "TestProducts",
+	"TestAccount":  "TestAccounts",
+	"TestBlogPost": "TestBlogPosts",
+	"TestComment":  "TestComments",
+	"TestNote":     "TestNotes",
+	"TestContact":  "TestContacts",
+}
+
 func getTableName(model any) string {
 	// First try to call TableName() method if it exists
 	if tableNamer, ok := model.(interface{ TableName() string }); ok {
 		return tableNamer.TableName()
 	}
 
-	// Fallback to type-based mapping
-	switch model.(type) {
-	// Handle models from models package
-	case *models.TestUser, models.TestUser:
-		return "TestUsers"
-	case *models.TestOrder, models.TestOrder:
-		return "TestOrders"
-	case *models.TestProduct, models.TestProduct:
-		return "TestProducts"
-	// Handle local test models
-	case *TestUser, TestUser:
-		return "TestUsers"
-	case *TestOrder, TestOrder:
-		return "TestOrders"
-	case *TestProduct, TestProduct:
-		return "TestProducts"
-	case *TestAccount, TestAccount:
-		return "TestAccounts"
-	case *TestBlogPost, TestBlogPost:
-		return "TestBlogPosts"
-	case *TestComment, TestComment:
-		return "TestComments"
-	case *TestNote, TestNote:
-		return "TestNotes"
-	case *TestContact, TestContact:
-		return "TestContacts"
-	default:
-		// Fallback: Extract base type name from reflect.Type
-		typ := reflect.TypeOf(model)
-		if typ.Kind() == reflect.Ptr {
-			typ = typ.Elem()
-		}
+	baseName := extractBaseTypeName(model)
+	if baseName == "" {
+		return ""
+	}
 
-		baseName := typ.Name()
-		if baseName == "" {
-			// Last resort: use full type name and clean it up
-			fullName := typ.String()
-			// Remove package prefix if present
-			if lastDot := strings.LastIndex(fullName, "."); lastDot != -1 {
-				baseName = fullName[lastDot+1:]
-			} else {
-				baseName = fullName
-			}
-		}
+	if tableName, ok := testModelTableNames[baseName]; ok {
+		return tableName
+	}
 
-		// Ensure valid DynamoDB table name
-		baseName = strings.ReplaceAll(baseName, "*", "")
-		baseName = strings.ReplaceAll(baseName, ".", "_")
-		baseName = strings.ReplaceAll(baseName, "/", "_")
+	return pluralizeTableName(sanitizeTableName(baseName))
+}
 
-		// Add 's' suffix if not present
-		if !strings.HasSuffix(baseName, "s") {
-			baseName += "s"
-		}
+func extractBaseTypeName(model any) string {
+	typ := reflect.TypeOf(model)
+	if typ == nil {
+		return ""
+	}
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
 
+	baseName := typ.Name()
+	if baseName != "" {
 		return baseName
 	}
+
+	// Last resort: use full type name and clean it up
+	fullName := typ.String()
+	if lastDot := strings.LastIndex(fullName, "."); lastDot != -1 {
+		return fullName[lastDot+1:]
+	}
+	return fullName
+}
+
+func sanitizeTableName(name string) string {
+	name = strings.ReplaceAll(name, "*", "")
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.ReplaceAll(name, "/", "_")
+	return name
+}
+
+func pluralizeTableName(name string) string {
+	if strings.HasSuffix(name, "s") {
+		return name
+	}
+	return name + "s"
 }
 
 // Common test model definitions for reuse across tests
 
 type TestUser struct {
-	ID        string `dynamorm:"pk"`
-	Email     string `dynamorm:"index:gsi-email"`
-	Name      string
-	Active    bool
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Email     string    `dynamorm:"index:gsi-email"`
+	Name      string
+	Active    bool
 }
 
 type TestOrder struct {
-	OrderID    string `dynamorm:"pk"`
-	CustomerID string `dynamorm:"sk"`
-	Amount     float64
-	Status     string
 	CreatedAt  time.Time `dynamorm:"created_at"`
+	OrderID    string    `dynamorm:"pk"`
+	CustomerID string    `dynamorm:"sk"`
+	Status     string
+	Amount     float64
 }
 
 type TestProduct struct {
-	ProductID string `dynamorm:"pk"`
-	Name      string
-	Price     float64
-	Category  string `dynamorm:"index:gsi-category"`
-	InStock   bool
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ProductID string    `dynamorm:"pk"`
+	Name      string
+	Category  string `dynamorm:"index:gsi-category"`
+	Price     float64
+	InStock   bool
 }
 
 type TestAccount struct {
 	AccountID string `dynamorm:"pk"`
 	UserID    string `dynamorm:"sk"`
-	Balance   float64
 	Type      string
+	Balance   float64
 	Version   int64 `dynamorm:"version"`
 }
 
 type TestBlogPost struct {
-	PostID      string `dynamorm:"pk"`
+	PublishedAt time.Time
+	CreatedAt   time.Time `dynamorm:"created_at"`
+	UpdatedAt   time.Time `dynamorm:"updated_at"`
+	PostID      string    `dynamorm:"pk"`
 	Title       string
 	Content     string
 	AuthorID    string   `dynamorm:"index:gsi-author"`
 	Tags        []string `dynamorm:"set"`
-	PublishedAt time.Time
-	CreatedAt   time.Time `dynamorm:"created_at"`
-	UpdatedAt   time.Time `dynamorm:"updated_at"`
 }
 
 type TestComment struct {
-	CommentID string `dynamorm:"pk"`
-	PostID    string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	CommentID string    `dynamorm:"pk"`
+	PostID    string    `dynamorm:"sk"`
 	AuthorID  string
 	Content   string
-	CreatedAt time.Time `dynamorm:"created_at"`
 }
 
 type TestNote struct {
-	ID        string `dynamorm:"pk"`
-	Title     string
-	Content   string
-	Priority  int
-	Archived  bool
-	Tags      []string
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Title     string
+	Content   string
+	Tags      []string
+	Priority  int
+	Archived  bool
 }
 
 type TestContact struct {
@@ -517,7 +517,7 @@ func isDynamoDBLocalRunning(endpoint string) bool {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
 		config.WithCredentialsProvider(aws.CredentialsProviderFunc(
-			func(ctx context.Context) (aws.Credentials, error) {
+			func(_ context.Context) (aws.Credentials, error) {
 				return aws.Credentials{
 					AccessKeyID:     "dummy",
 					SecretAccessKey: "dummy",

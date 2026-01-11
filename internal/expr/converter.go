@@ -58,36 +58,10 @@ func ConvertToAttributeValue(value any) (types.AttributeValue, error) {
 		return &types.AttributeValueMemberBOOL{Value: v.Bool()}, nil
 
 	case reflect.Slice:
-		// Handle []byte as binary
-		if v.Type().Elem().Kind() == reflect.Uint8 {
-			return &types.AttributeValueMemberB{Value: v.Bytes()}, nil
-		}
-
-		// Handle other slices as lists
-		list := make([]types.AttributeValue, v.Len())
-		for i := 0; i < v.Len(); i++ {
-			item, err := ConvertToAttributeValue(v.Index(i).Interface())
-			if err != nil {
-				return nil, err
-			}
-			list[i] = item
-		}
-		return &types.AttributeValueMemberL{Value: list}, nil
+		return convertSliceToAttributeValue(v)
 
 	case reflect.Map:
-		// Handle map[string]any as M type
-		if v.Type().Key().Kind() == reflect.String {
-			m := make(map[string]types.AttributeValue)
-			for _, key := range v.MapKeys() {
-				val, err := ConvertToAttributeValue(v.MapIndex(key).Interface())
-				if err != nil {
-					return nil, err
-				}
-				m[key.String()] = val
-			}
-			return &types.AttributeValueMemberM{Value: m}, nil
-		}
-		return nil, fmt.Errorf("unsupported map type: %v", v.Type())
+		return convertMapToAttributeValue(v)
 
 	case reflect.Struct:
 		// Special handling for time.Time
@@ -95,72 +69,130 @@ func ConvertToAttributeValue(value any) (types.AttributeValue, error) {
 			return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
 		}
 
-		// General struct marshaling
-		// Note: We no longer automatically JSON-serialize structs just because they have json tags.
-		// JSON serialization should only happen when explicitly requested via dynamorm:"json" tag,
-		// which is handled at the field level during marshaling, not here in the converter.
-		m := make(map[string]types.AttributeValue)
-		t := v.Type()
-
-		for i := 0; i < v.NumField(); i++ {
-			field := t.Field(i)
-			fieldValue := v.Field(i)
-
-			// Skip unexported fields
-			if !field.IsExported() {
-				continue
-			}
-
-			// Check for dynamorm tags first, then fall back to json tags
-			fieldName := field.Name
-			tag := field.Tag.Get("dynamorm")
-			jsonTag := field.Tag.Get("json")
-
-			if tag == "-" || jsonTag == "-" {
-				continue // Skip this field
-			}
-
-			if tag != "" {
-				// Parse the dynamorm tag
-				parts := strings.Split(tag, ",")
-				if len(parts) > 0 && parts[0] != "" {
-					// First part is the field name unless it contains ":" or is purely a modifier
-					firstPart := parts[0]
-					if !strings.Contains(firstPart, ":") && !isPureModifierTag(firstPart) {
-						fieldName = firstPart
-					}
-					// Check for attr: tag
-					if attrName := parseAttrTag(tag); attrName != "" {
-						fieldName = attrName
-					}
-				}
-			} else if jsonTag != "" {
-				// No dynamorm tag, use json tag as fallback for field name
-				parts := strings.Split(jsonTag, ",")
-				if len(parts) > 0 && parts[0] != "" {
-					fieldName = parts[0]
-				}
-			}
-
-			// Skip zero values if omitempty is set (check both tags)
-			if (hasOmitEmpty(tag) || strings.Contains(jsonTag, "omitempty")) && isZeroValue(fieldValue) {
-				continue
-			}
-
-			// Convert field value
-			av, err := ConvertToAttributeValue(fieldValue.Interface())
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert field %s: %w", field.Name, err)
-			}
-
-			m[fieldName] = av
-		}
-
-		return &types.AttributeValueMemberM{Value: m}, nil
+		return convertStructToAttributeValue(v)
 
 	default:
 		return nil, fmt.Errorf("unsupported type: %v", v.Type())
 	}
+}
+
+func convertSliceToAttributeValue(v reflect.Value) (types.AttributeValue, error) {
+	// Handle []byte as binary
+	if v.Type().Elem().Kind() == reflect.Uint8 {
+		return &types.AttributeValueMemberB{Value: v.Bytes()}, nil
+	}
+
+	// Handle other slices as lists
+	list := make([]types.AttributeValue, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		item, err := ConvertToAttributeValue(v.Index(i).Interface())
+		if err != nil {
+			return nil, err
+		}
+		list[i] = item
+	}
+	return &types.AttributeValueMemberL{Value: list}, nil
+}
+
+func convertMapToAttributeValue(v reflect.Value) (types.AttributeValue, error) {
+	// Handle map[string]any as M type
+	if v.Type().Key().Kind() != reflect.String {
+		return nil, fmt.Errorf("unsupported map type: %v", v.Type())
+	}
+
+	m := make(map[string]types.AttributeValue, v.Len())
+	for _, key := range v.MapKeys() {
+		val, err := ConvertToAttributeValue(v.MapIndex(key).Interface())
+		if err != nil {
+			return nil, err
+		}
+		m[key.String()] = val
+	}
+	return &types.AttributeValueMemberM{Value: m}, nil
+}
+
+func convertStructToAttributeValue(v reflect.Value) (types.AttributeValue, error) {
+	// General struct marshaling
+	// Note: We no longer automatically JSON-serialize structs just because they have json tags.
+	// JSON serialization should only happen when explicitly requested via dynamorm:"json" tag,
+	// which is handled at the field level during marshaling, not here in the converter.
+	m := make(map[string]types.AttributeValue)
+	t := v.Type()
+
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		fieldName, dynamormTag, jsonTag, ok := marshalFieldNameAndTags(field)
+		if !ok {
+			continue
+		}
+
+		fieldValue := v.Field(i)
+		if shouldOmitEmptyField(fieldValue, dynamormTag, jsonTag) {
+			continue
+		}
+
+		av, err := ConvertToAttributeValue(fieldValue.Interface())
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert field %s: %w", field.Name, err)
+		}
+		m[fieldName] = av
+	}
+
+	return &types.AttributeValueMemberM{Value: m}, nil
+}
+
+func marshalFieldNameAndTags(field reflect.StructField) (string, string, string, bool) {
+	dynamormTag := field.Tag.Get("dynamorm")
+	jsonTag := field.Tag.Get("json")
+	if dynamormTag == "-" || jsonTag == "-" {
+		return "", "", "", false
+	}
+
+	fieldName := field.Name
+	if dynamormTag != "" {
+		fieldName = fieldNameFromDynamormTag(fieldName, dynamormTag)
+	} else if jsonTag != "" {
+		fieldName = fieldNameFromJSONTag(fieldName, jsonTag)
+	}
+
+	return fieldName, dynamormTag, jsonTag, true
+}
+
+func fieldNameFromDynamormTag(defaultName string, tag string) string {
+	fieldName := defaultName
+
+	parts := strings.Split(tag, ",")
+	if len(parts) > 0 && parts[0] != "" {
+		firstPart := parts[0]
+		if !strings.Contains(firstPart, ":") && !isPureModifierTag(firstPart) {
+			fieldName = firstPart
+		}
+	}
+
+	if attrName := parseAttrTag(tag); attrName != "" {
+		fieldName = attrName
+	}
+
+	return fieldName
+}
+
+func fieldNameFromJSONTag(defaultName string, jsonTag string) string {
+	parts := strings.Split(jsonTag, ",")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return defaultName
+}
+
+func shouldOmitEmptyField(fieldValue reflect.Value, dynamormTag string, jsonTag string) bool {
+	if !hasOmitEmpty(dynamormTag) && !strings.Contains(jsonTag, "omitempty") {
+		return false
+	}
+	return isZeroValue(fieldValue)
 }
 
 // ConvertFromAttributeValue converts a DynamoDB AttributeValue to a Go value
@@ -181,30 +213,42 @@ func ConvertFromAttributeValue(av types.AttributeValue, target any) error {
 
 // unmarshalAttributeValue unmarshals an AttributeValue into a reflect.Value
 func unmarshalAttributeValue(av types.AttributeValue, v reflect.Value) error {
-	// Handle any / any types
-	if v.Kind() == reflect.Interface && v.Type().NumMethod() == 0 {
-		// This is an empty interface (any or any)
-		val, err := attributeValueToInterface(av)
-		if err != nil {
-			return err
-		}
-		v.Set(reflect.ValueOf(val))
+	if isEmptyInterfaceValue(v) {
+		return unmarshalIntoEmptyInterface(av, v)
+	}
+	if v.Kind() == reflect.Ptr {
+		return unmarshalIntoPointer(av, v)
+	}
+	return unmarshalAttributeValueNonPtr(av, v)
+}
+
+func isEmptyInterfaceValue(v reflect.Value) bool {
+	return v.Kind() == reflect.Interface && v.Type().NumMethod() == 0
+}
+
+func unmarshalIntoEmptyInterface(av types.AttributeValue, v reflect.Value) error {
+	val, err := attributeValueToInterface(av)
+	if err != nil {
+		return err
+	}
+	v.Set(reflect.ValueOf(val))
+	return nil
+}
+
+func unmarshalIntoPointer(av types.AttributeValue, v reflect.Value) error {
+	if av == nil || isNullAttributeValue(av) {
+		v.Set(reflect.Zero(v.Type()))
 		return nil
 	}
 
-	// Handle pointer types
-	if v.Kind() == reflect.Ptr {
-		if av == nil || isNullAttributeValue(av) {
-			v.Set(reflect.Zero(v.Type()))
-			return nil
-		}
-		// Create new value if pointer is nil
-		if v.IsNil() {
-			v.Set(reflect.New(v.Type().Elem()))
-		}
-		return unmarshalAttributeValue(av, v.Elem())
+	// Create new value if pointer is nil
+	if v.IsNil() {
+		v.Set(reflect.New(v.Type().Elem()))
 	}
+	return unmarshalAttributeValue(av, v.Elem())
+}
 
+func unmarshalAttributeValueNonPtr(av types.AttributeValue, v reflect.Value) error {
 	switch av := av.(type) {
 	case *types.AttributeValueMemberS:
 		return unmarshalString(av.Value, v)
@@ -345,74 +389,75 @@ func unmarshalList(list []types.AttributeValue, v reflect.Value) error {
 func unmarshalMap(m map[string]types.AttributeValue, v reflect.Value) error {
 	switch v.Kind() {
 	case reflect.Map:
-		// Ensure map is string-keyed
-		if v.Type().Key().Kind() != reflect.String {
-			return fmt.Errorf("map must have string keys")
-		}
-
-		// Create new map if nil
-		if v.IsNil() {
-			v.Set(reflect.MakeMap(v.Type()))
-		}
-
-		// Unmarshal each value
-		for key, value := range m {
-			mapValue := reflect.New(v.Type().Elem()).Elem()
-			if err := unmarshalAttributeValue(value, mapValue); err != nil {
-				return fmt.Errorf("failed to unmarshal map value for key %s: %w", key, err)
-			}
-			v.SetMapIndex(reflect.ValueOf(key), mapValue)
-		}
-		return nil
+		return unmarshalMapIntoMap(m, v)
 
 	case reflect.Struct:
-		// Unmarshal map into struct fields
-		t := v.Type()
-		for i := 0; i < v.NumField(); i++ {
-			field := t.Field(i)
-			if !field.IsExported() {
-				continue
-			}
-
-			// Get field name from dynamorm tag, then json tag, then field name
-			fieldName := field.Name
-			tag := field.Tag.Get("dynamorm")
-			jsonTag := field.Tag.Get("json")
-
-			if tag != "" && tag != "-" {
-				// Parse the dynamorm tag
-				parts := strings.Split(tag, ",")
-				if len(parts) > 0 && parts[0] != "" {
-					// First part is the field name unless it contains ":" or is purely a modifier
-					firstPart := parts[0]
-					if !strings.Contains(firstPart, ":") && !isPureModifierTag(firstPart) {
-						fieldName = firstPart
-					}
-					// Check for attr: tag
-					if attrName := parseAttrTag(tag); attrName != "" {
-						fieldName = attrName
-					}
-				}
-			} else if jsonTag != "" && jsonTag != "-" {
-				// No dynamorm tag, use json tag as fallback
-				parts := strings.Split(jsonTag, ",")
-				if len(parts) > 0 && parts[0] != "" {
-					fieldName = parts[0]
-				}
-			}
-
-			// Look for matching attribute
-			if av, ok := m[fieldName]; ok {
-				if err := unmarshalAttributeValue(av, v.Field(i)); err != nil {
-					return fmt.Errorf("failed to unmarshal field %s: %w", field.Name, err)
-				}
-			}
-		}
-		return nil
+		return unmarshalMapIntoStruct(m, v)
 
 	default:
 		return fmt.Errorf("cannot unmarshal map into %v", v.Type())
 	}
+}
+
+func unmarshalMapIntoMap(m map[string]types.AttributeValue, v reflect.Value) error {
+	// Ensure map is string-keyed
+	if v.Type().Key().Kind() != reflect.String {
+		return fmt.Errorf("map must have string keys")
+	}
+
+	// Create new map if nil
+	if v.IsNil() {
+		v.Set(reflect.MakeMap(v.Type()))
+	}
+
+	// Unmarshal each value
+	for key, value := range m {
+		mapValue := reflect.New(v.Type().Elem()).Elem()
+		if err := unmarshalAttributeValue(value, mapValue); err != nil {
+			return fmt.Errorf("failed to unmarshal map value for key %s: %w", key, err)
+		}
+		v.SetMapIndex(reflect.ValueOf(key), mapValue)
+	}
+	return nil
+}
+
+func unmarshalMapIntoStruct(m map[string]types.AttributeValue, v reflect.Value) error {
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		fieldName := unmarshalFieldName(field)
+		if fieldName == "" {
+			continue
+		}
+
+		av, ok := m[fieldName]
+		if !ok {
+			continue
+		}
+		if err := unmarshalAttributeValue(av, v.Field(i)); err != nil {
+			return fmt.Errorf("failed to unmarshal field %s: %w", field.Name, err)
+		}
+	}
+	return nil
+}
+
+func unmarshalFieldName(field reflect.StructField) string {
+	fieldName := field.Name
+
+	tag := field.Tag.Get("dynamorm")
+	jsonTag := field.Tag.Get("json")
+
+	if tag != "" && tag != "-" {
+		return fieldNameFromDynamormTag(fieldName, tag)
+	}
+	if jsonTag != "" && jsonTag != "-" {
+		return fieldNameFromJSONTag(fieldName, jsonTag)
+	}
+	return fieldName
 }
 
 // unmarshalStringSet unmarshals a string set
@@ -520,14 +565,7 @@ func attributeValueToInterface(av types.AttributeValue) (any, error) {
 		return av.Value, nil
 
 	case *types.AttributeValueMemberN:
-		// Try to parse as int first, then float
-		if i, err := strconv.ParseInt(av.Value, 10, 64); err == nil {
-			return i, nil
-		}
-		if f, err := strconv.ParseFloat(av.Value, 64); err == nil {
-			return f, nil
-		}
-		return nil, fmt.Errorf("cannot parse number: %s", av.Value)
+		return parseNumberString(av.Value)
 
 	case *types.AttributeValueMemberB:
 		return av.Value, nil
@@ -539,43 +577,16 @@ func attributeValueToInterface(av types.AttributeValue) (any, error) {
 		return nil, nil
 
 	case *types.AttributeValueMemberL:
-		list := make([]any, len(av.Value))
-		for i, item := range av.Value {
-			val, err := attributeValueToInterface(item)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert list item %d: %w", i, err)
-			}
-			list[i] = val
-		}
-		return list, nil
+		return attributeValueListToInterface(av.Value)
 
 	case *types.AttributeValueMemberM:
-		m := make(map[string]any)
-		for k, v := range av.Value {
-			val, err := attributeValueToInterface(v)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert map value for key %s: %w", k, err)
-			}
-			m[k] = val
-		}
-		return m, nil
+		return attributeValueMapToInterface(av.Value)
 
 	case *types.AttributeValueMemberSS:
 		return av.Value, nil
 
 	case *types.AttributeValueMemberNS:
-		// Convert number set to slice of numbers
-		nums := make([]any, len(av.Value))
-		for i, n := range av.Value {
-			if intVal, err := strconv.ParseInt(n, 10, 64); err == nil {
-				nums[i] = intVal
-			} else if f, err := strconv.ParseFloat(n, 64); err == nil {
-				nums[i] = f
-			} else {
-				return nil, fmt.Errorf("cannot parse number in set: %s", n)
-			}
-		}
-		return nums, nil
+		return attributeValueNumberSetToInterface(av.Value)
 
 	case *types.AttributeValueMemberBS:
 		// Convert binary set to slice of []byte
@@ -584,4 +595,50 @@ func attributeValueToInterface(av types.AttributeValue) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown AttributeValue type: %T", av)
 	}
+}
+
+func parseNumberString(value string) (any, error) {
+	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return i, nil
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		return f, nil
+	}
+	return nil, fmt.Errorf("cannot parse number: %s", value)
+}
+
+func attributeValueListToInterface(list []types.AttributeValue) ([]any, error) {
+	result := make([]any, len(list))
+	for i, item := range list {
+		val, err := attributeValueToInterface(item)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert list item %d: %w", i, err)
+		}
+		result[i] = val
+	}
+	return result, nil
+}
+
+func attributeValueMapToInterface(m map[string]types.AttributeValue) (map[string]any, error) {
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		val, err := attributeValueToInterface(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert map value for key %s: %w", k, err)
+		}
+		result[k] = val
+	}
+	return result, nil
+}
+
+func attributeValueNumberSetToInterface(values []string) ([]any, error) {
+	nums := make([]any, len(values))
+	for i, value := range values {
+		num, err := parseNumberString(value)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse number in set: %s", value)
+		}
+		nums[i] = num
+	}
+	return nums, nil
 }

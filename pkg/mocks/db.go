@@ -3,8 +3,9 @@ package mocks
 import (
 	"context"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // MockDB is a mock implementation of the core.DB interface.
@@ -24,7 +25,7 @@ type MockDB struct {
 // Model returns a new query builder for the given model
 func (m *MockDB) Model(model any) core.Query {
 	args := m.Called(model)
-	return args.Get(0).(core.Query)
+	return mustCoreQuery(args.Get(0))
 }
 
 // Transaction executes a function within a database transaction
@@ -54,5 +55,5 @@ func (m *MockDB) Close() error {
 // WithContext returns a new DB instance with the given context
 func (m *MockDB) WithContext(ctx context.Context) core.DB {
 	args := m.Called(ctx)
-	return args.Get(0).(core.DB)
+	return mustCoreDB(args.Get(0))
 }

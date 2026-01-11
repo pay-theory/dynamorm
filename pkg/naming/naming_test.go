@@ -139,8 +139,8 @@ func TestToSnakeCase(t *testing.T) {
 		"lowercase": "lowercase",
 
 		// Edge cases
-		"PK":       "pk",
-		"SK":       "sk",
+		"PK":        "pk",
+		"SK":        "sk",
 		"AccountID": "account_id",
 		"DeletedAt": "deleted_at",
 	}
@@ -155,26 +155,26 @@ func TestToSnakeCase(t *testing.T) {
 func TestConvertAttrName(t *testing.T) {
 	testCases := []struct {
 		input      string
-		convention Convention
 		expected   string
+		convention Convention
 	}{
 		// CamelCase convention
-		{"Name", CamelCase, "name"},
-		{"CreatedAt", CamelCase, "createdAt"},
-		{"URLValue", CamelCase, "urlValue"},
-		{"ID", CamelCase, "id"},
-		{"PK", CamelCase, "PK"},
-		{"SK", CamelCase, "SK"},
+		{"Name", "name", CamelCase},
+		{"CreatedAt", "createdAt", CamelCase},
+		{"URLValue", "urlValue", CamelCase},
+		{"ID", "id", CamelCase},
+		{"PK", "PK", CamelCase},
+		{"SK", "SK", CamelCase},
 
 		// SnakeCase convention
-		{"Name", SnakeCase, "name"},
-		{"CreatedAt", SnakeCase, "created_at"},
-		{"URLValue", SnakeCase, "url_value"},
-		{"ID", SnakeCase, "id"},
-		{"PK", SnakeCase, "pk"},
-		{"SK", SnakeCase, "sk"},
-		{"UserID", SnakeCase, "user_id"},
-		{"FirstName", SnakeCase, "first_name"},
+		{"Name", "name", SnakeCase},
+		{"CreatedAt", "created_at", SnakeCase},
+		{"URLValue", "url_value", SnakeCase},
+		{"ID", "id", SnakeCase},
+		{"PK", "pk", SnakeCase},
+		{"SK", "sk", SnakeCase},
+		{"UserID", "user_id", SnakeCase},
+		{"FirstName", "first_name", SnakeCase},
 	}
 
 	for _, tc := range testCases {

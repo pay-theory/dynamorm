@@ -21,14 +21,14 @@ import (
 
 // ProcessPaymentRequest represents the payment request payload
 type ProcessPaymentRequest struct {
+	Metadata       map[string]string `json:"metadata,omitempty"`
 	IdempotencyKey string            `json:"idempotency_key"`
-	Amount         int64             `json:"amount"`
 	Currency       string            `json:"currency"`
 	PaymentMethod  string            `json:"payment_method"`
 	CustomerID     string            `json:"customer_id,omitempty"`
 	Description    string            `json:"description,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
 	UserID         string            `json:"user_id"`
+	Amount         int64             `json:"amount"`
 }
 
 // Handler processes payment requests

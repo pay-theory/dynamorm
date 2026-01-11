@@ -6,18 +6,20 @@ import (
 	"reflect"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // UpdateBuilder provides a fluent API for building complex update expressions
 type UpdateBuilder struct {
+	buildErr     error
 	query        *Query
 	expr         *expr.Builder
 	keyValues    map[string]any
-	conditions   []updateCondition
 	returnValues string
-	buildErr     error // Stores first error encountered during building
+	conditions   []updateCondition
 }
 
 type updateCondition struct {
@@ -50,7 +52,9 @@ func (ub *UpdateBuilder) mapFieldToDynamoDBName(field string) string {
 // Set adds a SET expression to update a field
 func (ub *UpdateBuilder) Set(field string, value any) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateSet(dbFieldName, value)
+	if err := ub.expr.AddUpdateSet(dbFieldName, value); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Set(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -69,7 +73,9 @@ func (ub *UpdateBuilder) SetIfNotExists(field string, value any, defaultValue an
 // Add increments a numeric field (atomic counter)
 func (ub *UpdateBuilder) Add(field string, value any) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateAdd(dbFieldName, value)
+	if err := ub.expr.AddUpdateAdd(dbFieldName, value); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Add(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -86,7 +92,9 @@ func (ub *UpdateBuilder) Decrement(field string) core.UpdateBuilder {
 // Remove removes an attribute from the item
 func (ub *UpdateBuilder) Remove(field string) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateRemove(dbFieldName)
+	if err := ub.expr.AddUpdateRemove(dbFieldName); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Remove(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -119,7 +127,9 @@ func (ub *UpdateBuilder) Delete(field string, value any) core.UpdateBuilder {
 		}
 	}
 
-	ub.expr.AddUpdateDelete(dbFieldName, setValue)
+	if err := ub.expr.AddUpdateDelete(dbFieldName, setValue); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("Delete(%s): %w", field, err)
+	}
 	return ub
 }
 
@@ -150,19 +160,36 @@ func (ub *UpdateBuilder) PrependToList(field string, values any) core.UpdateBuil
 // RemoveFromListAt removes an element from a list at a specific index
 func (ub *UpdateBuilder) RemoveFromListAt(field string, index int) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateRemove(fmt.Sprintf("%s[%d]", dbFieldName, index))
+	if err := ub.expr.AddUpdateRemove(fmt.Sprintf("%s[%d]", dbFieldName, index)); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("RemoveFromListAt(%s): %w", field, err)
+	}
 	return ub
 }
 
 // SetListElement sets a specific element in a list
 func (ub *UpdateBuilder) SetListElement(field string, index int, value any) core.UpdateBuilder {
 	dbFieldName := ub.mapFieldToDynamoDBName(field)
-	ub.expr.AddUpdateSet(fmt.Sprintf("%s[%d]", dbFieldName, index), value)
+	if err := ub.expr.AddUpdateSet(fmt.Sprintf("%s[%d]", dbFieldName, index), value); err != nil && ub.buildErr == nil {
+		ub.buildErr = fmt.Errorf("SetListElement(%s): %w", field, err)
+	}
 	return ub
 }
 
 // Condition adds a condition that must be met for the update to succeed
 func (ub *UpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
+	if ub.buildErr == nil && ub.query != nil && ub.query.metadata != nil {
+		if meta := ub.query.metadata.AttributeMetadata(field); meta != nil && len(meta.Tags) > 0 {
+			if _, ok := meta.Tags["encrypted"]; ok {
+				name := meta.Name
+				if name == "" {
+					name = field
+				}
+				ub.buildErr = fmt.Errorf("%w: %s", dynamormErrors.ErrEncryptedFieldNotQueryable, name)
+				return ub
+			}
+		}
+	}
+
 	ub.conditions = append(ub.conditions, updateCondition{
 		field:    field,
 		operator: operator,
@@ -174,6 +201,19 @@ func (ub *UpdateBuilder) Condition(field string, operator string, value any) cor
 
 // OrCondition adds a condition with OR logic
 func (ub *UpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	if ub.buildErr == nil && ub.query != nil && ub.query.metadata != nil {
+		if meta := ub.query.metadata.AttributeMetadata(field); meta != nil && len(meta.Tags) > 0 {
+			if _, ok := meta.Tags["encrypted"]; ok {
+				name := meta.Name
+				if name == "" {
+					name = field
+				}
+				ub.buildErr = fmt.Errorf("%w: %s", dynamormErrors.ErrEncryptedFieldNotQueryable, name)
+				return ub
+			}
+		}
+	}
+
 	ub.conditions = append(ub.conditions, updateCondition{
 		field:    field,
 		operator: operator,
@@ -219,38 +259,56 @@ func (ub *UpdateBuilder) populateKeyValues() error {
 		return fmt.Errorf("query metadata is nil")
 	}
 
-	ub.keyValues = make(map[string]any)
 	primaryKey := ub.query.metadata.PrimaryKey()
+	resolveAttr := func(field string) string {
+		if field == "" || ub.query.metadata == nil {
+			return field
+		}
+		if meta := ub.query.metadata.AttributeMetadata(field); meta != nil && meta.DynamoDBName != "" {
+			return meta.DynamoDBName
+		}
+		return field
+	}
 
+	pkAttr := resolveAttr(primaryKey.PartitionKey)
+	skAttr := resolveAttr(primaryKey.SortKey)
+
+	if len(ub.keyValues) > 0 {
+		normalized := make(map[string]any, len(ub.keyValues))
+		for field, value := range ub.keyValues {
+			normalized[resolveAttr(field)] = value
+		}
+		ub.keyValues = normalized
+
+		if _, ok := ub.keyValues[pkAttr]; !ok {
+			return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
+		}
+		if primaryKey.SortKey != "" {
+			if _, ok := ub.keyValues[skAttr]; !ok {
+				return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
+			}
+		}
+
+		return nil
+	}
+
+	ub.keyValues = make(map[string]any)
 	for _, cond := range ub.query.conditions {
-		if cond.Field == primaryKey.PartitionKey ||
-			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+		condAttr := resolveAttr(cond.Field)
+		if condAttr == pkAttr || (primaryKey.SortKey != "" && condAttr == skAttr) {
 			if cond.Operator != "=" {
 				return fmt.Errorf("key condition must use '=' operator")
 			}
-
-			keyName := cond.Field
-			if attrMeta := ub.query.metadata.AttributeMetadata(cond.Field); attrMeta != nil && attrMeta.DynamoDBName != "" {
-				keyName = attrMeta.DynamoDBName
-			}
-			ub.keyValues[keyName] = cond.Value
+			ub.keyValues[condAttr] = cond.Value
 		}
 	}
 
-	pkName := primaryKey.PartitionKey
-	if attrMeta := ub.query.metadata.AttributeMetadata(primaryKey.PartitionKey); attrMeta != nil && attrMeta.DynamoDBName != "" {
-		pkName = attrMeta.DynamoDBName
-	}
-	if _, ok := ub.keyValues[pkName]; !ok {
+	if _, ok := ub.keyValues[pkAttr]; !ok {
 		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
 	}
 
 	if primaryKey.SortKey != "" {
-		skName := primaryKey.SortKey
-		if attrMeta := ub.query.metadata.AttributeMetadata(primaryKey.SortKey); attrMeta != nil && attrMeta.DynamoDBName != "" {
-			skName = attrMeta.DynamoDBName
-		}
-		if _, ok := ub.keyValues[skName]; !ok {
+		if _, ok := ub.keyValues[skAttr]; !ok {
 			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
@@ -27,6 +28,9 @@ var (
 	// Global Lambda-optimized DB for connection reuse
 	globalLambdaDB *LambdaDB
 	lambdaOnce     sync.Once
+
+	benchmarkLoadDefaultConfig = config.LoadDefaultConfig
+	benchmarkNewDynamoDBClient = dynamodb.NewFromConfig
 )
 
 // Package dynamorm provides Lambda-specific optimizations for DynamoDB operations.
@@ -63,10 +67,10 @@ var (
 // LambdaDB wraps DB with Lambda-specific optimizations
 type LambdaDB struct {
 	core.ExtendedDB
-	db             *DB       // Internal reference to concrete DB
-	modelCache     *sync.Map // Cache pre-registered models
-	isLambda       bool
+	db             *DB
+	modelCache     *sync.Map
 	lambdaMemoryMB int
+	isLambda       bool
 	xrayEnabled    bool
 }
 
@@ -110,8 +114,8 @@ func createLambdaDB() (*LambdaDB, error) {
 		config.WithRetryMaxAttempts(3),
 	}
 
-// Enable X-Ray tracing automatically when running in Lambda. The AWS SDK picks up
-// X-Ray configuration from the environment, so no explicit setup is required here.
+	// Enable X-Ray tracing automatically when running in Lambda. The AWS SDK picks up
+	// X-Ray configuration from the environment, so no explicit setup is required here.
 
 	cfg := session.Config{
 		Region:           getRegion(),
@@ -128,7 +132,6 @@ func createLambdaDB() (*LambdaDB, error) {
 		cfg.DynamoDBOptions = append(cfg.DynamoDBOptions, func(o *dynamodb.Options) {
 			// Lambda-specific optimizations
 			o.RetryMode = aws.RetryModeAdaptive
-			o.Retryer = aws.NopRetryer{} // Handle retries at application level for better control
 		})
 	}
 
@@ -260,9 +263,12 @@ func (ldb *LambdaDB) OptimizeForColdStart() {
 			return
 		}
 
-		_, _ = client.ListTables(ctx, &dynamodb.ListTablesInput{
+		_, err = client.ListTables(ctx, &dynamodb.ListTablesInput{
 			Limit: aws.Int32(1),
 		})
+		if err != nil {
+			return
+		}
 	}()
 
 	// Pre-compile common expressions if using a query builder
@@ -382,7 +388,7 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 	// Phase 1: AWS Config
 	phaseStart := time.Now()
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := benchmarkLoadDefaultConfig(context.Background())
 	phases["aws_config"] = time.Since(phaseStart)
 	if err != nil {
 		// If config loading fails, still track it but with error
@@ -397,13 +403,22 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 	// Phase 2: DynamoDB Client
 	phaseStart = time.Now()
-	client := dynamodb.NewFromConfig(cfg)
+	client := benchmarkNewDynamoDBClient(cfg)
 	phases["dynamodb_client"] = time.Since(phaseStart)
 
 	// Phase 3: DynamORM Setup
 	phaseStart = time.Now()
-	db, _ := NewLambdaOptimized()
+	db, err := NewLambdaOptimized()
 	phases["dynamorm_setup"] = time.Since(phaseStart)
+	if err != nil {
+		phases["dynamorm_setup_error"] = phases["dynamorm_setup"]
+		return ColdStartMetrics{
+			TotalDuration: time.Since(start),
+			Phases:        phases,
+			MemoryMB:      GetLambdaMemoryMB(),
+			IsLambda:      IsLambdaEnvironment(),
+		}
+	}
 
 	// Phase 4: Model Registration
 	if len(models) > 0 {
@@ -445,8 +460,8 @@ func BenchmarkColdStart(models ...any) ColdStartMetrics {
 
 // ColdStartMetrics contains cold start performance data
 type ColdStartMetrics struct {
-	TotalDuration time.Duration
 	Phases        map[string]time.Duration
+	TotalDuration time.Duration
 	MemoryMB      int
 	IsLambda      bool
 }
@@ -459,7 +474,7 @@ func (m ColdStartMetrics) String() string {
 	result.WriteString("Phases:\n")
 
 	// Sort phases for consistent output
-	var phases []string
+	phases := make([]string, 0, len(m.Phases))
 	for phase := range m.Phases {
 		phases = append(phases, phase)
 	}

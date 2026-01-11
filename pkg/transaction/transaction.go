@@ -10,6 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"github.com/pay-theory/dynamorm/internal/encryption"
 	"github.com/pay-theory/dynamorm/internal/reflectutil"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/model"
@@ -19,13 +21,13 @@ import (
 
 // Transaction represents a DynamoDB transaction
 type Transaction struct {
+	ctx       context.Context
 	session   *session.Session
 	registry  *model.Registry
 	converter *pkgTypes.Converter
+	results   map[string]map[string]types.AttributeValue
 	writes    []types.TransactWriteItem
 	reads     []types.TransactGetItem
-	results   map[string]map[string]types.AttributeValue
-	ctx       context.Context
 }
 
 // NewTransaction creates a new transaction
@@ -86,25 +88,70 @@ func (tx *Transaction) Update(model any) error {
 		return fmt.Errorf("failed to get model metadata: %w", err)
 	}
 
-	// Extract primary key
+	if encryptionErr := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(tx.session, metadata); encryptionErr != nil {
+		return encryptionErr
+	}
+
 	key, err := tx.extractPrimaryKey(model, metadata)
 	if err != nil {
 		return fmt.Errorf("failed to extract primary key: %w", err)
 	}
-
-	// Build update expression
-	updateExpression := "SET "
-	expressionAttributeNames := make(map[string]string)
-	expressionAttributeValues := make(map[string]types.AttributeValue)
 
 	modelValue := reflect.ValueOf(model)
 	if modelValue.Kind() == reflect.Ptr {
 		modelValue = modelValue.Elem()
 	}
 
+	updateExpression, expressionAttributeNames, expressionAttributeValues, err := tx.buildUpdateExpression(modelValue, metadata)
+	if err != nil {
+		return err
+	}
+
+	// Handle version field for optimistic locking
+	conditionExpression, err := tx.applyVersionUpdate(modelValue, metadata, &updateExpression, expressionAttributeNames, expressionAttributeValues)
+	if err != nil {
+		return err
+	}
+
+	// Handle updated_at field
+	if err := tx.applyUpdatedAtUpdate(modelValue, metadata, &updateExpression, expressionAttributeNames, expressionAttributeValues); err != nil {
+		return err
+	}
+
+	if encryption.MetadataHasEncryptedFields(metadata) && len(expressionAttributeValues) > 0 {
+		svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+		if err := encryption.EncryptUpdateExpressionValues(tx.ctx, svc, metadata, updateExpression, expressionAttributeNames, expressionAttributeValues); err != nil {
+			return err
+		}
+	}
+
+	updateItem := &types.Update{
+		TableName:                 aws.String(metadata.TableName),
+		Key:                       key,
+		UpdateExpression:          aws.String(updateExpression),
+		ExpressionAttributeNames:  expressionAttributeNames,
+		ExpressionAttributeValues: expressionAttributeValues,
+	}
+
+	if conditionExpression != "" {
+		updateItem.ConditionExpression = aws.String(conditionExpression)
+	}
+
+	// Add to transaction
+	tx.writes = append(tx.writes, types.TransactWriteItem{
+		Update: updateItem,
+	})
+
+	return nil
+}
+
+func (tx *Transaction) buildUpdateExpression(modelValue reflect.Value, metadata *model.Metadata) (string, map[string]string, map[string]types.AttributeValue, error) {
+	updateExpression := "SET "
+	expressionAttributeNames := make(map[string]string)
+	expressionAttributeValues := make(map[string]types.AttributeValue)
+
 	updateCount := 0
 	for fieldName, fieldMeta := range metadata.Fields {
-		// Skip primary key fields
 		if fieldMeta.IsPK || fieldMeta.IsSK {
 			continue
 		}
@@ -124,7 +171,7 @@ func (tx *Transaction) Update(model any) error {
 		expressionAttributeNames[attrName] = fieldMeta.DBName
 		av, err := tx.converter.ToAttributeValue(fieldValue.Interface())
 		if err != nil {
-			return fmt.Errorf("failed to convert field %s: %w", fieldName, err)
+			return "", nil, nil, fmt.Errorf("failed to convert field %s: %w", fieldName, err)
 		}
 		expressionAttributeValues[attrValue] = av
 
@@ -132,75 +179,75 @@ func (tx *Transaction) Update(model any) error {
 		updateCount++
 	}
 
-	// Handle version field for optimistic locking
-	var conditionExpression string
-	if metadata.VersionField != nil {
-		versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
-		if versionValue.IsValid() && !versionValue.IsZero() {
-			currentVersion := versionValue.Int()
-			conditionExpression = "#ver = :currentVer"
-			expressionAttributeNames["#ver"] = metadata.VersionField.DBName
+	return updateExpression, expressionAttributeNames, expressionAttributeValues, nil
+}
 
-			av, err := tx.converter.ToAttributeValue(currentVersion)
-			if err != nil {
-				return fmt.Errorf("failed to convert current version: %w", err)
-			}
-			expressionAttributeValues[":currentVer"] = av
+func (tx *Transaction) applyVersionUpdate(
+	modelValue reflect.Value,
+	metadata *model.Metadata,
+	updateExpression *string,
+	expressionAttributeNames map[string]string,
+	expressionAttributeValues map[string]types.AttributeValue,
+) (string, error) {
+	if metadata.VersionField == nil {
+		return "", nil
+	}
 
-			// Increment version
-			updateExpression += ", #ver = :newVer"
-			newAv, err := tx.converter.ToAttributeValue(currentVersion + 1)
-			if err != nil {
-				return fmt.Errorf("failed to convert new version: %w", err)
-			}
-			expressionAttributeValues[":newVer"] = newAv
+	versionValue := modelValue.FieldByIndex(metadata.VersionField.IndexPath)
+	if !versionValue.IsValid() || versionValue.IsZero() {
+		return "", nil
+	}
+
+	currentVersion := versionValue.Int()
+	conditionExpression := "#ver = :currentVer"
+	expressionAttributeNames["#ver"] = metadata.VersionField.DBName
+
+	av, err := tx.converter.ToAttributeValue(currentVersion)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert current version: %w", err)
+	}
+	expressionAttributeValues[":currentVer"] = av
+
+	*updateExpression += ", #ver = :newVer"
+	newAv, err := tx.converter.ToAttributeValue(currentVersion + 1)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert new version: %w", err)
+	}
+	expressionAttributeValues[":newVer"] = newAv
+
+	return conditionExpression, nil
+}
+
+func (tx *Transaction) applyUpdatedAtUpdate(
+	modelValue reflect.Value,
+	metadata *model.Metadata,
+	updateExpression *string,
+	expressionAttributeNames map[string]string,
+	expressionAttributeValues map[string]types.AttributeValue,
+) error {
+	if metadata.UpdatedAtField == nil {
+		return nil
+	}
+
+	for _, fieldMeta := range metadata.Fields {
+		if fieldMeta.DBName != metadata.UpdatedAtField.DBName {
+			continue
+		}
+
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if fieldValue.IsValid() && !reflectutil.IsEmpty(fieldValue) {
+			return nil
 		}
 	}
 
-	// Handle updated_at field
-	if metadata.UpdatedAtField != nil {
-		// Check if we already have updated_at in the update expression
-		alreadyUpdated := false
-		for _, fieldMeta := range metadata.Fields {
-			if fieldMeta.DBName == metadata.UpdatedAtField.DBName {
-				fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-				if fieldValue.IsValid() && !reflectutil.IsEmpty(fieldValue) {
-					alreadyUpdated = true
-					break
-				}
-			}
-		}
+	*updateExpression += ", #upd = :updTime"
+	expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
 
-		if !alreadyUpdated {
-			updateExpression += ", #upd = :updTime"
-			expressionAttributeNames["#upd"] = metadata.UpdatedAtField.DBName
-
-			av, err := tx.converter.ToAttributeValue(time.Now())
-			if err != nil {
-				return fmt.Errorf("failed to convert updated_at timestamp: %w", err)
-			}
-			expressionAttributeValues[":updTime"] = av
-		}
+	av, err := tx.converter.ToAttributeValue(time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to convert updated_at timestamp: %w", err)
 	}
-
-	// Build update item
-	updateItem := &types.Update{
-		TableName:                 aws.String(metadata.TableName),
-		Key:                       key,
-		UpdateExpression:          aws.String(updateExpression),
-		ExpressionAttributeNames:  expressionAttributeNames,
-		ExpressionAttributeValues: expressionAttributeValues,
-	}
-
-	if conditionExpression != "" {
-		updateItem.ConditionExpression = aws.String(conditionExpression)
-	}
-
-	// Add to transaction
-	tx.writes = append(tx.writes, types.TransactWriteItem{
-		Update: updateItem,
-	})
-
+	expressionAttributeValues[":updTime"] = av
 	return nil
 }
 
@@ -257,6 +304,8 @@ func (tx *Transaction) Delete(model any) error {
 
 // Get adds a get operation to the transaction
 func (tx *Transaction) Get(model any, dest any) error {
+	_ = dest
+
 	metadata, err := tx.registry.GetMetadata(model)
 	if err != nil {
 		return fmt.Errorf("failed to get model metadata: %w", err)
@@ -364,6 +413,23 @@ func (tx *Transaction) handleTransactionError(err error) error {
 
 // marshalItem converts a model to DynamoDB attribute values
 func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(tx.session, metadata); err != nil {
+		return nil, err
+	}
+
+	item, err := tx.marshalPlainItem(model, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.encryptItemIfNeeded(metadata, item); err != nil {
+		return nil, err
+	}
+
+	return item, nil
+}
+
+func (tx *Transaction) marshalPlainItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
 	item := make(map[string]types.AttributeValue)
 
 	modelValue := reflect.ValueOf(model)
@@ -394,6 +460,36 @@ func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[str
 	}
 
 	return item, nil
+}
+
+func (tx *Transaction) encryptItemIfNeeded(metadata *model.Metadata, item map[string]types.AttributeValue) error {
+	if !encryption.MetadataHasEncryptedFields(metadata) || len(item) == 0 {
+		return nil
+	}
+
+	svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+	ctx := tx.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	for _, fieldMeta := range metadata.Fields {
+		if fieldMeta == nil || !fieldMeta.IsEncrypted {
+			continue
+		}
+		av, ok := item[fieldMeta.DBName]
+		if !ok {
+			continue
+		}
+
+		encryptedAV, err := svc.EncryptAttributeValue(ctx, fieldMeta.DBName, av)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt field %s: %w", fieldMeta.DBName, err)
+		}
+		item[fieldMeta.DBName] = encryptedAV
+	}
+
+	return nil
 }
 
 // extractPrimaryKey extracts the primary key from a model

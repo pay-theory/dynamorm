@@ -10,41 +10,42 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // Test models
 type User struct {
-	ID        string `dynamorm:"pk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
 	Email     string
 	Name      string
 	Balance   float64
-	Version   int       `dynamorm:"version"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
+	Version   int `dynamorm:"version"`
 }
 
 type Account struct {
-	AccountID   string `dynamorm:"pk"`
-	UserID      string `dynamorm:"sk"`
+	UpdatedAt   time.Time `dynamorm:"updated_at"`
+	AccountID   string    `dynamorm:"pk"`
+	UserID      string    `dynamorm:"sk"`
 	AccountType string
 	Balance     float64
-	Version     int       `dynamorm:"version"`
-	UpdatedAt   time.Time `dynamorm:"updated_at"`
+	Version     int `dynamorm:"version"`
 }
 
 type Order struct {
-	OrderID    string `dynamorm:"pk"`
-	CustomerID string
-	Total      float64
-	Status     string
 	CreatedAt  time.Time `dynamorm:"created_at"`
+	OrderID    string    `dynamorm:"pk"`
+	CustomerID string
+	Status     string
+	Total      float64
 }
 
 func setupTest(t *testing.T) (*Transaction, *model.Registry) {
@@ -491,7 +492,9 @@ func TestTransactionBuilderRetriesOnConflict(t *testing.T) {
 
 	err := builder.Put(&User{ID: "retry-user"}).Execute()
 	require.NoError(t, err)
-	assert.Equal(t, 2, builder.client.(*mockTransactClient).callCount)
+	mockClient, ok := builder.client.(*mockTransactClient)
+	require.True(t, ok)
+	assert.Equal(t, 2, mockClient.callCount)
 }
 
 func TestTransactionBuilderOperationLimit(t *testing.T) {
@@ -560,8 +563,8 @@ func TestTransactionBuilderUpdateWithBuilder(t *testing.T) {
 type mockTransactClient struct {
 	t         *testing.T
 	responses []error
-	callCount int
 	inputs    []*dynamodb.TransactWriteItemsInput
+	callCount int
 }
 
 func newMockTransactClient(t *testing.T, responses ...error) *mockTransactClient {

@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/internal/expr"
 )
 
 func TestNewBuilder(t *testing.T) {
@@ -79,36 +80,28 @@ func TestAddKeyCondition(t *testing.T) {
 }
 
 func TestAddFilterCondition(t *testing.T) {
+	type filterCondition struct {
+		value     any
+		logicalOp string
+		field     string
+		operator  string
+	}
+
 	tests := []struct {
-		name       string
-		conditions []struct {
-			logicalOp string
-			field     string
-			operator  string
-			value     any
-		}
+		name         string
 		expectedExpr string
+		conditions   []filterCondition
 	}{
 		{
 			name: "single filter",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "=", value: "active"},
 			},
 			expectedExpr: "#STATUS = :v1",
 		},
 		{
 			name: "multiple AND filters",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "=", value: "active"},
 				{logicalOp: "AND", field: "age", operator: ">", value: 18},
 			},
@@ -116,12 +109,7 @@ func TestAddFilterCondition(t *testing.T) {
 		},
 		{
 			name: "OR filters",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "=", value: "active"},
 				{logicalOp: "OR", field: "status", operator: "=", value: "pending"},
 			},
@@ -129,36 +117,21 @@ func TestAddFilterCondition(t *testing.T) {
 		},
 		{
 			name: "IN operator",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "status", operator: "IN", value: []string{"active", "pending", "completed"}},
 			},
 			expectedExpr: "#STATUS IN (:v1, :v2, :v3)",
 		},
 		{
 			name: "EXISTS operator",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "email", operator: "EXISTS", value: nil},
 			},
 			expectedExpr: "attribute_exists(#n1)",
 		},
 		{
 			name: "NOT_EXISTS operator",
-			conditions: []struct {
-				logicalOp string
-				field     string
-				operator  string
-				value     any
-			}{
+			conditions: []filterCondition{
 				{logicalOp: "AND", field: "deletedAt", operator: "NOT_EXISTS", value: nil},
 			},
 			expectedExpr: "attribute_not_exists(#n1)",
@@ -222,9 +195,9 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("SET expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateSet("name", "John Doe")
-		builder.AddUpdateSet("age", 30)
-		builder.AddUpdateSet("email", "john@example.com")
+		require.NoError(t, builder.AddUpdateSet("name", "John Doe"))
+		require.NoError(t, builder.AddUpdateSet("age", 30))
+		require.NoError(t, builder.AddUpdateSet("email", "john@example.com"))
 
 		components := builder.Build()
 
@@ -237,8 +210,8 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("ADD expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateAdd("loginCount", 1)
-		builder.AddUpdateAdd("points", 10)
+		require.NoError(t, builder.AddUpdateAdd("loginCount", 1))
+		require.NoError(t, builder.AddUpdateAdd("points", 10))
 
 		components := builder.Build()
 
@@ -250,8 +223,8 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("REMOVE expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateRemove("tempField")
-		builder.AddUpdateRemove("oldData")
+		require.NoError(t, builder.AddUpdateRemove("tempField"))
+		require.NoError(t, builder.AddUpdateRemove("oldData"))
 
 		components := builder.Build()
 
@@ -263,7 +236,7 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("DELETE expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateDelete("tags", []string{"old", "deprecated"})
+		require.NoError(t, builder.AddUpdateDelete("tags", []string{"old", "deprecated"}))
 
 		components := builder.Build()
 
@@ -274,10 +247,10 @@ func TestUpdateExpressions(t *testing.T) {
 	t.Run("mixed update expressions", func(t *testing.T) {
 		builder := expr.NewBuilder()
 
-		builder.AddUpdateSet("name", "Jane Doe")
-		builder.AddUpdateAdd("version", 1)
-		builder.AddUpdateRemove("tempData")
-		builder.AddUpdateDelete("tags", []string{"temp"})
+		require.NoError(t, builder.AddUpdateSet("name", "Jane Doe"))
+		require.NoError(t, builder.AddUpdateAdd("version", 1))
+		require.NoError(t, builder.AddUpdateRemove("tempData"))
+		require.NoError(t, builder.AddUpdateDelete("tags", []string{"temp"}))
 
 		components := builder.Build()
 
@@ -286,6 +259,43 @@ func TestUpdateExpressions(t *testing.T) {
 		assert.Contains(t, components.UpdateExpression, "ADD")
 		assert.Contains(t, components.UpdateExpression, "REMOVE")
 		assert.Contains(t, components.UpdateExpression, "DELETE")
+	})
+
+	t.Run("list index update expressions", func(t *testing.T) {
+		t.Run("SET list element", func(t *testing.T) {
+			builder := expr.NewBuilder()
+
+			require.NoError(t, builder.AddUpdateSet("items[0]", "value"))
+
+			components := builder.Build()
+
+			assert.Contains(t, components.UpdateExpression, "SET")
+			assert.Contains(t, components.UpdateExpression, "[0] = :v1")
+
+			for _, attrName := range components.ExpressionAttributeNames {
+				assert.NotContains(t, attrName, "[")
+				assert.NotContains(t, attrName, "]")
+			}
+		})
+
+		t.Run("REMOVE list element", func(t *testing.T) {
+			builder := expr.NewBuilder()
+
+			require.NoError(t, builder.AddUpdateRemove("items[2]"))
+
+			components := builder.Build()
+
+			assert.Contains(t, components.UpdateExpression, "REMOVE")
+			assert.Contains(t, components.UpdateExpression, "[2]")
+		})
+
+		t.Run("reject list index injection", func(t *testing.T) {
+			builder := expr.NewBuilder()
+
+			require.Error(t, builder.AddUpdateSet("items[0] = :v2, other = :v3, items[1]", "value"))
+			require.Error(t, builder.AddUpdateSet("items[-1]", "value"))
+			require.Error(t, builder.AddUpdateRemove("items[0], other]"))
+		})
 	})
 }
 
@@ -415,8 +425,8 @@ func TestAddAdvancedFunction(t *testing.T) {
 		name         string
 		function     string
 		field        string
-		args         []any
 		expectedExpr string
+		args         []any
 		expectedErr  bool
 	}{
 		{
@@ -514,6 +524,18 @@ func TestAddUpdateFunction(t *testing.T) {
 			args:     []any{"history", []string{"new_event"}},
 		},
 		{
+			name:     "list_append prepend",
+			field:    "history",
+			function: "list_append",
+			args:     []any{[]string{"new_event"}, "history"},
+		},
+		{
+			name:     "list_append merge lists",
+			field:    "history",
+			function: "list_append",
+			args:     []any{[]string{"a"}, []string{"b"}},
+		},
+		{
 			name:        "if_not_exists missing args",
 			field:       "views",
 			function:    "if_not_exists",
@@ -553,6 +575,18 @@ func TestAddUpdateFunction(t *testing.T) {
 	}
 }
 
+func TestAddKeyCondition_BetweenRequiresTwoValues(t *testing.T) {
+	builder := expr.NewBuilder()
+	err := builder.AddKeyCondition("timestamp", "BETWEEN", []any{1000})
+	require.Error(t, err)
+}
+
+func TestAddFilterCondition_IN_RequiresSlice(t *testing.T) {
+	builder := expr.NewBuilder()
+	err := builder.AddFilterCondition("AND", "status", "IN", "not-a-slice")
+	require.Error(t, err)
+}
+
 func TestBuildCompleteExpression(t *testing.T) {
 	builder := expr.NewBuilder()
 
@@ -568,8 +602,8 @@ func TestBuildCompleteExpression(t *testing.T) {
 	builder.AddProjection("id", "status", "amount", "createdAt")
 
 	// Add update expressions
-	builder.AddUpdateSet("status", "completed")
-	builder.AddUpdateAdd("totalAmount", 100)
+	require.NoError(t, builder.AddUpdateSet("status", "completed"))
+	require.NoError(t, builder.AddUpdateAdd("totalAmount", 100))
 
 	// Add condition
 	require.NoError(t, builder.AddConditionExpression("version", "=", 1))

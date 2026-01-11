@@ -13,33 +13,26 @@ import (
 // BaseModel represents common fields for a single-table design pattern
 // This struct can be embedded in other models to share common fields
 type BaseModel struct {
-	// Primary composite keys
-	PK string `dynamorm:"pk"`
-	SK string `dynamorm:"sk"`
-
-	// Global Secondary Indexes for access patterns
-	GSI1PK string `dynamorm:"index:gsi1,pk"`
-	GSI1SK string `dynamorm:"index:gsi1,sk"`
-	GSI2PK string `dynamorm:"index:gsi2,pk"`
-	GSI2SK string `dynamorm:"index:gsi2,sk"`
-
-	// Common metadata
-	Type      string    `dynamorm:"attr:type"`
-	TenantID  string    `dynamorm:"attr:tenantId"`
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
+	PK        string    `dynamorm:"pk"`
+	SK        string    `dynamorm:"sk"`
+	GSI1PK    string    `dynamorm:"index:gsi1,pk"`
+	GSI1SK    string    `dynamorm:"index:gsi1,sk"`
+	GSI2PK    string    `dynamorm:"index:gsi2,pk"`
+	GSI2SK    string    `dynamorm:"index:gsi2,sk"`
+	Type      string    `dynamorm:"attr:type"`
+	TenantID  string    `dynamorm:"attr:tenantId"`
 	Version   int       `dynamorm:"version"`
 }
 
 // EmbeddedCustomer demonstrates embedding BaseModel for a customer entity
 type EmbeddedCustomer struct {
-	BaseModel // Embedded struct - all fields are inherited
-
-	// Customer-specific fields
 	ID    string `dynamorm:"attr:id"`
 	Email string `dynamorm:"attr:email"`
 	Name  string `dynamorm:"attr:name"`
 	Phone string `dynamorm:"attr:phone"`
+	BaseModel
 }
 
 // TableName returns the DynamoDB table name
@@ -49,15 +42,13 @@ func (c *EmbeddedCustomer) TableName() string {
 
 // Product demonstrates the same pattern for a different entity type
 type EmbeddedProduct struct {
-	BaseModel // Same embedded struct
-
-	// Product-specific fields
-	ID          string  `dynamorm:"attr:id"`
-	Name        string  `dynamorm:"attr:name"`
-	Description string  `dynamorm:"attr:description"`
-	Price       float64 `dynamorm:"attr:price"`
-	Stock       int     `dynamorm:"attr:stock"`
-	CategoryID  string  `dynamorm:"attr:categoryId"`
+	ID          string `dynamorm:"attr:id"`
+	Name        string `dynamorm:"attr:name"`
+	Description string `dynamorm:"attr:description"`
+	CategoryID  string `dynamorm:"attr:categoryId"`
+	BaseModel
+	Price float64 `dynamorm:"attr:price"`
+	Stock int     `dynamorm:"attr:stock"`
 }
 
 // TableName returns the DynamoDB table name
@@ -67,14 +58,12 @@ func (p *EmbeddedProduct) TableName() string {
 
 // Order shows how to use embedded structs with relationships
 type EmbeddedOrder struct {
-	BaseModel // Embedded struct
-
-	// Order-specific fields
+	OrderedAt  time.Time `dynamorm:"attr:orderedAt"`
 	ID         string    `dynamorm:"attr:id"`
 	CustomerID string    `dynamorm:"attr:customerId"`
-	Total      float64   `dynamorm:"attr:total"`
 	Status     string    `dynamorm:"attr:status"`
-	OrderedAt  time.Time `dynamorm:"attr:orderedAt"`
+	BaseModel
+	Total float64 `dynamorm:"attr:total"`
 }
 
 // TableName returns the DynamoDB table name

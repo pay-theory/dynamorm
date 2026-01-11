@@ -8,18 +8,19 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm/pkg/schema"
-	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/schema"
+	"github.com/pay-theory/dynamorm/tests"
 )
 
 // LargeDatasetV1 represents a model with large amounts of data
 type LargeDatasetV1 struct {
+	ProcessedAt time.Time `dynamorm:"attr:processedAt"`
 	ID          string    `dynamorm:"pk"`
 	Category    string    `dynamorm:"sk"`
 	Data        string    `dynamorm:"attr:data"`
-	ProcessedAt time.Time `dynamorm:"attr:processedAt"`
 	Version     int64     `dynamorm:"version"`
 }
 
@@ -29,13 +30,13 @@ func (l *LargeDatasetV1) TableName() string {
 
 // LargeDatasetV2 represents the migrated version with additional fields
 type LargeDatasetV2 struct {
+	ProcessedAt  time.Time         `dynamorm:"attr:processedAt"`
+	MigratedAt   time.Time         `dynamorm:"attr:migratedAt"`
+	Metadata     map[string]string `dynamorm:"attr:metadata"`
 	ID           string            `dynamorm:"pk"`
 	Category     string            `dynamorm:"sk"`
 	Data         string            `dynamorm:"attr:data"`
 	DataChecksum string            `dynamorm:"attr:dataChecksum"`
-	ProcessedAt  time.Time         `dynamorm:"attr:processedAt"`
-	MigratedAt   time.Time         `dynamorm:"attr:migratedAt"`
-	Metadata     map[string]string `dynamorm:"attr:metadata"`
 	Version      int64             `dynamorm:"version"`
 }
 

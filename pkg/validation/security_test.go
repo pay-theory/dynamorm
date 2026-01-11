@@ -516,13 +516,17 @@ func TestSecurityErrorTypes(t *testing.T) {
 func BenchmarkSecurityValidation(b *testing.B) {
 	b.Run("FieldNameValidation", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = ValidateFieldName("user.profile.name")
+			if err := ValidateFieldName("user.profile.name"); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
 	b.Run("OperatorValidation", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = ValidateOperator("=")
+			if err := ValidateOperator("="); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
@@ -533,7 +537,9 @@ func BenchmarkSecurityValidation(b *testing.B) {
 			"key3": true,
 		}
 		for i := 0; i < b.N; i++ {
-			_ = ValidateValue(value)
+			if err := ValidateValue(value); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }

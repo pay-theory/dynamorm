@@ -7,10 +7,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
 // TestBasicOperations tests the core CRUD operations

@@ -10,24 +10,19 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // BatchUpdateOptions configures batch update operations
 type BatchUpdateOptions struct {
-	// MaxBatchSize limits items per batch (max 25 for DynamoDB)
-	MaxBatchSize int
-	// Parallel enables parallel batch execution
-	Parallel bool
-	// MaxConcurrency limits concurrent batches
-	MaxConcurrency int
-	// ProgressCallback is called after each batch
 	ProgressCallback func(processed, total int)
-	// ErrorHandler handles individual item errors
-	ErrorHandler func(item any, err error) error
-	// RetryPolicy defines retry behavior
-	RetryPolicy *RetryPolicy
+	ErrorHandler     func(item any, err error) error
+	RetryPolicy      *RetryPolicy
+	MaxBatchSize     int
+	MaxConcurrency   int
+	Parallel         bool
 }
 
 // RetryPolicy is an alias to core.RetryPolicy for backwards compatibility.
@@ -331,30 +326,78 @@ func (q *Query) executeDeleteBatch(batch []any, opts *BatchUpdateOptions) error 
 
 // extractKey extracts primary key values from an item
 func (q *Query) extractKey(item any) (map[string]any, error) {
-	key := make(map[string]any)
+	if q == nil || q.metadata == nil {
+		return nil, fmt.Errorf("model metadata is required for batch key extraction")
+	}
 	primaryKey := q.metadata.PrimaryKey()
+	if primaryKey.PartitionKey == "" {
+		return nil, fmt.Errorf("partition key is required for batch key extraction")
+	}
+	if item == nil {
+		return nil, fmt.Errorf("key cannot be nil")
+	}
+
+	if pair, ok := item.(core.KeyPair); ok {
+		return q.extractKeyFromPair(primaryKey, pair)
+	}
 
 	itemValue := reflect.ValueOf(item)
 	if itemValue.Kind() == reflect.Ptr {
+		if itemValue.IsNil() {
+			return extractKeyFromPrimitive(primaryKey, item)
+		}
 		itemValue = itemValue.Elem()
 	}
 
-	// Extract partition key
+	if itemValue.Kind() != reflect.Struct {
+		return extractKeyFromPrimitive(primaryKey, item)
+	}
+
+	return q.extractKeyFromStruct(primaryKey, itemValue)
+}
+
+func (q *Query) extractKeyFromPair(primaryKey core.KeySchema, pair core.KeyPair) (map[string]any, error) {
+	if pair.PartitionKey == nil {
+		return nil, fmt.Errorf("partition key value is required for %s", primaryKey.PartitionKey)
+	}
+	if primaryKey.SortKey != "" && pair.SortKey == nil {
+		return nil, fmt.Errorf("sort key value is required for %s", primaryKey.SortKey)
+	}
+
+	key := map[string]any{
+		primaryKey.PartitionKey: pair.PartitionKey,
+	}
+	if primaryKey.SortKey != "" {
+		key[primaryKey.SortKey] = pair.SortKey
+	}
+	return key, nil
+}
+
+func extractKeyFromPrimitive(primaryKey core.KeySchema, value any) (map[string]any, error) {
+	if primaryKey.SortKey != "" {
+		return nil, fmt.Errorf("composite key requires both %s and %s", primaryKey.PartitionKey, primaryKey.SortKey)
+	}
+	return map[string]any{primaryKey.PartitionKey: value}, nil
+}
+
+func (q *Query) extractKeyFromStruct(primaryKey core.KeySchema, itemValue reflect.Value) (map[string]any, error) {
+	key := make(map[string]any, 2)
+
 	pkField, ok := q.findKeyField(itemValue, primaryKey.PartitionKey)
 	if !ok {
 		return nil, fmt.Errorf("partition key field %s not found", primaryKey.PartitionKey)
 	}
 	key[primaryKey.PartitionKey] = pkField.Interface()
 
-	// Extract sort key if present
-	if primaryKey.SortKey != "" {
-		skField, ok := q.findKeyField(itemValue, primaryKey.SortKey)
-		if !ok {
-			return nil, fmt.Errorf("sort key field %s not found", primaryKey.SortKey)
-		}
-		key[primaryKey.SortKey] = skField.Interface()
+	if primaryKey.SortKey == "" {
+		return key, nil
 	}
 
+	skField, ok := q.findKeyField(itemValue, primaryKey.SortKey)
+	if !ok {
+		return nil, fmt.Errorf("sort key field %s not found", primaryKey.SortKey)
+	}
+	key[primaryKey.SortKey] = skField.Interface()
 	return key, nil
 }
 
@@ -371,6 +414,11 @@ func (q *Query) extractKeyAttributeValues(key any) (map[string]types.AttributeVa
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert key value: %w", err)
 		}
+		switch av.(type) {
+		case *types.AttributeValueMemberS, *types.AttributeValueMemberN, *types.AttributeValueMemberB:
+		default:
+			return nil, fmt.Errorf("invalid key value for %s: %T", k, av)
+		}
 		attrName := q.resolveAttributeName(k)
 		keyAV[attrName] = av
 	}
@@ -379,6 +427,10 @@ func (q *Query) extractKeyAttributeValues(key any) (map[string]types.AttributeVa
 }
 
 func (q *Query) findKeyField(itemValue reflect.Value, keyName string) (reflect.Value, bool) {
+	if !itemValue.IsValid() || itemValue.Kind() != reflect.Struct {
+		return reflect.Value{}, false
+	}
+
 	goName := q.resolveGoFieldName(keyName)
 	if field := itemValue.FieldByName(goName); field.IsValid() {
 		return field, true
@@ -395,7 +447,7 @@ func (q *Query) findKeyField(itemValue reflect.Value, keyName string) (reflect.V
 }
 
 func findFieldByTag(itemValue reflect.Value, attrName string) (reflect.Value, bool) {
-	if attrName == "" {
+	if attrName == "" || !itemValue.IsValid() || itemValue.Kind() != reflect.Struct {
 		return reflect.Value{}, false
 	}
 	typ := itemValue.Type()
@@ -491,10 +543,10 @@ func contains(s, substr string) bool {
 
 // BatchResult represents the result of a batch operation
 type BatchResult struct {
-	Succeeded       int
-	Failed          int
 	UnprocessedKeys []any
 	Errors          []error
+	Succeeded       int
+	Failed          int
 }
 
 // BatchCreateWithResult creates multiple items and returns detailed results
@@ -505,7 +557,7 @@ func (q *Query) BatchCreateWithResult(items any) (*BatchResult, error) {
 	}
 
 	// Custom error handler to collect results
-	opts.ErrorHandler = func(item any, err error) error {
+	opts.ErrorHandler = func(_ any, err error) error {
 		result.Failed++
 		result.Errors = append(result.Errors, err)
 		// Don't stop on error, continue processing
@@ -513,7 +565,7 @@ func (q *Query) BatchCreateWithResult(items any) (*BatchResult, error) {
 	}
 
 	// Custom progress callback to track success
-	opts.ProgressCallback = func(processed, total int) {
+	opts.ProgressCallback = func(processed, _ int) {
 		result.Succeeded = processed - result.Failed
 	}
 
@@ -537,7 +589,7 @@ type QueryCanceler struct {
 	cancel context.CancelFunc
 }
 
-// WithCancellation returns a query that can be cancelled
+// WithCancellation returns a query that can be canceled
 func (q *Query) WithCancellation() (core.Query, *QueryCanceler) {
 	ctx, cancel := context.WithCancel(q.ctx)
 	q.ctx = ctx
@@ -573,6 +625,9 @@ func (q *Query) executeBatchWriteWithRetries(tableName string, writeRequests []t
 		result, err := batchExecutor.ExecuteBatchWriteItem(tableName, remainingRequests)
 		if err != nil {
 			return fmt.Errorf("batch write failed: %w", err)
+		}
+		if result == nil {
+			return fmt.Errorf("batch write executor returned nil result")
 		}
 
 		// Check for unprocessed items
@@ -633,47 +688,9 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 		opts.MaxBatchSize = 25
 	}
 
-	// Prepare write requests
-	var allRequests []types.WriteRequest
-
-	// Add put requests
-	for _, item := range putItems {
-		itemAV, err := convertItemToAttributeValue(item)
-		if err != nil {
-			if opts.ErrorHandler != nil {
-				if handlerErr := opts.ErrorHandler(item, err); handlerErr != nil {
-					return handlerErr
-				}
-				continue
-			}
-			return fmt.Errorf("failed to marshal item: %w", err)
-		}
-
-		allRequests = append(allRequests, types.WriteRequest{
-			PutRequest: &types.PutRequest{
-				Item: itemAV,
-			},
-		})
-	}
-
-	// Add delete requests
-	for _, key := range deleteKeys {
-		keyAV, err := q.extractKeyAttributeValues(key)
-		if err != nil {
-			if opts.ErrorHandler != nil {
-				if handlerErr := opts.ErrorHandler(key, err); handlerErr != nil {
-					return handlerErr
-				}
-				continue
-			}
-			return fmt.Errorf("failed to extract key: %w", err)
-		}
-
-		allRequests = append(allRequests, types.WriteRequest{
-			DeleteRequest: &types.DeleteRequest{
-				Key: keyAV,
-			},
-		})
+	allRequests, err := q.buildBatchWriteRequests(putItems, deleteKeys, totalItems, opts)
+	if err != nil {
+		return err
 	}
 
 	// Split into batches
@@ -682,14 +699,9 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 	// Execute batches
 	processed := 0
 	for _, batch := range batches {
-		err := q.executeBatchWriteWithRetries(q.metadata.TableName(), batch, opts)
-		if err != nil {
-			if opts.ErrorHandler != nil {
-				if handlerErr := opts.ErrorHandler(batch, err); handlerErr != nil {
-					return handlerErr
-				}
-			} else {
-				return err
+		if err := q.executeBatchWriteWithRetries(q.metadata.TableName(), batch, opts); err != nil {
+			if handlerErr := handleBatchUpdateError(opts, batch, err, err); handlerErr != nil {
+				return handlerErr
 			}
 		}
 
@@ -700,6 +712,69 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 	}
 
 	return nil
+}
+
+func (q *Query) buildBatchWriteRequests(putItems []any, deleteKeys []any, capacity int, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+	allRequests := make([]types.WriteRequest, 0, capacity)
+
+	requests, err := q.appendPutWriteRequests(allRequests, putItems, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	requests, err = q.appendDeleteWriteRequests(requests, deleteKeys, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return requests, nil
+}
+
+func (q *Query) appendPutWriteRequests(requests []types.WriteRequest, putItems []any, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+	for _, item := range putItems {
+		itemAV, err := q.marshalItem(item)
+		if err != nil {
+			if handlerErr := handleBatchUpdateError(opts, item, err, fmt.Errorf("failed to marshal item: %w", err)); handlerErr != nil {
+				return nil, handlerErr
+			}
+			continue
+		}
+
+		requests = append(requests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: itemAV,
+			},
+		})
+	}
+
+	return requests, nil
+}
+
+func (q *Query) appendDeleteWriteRequests(requests []types.WriteRequest, deleteKeys []any, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+	for _, key := range deleteKeys {
+		keyAV, err := q.extractKeyAttributeValues(key)
+		if err != nil {
+			if handlerErr := handleBatchUpdateError(opts, key, err, fmt.Errorf("failed to extract key: %w", err)); handlerErr != nil {
+				return nil, handlerErr
+			}
+			continue
+		}
+
+		requests = append(requests, types.WriteRequest{
+			DeleteRequest: &types.DeleteRequest{
+				Key: keyAV,
+			},
+		})
+	}
+
+	return requests, nil
+}
+
+func handleBatchUpdateError(opts *BatchUpdateOptions, subject any, originalErr error, fallback error) error {
+	if opts != nil && opts.ErrorHandler != nil {
+		return opts.ErrorHandler(subject, originalErr)
+	}
+	return fallback
 }
 
 // splitWriteRequests splits write requests into batches

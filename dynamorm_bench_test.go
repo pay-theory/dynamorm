@@ -12,17 +12,17 @@ import (
 
 // Test model for benchmarking
 type BenchUser struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	Metadata  map[string]string
 	ID        string `dynamorm:"pk"`
 	Email     string `dynamorm:"sk"`
 	Name      string
-	Age       int
-	IsActive  bool
-	Balance   float64
 	Tags      []string
-	Metadata  map[string]string
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
-	Version   int64     `dynamorm:"version"`
+	Age       int
+	Balance   float64
+	Version   int64 `dynamorm:"version"`
+	IsActive  bool
 }
 
 func BenchmarkMarshalItem_Current(b *testing.B) {
@@ -30,7 +30,7 @@ func BenchmarkMarshalItem_Current(b *testing.B) {
 	db := &DB{
 		converter: pkgTypes.NewConverter(),
 	}
-	q := &query{db: db}
+	marshaler := marshal.New(db.converter)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -121,7 +121,7 @@ func BenchmarkMarshalItem_Current(b *testing.B) {
 
 	// Run benchmark
 	for i := 0; i < b.N; i++ {
-		_, err := q.marshalItem(user, metadata)
+		_, err := marshaler.MarshalItem(user, metadata)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -140,7 +140,7 @@ func BenchmarkMarshalItem_SimpleStruct(b *testing.B) {
 	db := &DB{
 		converter: pkgTypes.NewConverter(),
 	}
-	q := &query{db: db}
+	marshaler := marshal.New(db.converter)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -181,7 +181,7 @@ func BenchmarkMarshalItem_SimpleStruct(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, err := q.marshalItem(user, metadata)
+		_, err := marshaler.MarshalItem(user, metadata)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func BenchmarkMarshalItem_PrimitivesOnly(b *testing.B) {
 	db := &DB{
 		converter: pkgTypes.NewConverter(),
 	}
-	q := &query{db: db}
+	marshaler := marshal.New(db.converter)
 
 	metadata := &model.Metadata{
 		TableName: "Users",
@@ -247,7 +247,7 @@ func BenchmarkMarshalItem_PrimitivesOnly(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_, err := q.marshalItem(user, metadata)
+		_, err := marshaler.MarshalItem(user, metadata)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -420,11 +420,11 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 		db := &DB{
 			converter: pkgTypes.NewConverter(),
 		}
-		q := &query{db: db}
+		marshaler := marshal.New(db.converter)
 
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_, err := q.marshalItem(user, metadata)
+			_, err := marshaler.MarshalItem(user, metadata)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -437,17 +437,16 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 			converter: converter,
 			marshaler: marshal.New(converter),
 		}
-		q := &query{db: db}
 
 		// Warm up cache
-		if _, err := q.marshalItem(user, metadata); err != nil {
+		if _, err := db.marshaler.MarshalItem(user, metadata); err != nil {
 			b.Fatal(err)
 		}
 
 		b.ResetTimer()
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			_, err := q.marshalItem(user, metadata)
+			_, err := db.marshaler.MarshalItem(user, metadata)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -456,9 +455,9 @@ func BenchmarkMarshalItem_Comparison(b *testing.B) {
 }
 
 type BenchmarkModel struct {
+	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 	ID        string    `dynamorm:"pk,attr:id"`
 	Name      string    `dynamorm:"attr:name"`
-	CreatedAt time.Time `dynamorm:"attr:createdAt"`
 }
 
 func (b BenchmarkModel) TableName() string {
@@ -467,68 +466,91 @@ func (b BenchmarkModel) TableName() string {
 
 func BenchmarkGetItemDirect(b *testing.B) {
 	// Setup mock or local DynamoDB
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	model := &BenchmarkModel{ID: "test-id"}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(model).Where("id", "=", "test-id").First(&result)
+		if err := db.Model(model).Where("id", "=", "test-id").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkGetItemByAttribute(b *testing.B) {
 	// Test querying by DynamoDB attribute name
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").First(&result)
+		if err := db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkGetItemByGoFieldName tests querying by Go field name
 func BenchmarkGetItemByGoFieldName(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("ID", "=", "test-id").First(&result)
+		if err := db.Model(&BenchmarkModel{}).Where("ID", "=", "test-id").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkGetItemWithProjection tests GetItem with field selection
 func BenchmarkGetItemWithProjection(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").Select("Name").First(&result)
+		if err := db.Model(&BenchmarkModel{}).Where("id", "=", "test-id").Select("Name").First(&result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // BenchmarkMetadataCaching tests the metadata cache effectiveness
 func BenchmarkMetadataCaching(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	// Pre-warm the cache
 	_ = db.Model(&BenchmarkModel{})
@@ -541,14 +563,19 @@ func BenchmarkMetadataCaching(b *testing.B) {
 
 // BenchmarkQueryOperation tests Query performance when GetItem isn't used
 func BenchmarkQueryOperation(b *testing.B) {
-	db, _ := NewBasic(session.Config{
+	db, err := NewBasic(session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
 	})
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var results []BenchmarkModel
-		_ = db.Model(&BenchmarkModel{}).Where("Name", "=", "test-name").All(&results)
+		if err := db.Model(&BenchmarkModel{}).Where("Name", "=", "test-name").All(&results); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

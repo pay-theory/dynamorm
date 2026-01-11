@@ -84,14 +84,9 @@ func (h *ReadAfterWriteHelper) UpdateWithConsistency(model any, fields []string,
 
 // QueryAfterWriteOptions configures read-after-write query behavior
 type QueryAfterWriteOptions struct {
-	// UseMainTable forces the query to use the main table instead of GSI
+	RetryConfig  *RetryConfig
+	VerifyFunc   func(result any) bool
 	UseMainTable bool
-
-	// RetryConfig configures retry behavior for GSI queries
-	RetryConfig *RetryConfig
-
-	// VerifyFunc custom verification function to check if data is consistent
-	VerifyFunc func(result any) bool
 }
 
 // QueryAfterWrite performs a query with read-after-write consistency handling

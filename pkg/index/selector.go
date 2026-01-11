@@ -27,6 +27,8 @@ type RequiredKeys struct {
 
 // SelectOptimal selects the best index for the given query requirements
 func (s *Selector) SelectOptimal(required RequiredKeys, conditions []any) (*core.IndexSchema, error) {
+	_ = conditions
+
 	var bestIndex *core.IndexSchema
 	var bestScore int
 
@@ -155,7 +157,7 @@ func normalizeOperator(op string) string {
 
 // Condition represents a query condition (moved from query package to avoid circular dependency)
 type Condition struct {
+	Value    any
 	Field    string
 	Operator string
-	Value    any
 }

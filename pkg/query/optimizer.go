@@ -6,36 +6,33 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pay-theory/dynamorm/internal/numutil"
 )
 
 // QueryOptimizer provides query optimization capabilities
 type QueryOptimizer struct {
-	// Query plan cache
-	planCache    sync.Map // map[string]*QueryPlan
-	planCacheTTL time.Duration
-
-	// Query statistics for adaptive optimization
-	queryStats sync.Map // map[string]*QueryStatistics
-
-	// Configuration
-	enableAdaptive    bool
-	enableParallel    bool
+	planCache         sync.Map
+	queryStats        sync.Map
+	planCacheTTL      time.Duration
 	maxParallelism    int
 	cacheSize         int
 	cachePlanDuration time.Duration
+	enableAdaptive    bool
+	enableParallel    bool
 }
 
 // QueryPlan represents an optimized query execution plan
 type QueryPlan struct {
-	ID                string
-	Operation         string   // Query, Scan, BatchGet
-	IndexName         string   // Which index to use
-	Projections       []string // Fields to project
-	EstimatedCost     *CostEstimate
-	OptimizationHints []string // Human-readable optimization suggestions
-	ParallelSegments  int      // For parallel scans
 	CachedAt          time.Time
+	EstimatedCost     *CostEstimate
 	Statistics        *QueryStatistics
+	ID                string
+	Operation         string
+	IndexName         string
+	Projections       []string
+	OptimizationHints []string
+	ParallelSegments  int
 }
 
 // CostEstimate represents the estimated cost of a query
@@ -50,6 +47,7 @@ type CostEstimate struct {
 
 // QueryStatistics tracks runtime statistics for queries
 type QueryStatistics struct {
+	LastExecuted      time.Time
 	ExecutionCount    int64
 	ErrorCount        int64
 	TotalDuration     time.Duration
@@ -58,7 +56,6 @@ type QueryStatistics struct {
 	MaxDuration       time.Duration
 	TotalItemsRead    int64
 	TotalItemsScanned int64
-	LastExecuted      time.Time
 	ErrorRate         float64
 }
 
@@ -100,8 +97,10 @@ func (o *QueryOptimizer) OptimizeQuery(q *Query) (*QueryPlan, error) {
 
 	// Check cache first
 	if cached, ok := o.planCache.Load(planID); ok {
-		plan := cached.(*QueryPlan)
-		if time.Since(plan.CachedAt) < o.planCacheTTL {
+		plan, ok := cached.(*QueryPlan)
+		if !ok {
+			o.planCache.Delete(planID)
+		} else if time.Since(plan.CachedAt) < o.planCacheTTL {
 			return plan, nil
 		}
 	}
@@ -115,10 +114,10 @@ func (o *QueryOptimizer) OptimizeQuery(q *Query) (*QueryPlan, error) {
 
 	// Determine operation type and analyze
 	if len(q.conditions) > 0 {
-		plan.Operation = "Query"
+		plan.Operation = operationQuery
 		o.analyzeQueryConditions(q, plan)
 	} else {
-		plan.Operation = "Scan"
+		plan.Operation = operationScan
 		o.analyzeScanOperation(q, plan)
 	}
 
@@ -218,10 +217,11 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 	// Get historical statistics if available
 	statsKey := o.generateStatsKey(q)
 	if stats, ok := o.queryStats.Load(statsKey); ok {
-		queryStats := stats.(*QueryStatistics)
-
-		// Use historical data for more accurate estimates
-		if queryStats.ExecutionCount > 10 {
+		queryStats, ok := stats.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+		} else if queryStats.ExecutionCount > 10 {
+			// Use historical data for more accurate estimates
 			estimate.ConfidenceLevel = 0.8
 			estimate.EstimatedDuration = queryStats.AverageDuration
 			avgItemsPerExecution := queryStats.TotalItemsRead / queryStats.ExecutionCount
@@ -237,7 +237,7 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 	}
 
 	// Calculate capacity units
-	if plan.Operation == "Query" {
+	if plan.Operation == operationQuery {
 		// Queries are more efficient
 		estimate.ReadCapacityUnits = float64(estimate.EstimatedItemCount) * 0.5 / 4.0 // 4KB per RCU
 	} else {
@@ -251,7 +251,7 @@ func (o *QueryOptimizer) estimateCost(q *Query, plan *QueryPlan) *CostEstimate {
 // applyHeuristicEstimates applies rule-based estimates when no historical data exists
 func (o *QueryOptimizer) applyHeuristicEstimates(q *Query, plan *QueryPlan, estimate *CostEstimate) {
 	// Base estimates
-	if plan.Operation == "Query" {
+	if plan.Operation == operationQuery {
 		estimate.EstimatedItemCount = 100
 		estimate.EstimatedScanCount = 100
 		estimate.EstimatedDuration = 50 * time.Millisecond
@@ -270,12 +270,12 @@ func (o *QueryOptimizer) applyHeuristicEstimates(q *Query, plan *QueryPlan, esti
 
 	// Adjust for parallel scan
 	if plan.ParallelSegments > 1 {
-		estimate.EstimatedDuration = estimate.EstimatedDuration / time.Duration(plan.ParallelSegments)
+		estimate.EstimatedDuration /= time.Duration(plan.ParallelSegments)
 	}
 }
 
 // suggestIndexes suggests appropriate indexes for the query
-func (o *QueryOptimizer) suggestIndexes(q *Query) []string {
+func (o *QueryOptimizer) suggestIndexes(_ *Query) []string {
 	suggestions := []string{}
 
 	// Get available indexes from metadata
@@ -296,7 +296,7 @@ func (o *QueryOptimizer) calculateOptimalSegments(q *Query) int {
 		if q.limit < 100 {
 			segments = 1
 		} else if q.limit < 1000 {
-			segments = min(segments, 4)
+			segments = minInt(segments, 4)
 		}
 	}
 
@@ -307,7 +307,11 @@ func (o *QueryOptimizer) calculateOptimalSegments(q *Query) int {
 func (o *QueryOptimizer) applyAdaptiveOptimizations(q *Query, plan *QueryPlan) {
 	statsKey := o.generateStatsKey(q)
 	if stats, ok := o.queryStats.Load(statsKey); ok {
-		queryStats := stats.(*QueryStatistics)
+		queryStats, ok := stats.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+			return
+		}
 
 		// If error rate is high, suggest different approach
 		if queryStats.ErrorRate > 0.1 {
@@ -337,8 +341,16 @@ func (o *QueryOptimizer) RecordExecution(q *Query, result *QueryExecutionResult)
 	// Load or create statistics
 	var stats *QueryStatistics
 	if existing, ok := o.queryStats.Load(statsKey); ok {
-		stats = existing.(*QueryStatistics)
-	} else {
+		existingStats, ok := existing.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+		} else if existingStats.MinDuration == 0 {
+			existingStats.MinDuration = result.Duration
+		}
+		stats = existingStats
+	}
+
+	if stats == nil {
 		stats = &QueryStatistics{
 			MinDuration: result.Duration,
 		}
@@ -372,8 +384,10 @@ func (o *QueryOptimizer) RecordExecution(q *Query, result *QueryExecutionResult)
 func (o *QueryOptimizer) GetQueryPlan(q *Query) (*QueryPlan, bool) {
 	planID := o.generatePlanID(q)
 	if cached, ok := o.planCache.Load(planID); ok {
-		plan := cached.(*QueryPlan)
-		if time.Since(plan.CachedAt) < o.planCacheTTL {
+		plan, ok := cached.(*QueryPlan)
+		if !ok {
+			o.planCache.Delete(planID)
+		} else if time.Since(plan.CachedAt) < o.planCacheTTL {
 			return plan, true
 		}
 	}
@@ -389,7 +403,12 @@ func (o *QueryOptimizer) ClearCache() {
 func (o *QueryOptimizer) GetStatistics(q *Query) (*QueryStatistics, bool) {
 	statsKey := o.generateStatsKey(q)
 	if stats, ok := o.queryStats.Load(statsKey); ok {
-		return stats.(*QueryStatistics), true
+		queryStats, ok := stats.(*QueryStatistics)
+		if !ok {
+			o.queryStats.Delete(statsKey)
+			return nil, false
+		}
+		return queryStats, true
 	}
 	return nil, false
 }
@@ -415,8 +434,6 @@ func (o *QueryOptimizer) generatePlanID(q *Query) string {
 }
 
 // generateStatsKey generates a key for storing query statistics
-//
-//nolint:unusedparams // q is used in the function body
 func (o *QueryOptimizer) generateStatsKey(q *Query) string {
 	// Similar to plan ID but without specific values
 	parts := []string{
@@ -436,10 +453,10 @@ func (o *QueryOptimizer) generateStatsKey(q *Query) string {
 
 // QueryExecutionResult represents the result of a query execution
 type QueryExecutionResult struct {
+	Error         error
 	Duration      time.Duration
 	ItemsReturned int64
 	ItemsScanned  int64
-	Error         error
 }
 
 // OptimizedQuery wraps a Query with optimization capabilities
@@ -477,11 +494,11 @@ func (oq *OptimizedQuery) Execute(dest any) error {
 	var itemsReturned, itemsScanned int64
 
 	switch oq.plan.Operation {
-	case "Query":
+	case operationQuery:
 		err = oq.All(dest)
-	case "Scan":
+	case operationScan:
 		if oq.plan.ParallelSegments > 1 {
-			err = oq.ScanAllSegments(dest, int32(oq.plan.ParallelSegments))
+			err = oq.ScanAllSegments(dest, numutil.ClampIntToInt32(oq.plan.ParallelSegments))
 		} else {
 			err = oq.Scan(dest)
 		}
@@ -542,7 +559,7 @@ func (oq *OptimizedQuery) ExplainPlan() string {
 }
 
 // Helper function for min
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

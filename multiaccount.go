@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
@@ -23,10 +24,10 @@ import (
 type MultiAccountDB struct {
 	baseDB        *LambdaDB
 	accounts      map[string]AccountConfig
-	cache         *sync.Map // Cache DB connections per account
-	baseConfig    aws.Config
+	cache         *sync.Map
 	refreshTicker *time.Ticker
 	refreshStop   chan struct{}
+	baseConfig    aws.Config
 	mu            sync.RWMutex
 }
 
@@ -216,8 +217,15 @@ func (mdb *MultiAccountDB) refreshExpiredCredentials() {
 	now := time.Now()
 
 	mdb.cache.Range(func(key, value any) bool {
-		partnerID := key.(string)
-		entry := value.(*cacheEntry)
+		partnerID, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		entry, ok := value.(*cacheEntry)
+		if !ok || entry == nil {
+			return true
+		}
 
 		// Check if credentials are about to expire
 		if now.After(entry.expiry.Add(-10 * time.Minute)) {

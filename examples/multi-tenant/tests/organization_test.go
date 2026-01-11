@@ -13,13 +13,14 @@ import (
 	"os"
 
 	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/multi-tenant/handlers"
 	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func setupTestDB(t *testing.T) core.ExtendedDB {

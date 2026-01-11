@@ -10,11 +10,11 @@ import (
 
 // AggregateResult holds the result of an aggregate operation
 type AggregateResult struct {
+	Min     any
+	Max     any
 	Count   int64
 	Sum     float64
 	Average float64
-	Min     any
-	Max     any
 }
 
 // Sum calculates the sum of a numeric field
@@ -67,8 +67,7 @@ func (q *Query) Average(field string) (float64, error) {
 	return sum / float64(count), nil
 }
 
-// Min finds the minimum value of a field
-func (q *Query) Min(field string) (any, error) {
+func (q *Query) extremeValue(field string, direction int) (any, error) {
 	// Get all items
 	items, err := q.getAllItems()
 	if err != nil {
@@ -79,7 +78,7 @@ func (q *Query) Min(field string) (any, error) {
 		return nil, fmt.Errorf("no items found")
 	}
 
-	var minValue any
+	var extremeValue any
 	first := true
 
 	for _, item := range items {
@@ -89,60 +88,32 @@ func (q *Query) Min(field string) (any, error) {
 		}
 
 		if first {
-			minValue = value
+			extremeValue = value
 			first = false
 			continue
 		}
 
-		if compareValues(value, minValue) < 0 {
-			minValue = value
+		comparison := compareValues(value, extremeValue)
+		if (direction < 0 && comparison < 0) || (direction > 0 && comparison > 0) {
+			extremeValue = value
 		}
 	}
 
-	if minValue == nil {
+	if extremeValue == nil {
 		return nil, fmt.Errorf("no valid values found for field %s", field)
 	}
 
-	return minValue, nil
+	return extremeValue, nil
+}
+
+// Min finds the minimum value of a field
+func (q *Query) Min(field string) (any, error) {
+	return q.extremeValue(field, -1)
 }
 
 // Max finds the maximum value of a field
 func (q *Query) Max(field string) (any, error) {
-	// Get all items
-	items, err := q.getAllItems()
-	if err != nil {
-		return nil, err
-	}
-
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no items found")
-	}
-
-	var maxValue any
-	first := true
-
-	for _, item := range items {
-		value := extractFieldValue(item, field)
-		if value == nil {
-			continue
-		}
-
-		if first {
-			maxValue = value
-			first = false
-			continue
-		}
-
-		if compareValues(value, maxValue) > 0 {
-			maxValue = value
-		}
-	}
-
-	if maxValue == nil {
-		return nil, fmt.Errorf("no valid values found for field %s", field)
-	}
-
-	return maxValue, nil
+	return q.extremeValue(field, 1)
 }
 
 // Aggregate performs multiple aggregate operations in a single pass
@@ -210,9 +181,9 @@ func (q *Query) Aggregate(fields ...string) (*AggregateResult, error) {
 // GroupBy groups results by a field and performs aggregate operations
 type GroupedResult struct {
 	Key        any
-	Count      int64
-	Items      []any
 	Aggregates map[string]*AggregateResult
+	Items      []any
+	Count      int64
 }
 
 // GroupBy groups items by a field
@@ -234,13 +205,13 @@ func (q *Query) GroupBy(field string) *GroupByQuery {
 
 // GroupByQuery enables chaining aggregate operations on grouped data
 type GroupByQuery struct {
+	err           error
 	query         *Query
-	items         []any
-	groupBy       string
 	groups        map[string]*GroupedResult
+	groupBy       string
+	items         []any
 	aggregates    []aggregateOp
 	havingClauses []havingClause
-	err           error
 }
 
 type aggregateOp struct {
@@ -250,9 +221,9 @@ type aggregateOp struct {
 }
 
 type havingClause struct {
-	aggregate string // e.g., "COUNT(*)", "SUM(price)"
-	operator  string
 	value     any
+	aggregate string
+	operator  string
 }
 
 // Count adds a COUNT aggregate
@@ -386,144 +357,143 @@ func (g *GroupByQuery) calculateAggregate(items []any, agg aggregateOp) *Aggrega
 	switch agg.function {
 	case "COUNT":
 		result.Count = int64(len(items))
-
 	case "SUM":
-		var sum float64
-		for _, item := range items {
-			value, err := extractNumericValue(item, agg.field)
-			if err == nil {
-				sum += value
-			}
-		}
+		sum, _ := sumAndCountNumeric(items, agg.field)
 		result.Sum = sum
-
 	case "AVG":
-		var sum float64
-		var count int
-		for _, item := range items {
-			value, err := extractNumericValue(item, agg.field)
-			if err == nil {
-				sum += value
-				count++
-			}
-		}
+		sum, count := sumAndCountNumeric(items, agg.field)
 		if count > 0 {
 			result.Average = sum / float64(count)
 		}
-
 	case "MIN":
-		var minValue any
-		first := true
-		for _, item := range items {
-			value := extractFieldValue(item, agg.field)
-			if value == nil {
-				continue
-			}
-			if first {
-				minValue = value
-				first = false
-			} else if compareValues(value, minValue) < 0 {
-				minValue = value
-			}
-		}
-		result.Min = minValue
-
+		result.Min = extremeFieldValue(items, agg.field, false)
 	case "MAX":
-		var maxValue any
-		first := true
-		for _, item := range items {
-			value := extractFieldValue(item, agg.field)
-			if value == nil {
-				continue
-			}
-			if first {
-				maxValue = value
-				first = false
-			} else if compareValues(value, maxValue) > 0 {
-				maxValue = value
-			}
-		}
-		result.Max = maxValue
+		result.Max = extremeFieldValue(items, agg.field, true)
 	}
 
 	return result
 }
 
+func sumAndCountNumeric(items []any, field string) (sum float64, count int) {
+	for _, item := range items {
+		value, err := extractNumericValue(item, field)
+		if err != nil {
+			continue
+		}
+		sum += value
+		count++
+	}
+	return sum, count
+}
+
+func extremeFieldValue(items []any, field string, pickMax bool) any {
+	var selected any
+	first := true
+
+	for _, item := range items {
+		value := extractFieldValue(item, field)
+		if value == nil {
+			continue
+		}
+
+		if first {
+			selected = value
+			first = false
+			continue
+		}
+
+		cmp := compareValues(value, selected)
+		if (pickMax && cmp > 0) || (!pickMax && cmp < 0) {
+			selected = value
+		}
+	}
+
+	return selected
+}
+
 // evaluateHaving evaluates HAVING clauses for a group
 func (g *GroupByQuery) evaluateHaving(group *GroupedResult) bool {
 	for _, having := range g.havingClauses {
-		// Parse aggregate function (e.g., "COUNT(*)", "SUM(price)")
-		var aggValue float64
-		var found bool
-
-		// Simple parsing - in production, use a proper parser
-		if having.aggregate == "COUNT(*)" {
-			aggValue = float64(group.Count)
-			found = true
-		} else {
-			// Look for alias in aggregates
-			for alias, result := range group.Aggregates {
-				if alias == having.aggregate {
-					switch {
-					case result.Count > 0:
-						aggValue = float64(result.Count)
-					case result.Sum != 0:
-						aggValue = result.Sum
-					case result.Average != 0:
-						aggValue = result.Average
-					default:
-						// For MIN/MAX, try to convert to float
-						if result.Min != nil {
-							aggValue, _ = toFloat64(result.Min)
-						} else if result.Max != nil {
-							aggValue, _ = toFloat64(result.Max)
-						}
-					}
-					found = true
-					break
-				}
-			}
-		}
-
-		if !found {
+		aggValue, ok := aggregateValue(group, having.aggregate)
+		if !ok {
 			return false
 		}
 
-		// Evaluate condition
 		compareValue, err := toFloat64(having.value)
 		if err != nil {
 			return false
 		}
 
-		switch having.operator {
-		case "=":
-			if aggValue != compareValue {
-				return false
-			}
-		case ">":
-			if aggValue <= compareValue {
-				return false
-			}
-		case ">=":
-			if aggValue < compareValue {
-				return false
-			}
-		case "<":
-			if aggValue >= compareValue {
-				return false
-			}
-		case "<=":
-			if aggValue > compareValue {
-				return false
-			}
-		case "!=":
-			if aggValue == compareValue {
-				return false
-			}
+		if !compareHaving(aggValue, having.operator, compareValue) {
+			return false
 		}
 	}
 
 	return true
+}
+
+func aggregateValue(group *GroupedResult, aggregate string) (float64, bool) {
+	if aggregate == "COUNT(*)" {
+		return float64(group.Count), true
+	}
+
+	result, ok := group.Aggregates[aggregate]
+	if !ok {
+		return 0, false
+	}
+
+	value, ok := aggregateResultValue(result)
+	if !ok {
+		return 0, false
+	}
+
+	return value, true
+}
+
+func aggregateResultValue(result *AggregateResult) (float64, bool) {
+	if result.Min != nil {
+		converted, err := toFloat64(result.Min)
+		if err != nil {
+			return 0, false
+		}
+		return converted, true
+	}
+	if result.Max != nil {
+		converted, err := toFloat64(result.Max)
+		if err != nil {
+			return 0, false
+		}
+		return converted, true
+	}
+	if result.Count != 0 {
+		return float64(result.Count), true
+	}
+	if result.Sum != 0 {
+		return result.Sum, true
+	}
+	if result.Average != 0 {
+		return result.Average, true
+	}
+	return 0, true
+}
+
+func compareHaving(aggValue float64, operator string, compareValue float64) bool {
+	switch operator {
+	case "=":
+		return aggValue == compareValue
+	case ">":
+		return aggValue > compareValue
+	case ">=":
+		return aggValue >= compareValue
+	case "<":
+		return aggValue < compareValue
+	case "<=":
+		return aggValue <= compareValue
+	case "!=":
+		return aggValue != compareValue
+	default:
+		return true
+	}
 }
 
 // getAllItems is a helper to retrieve all items for aggregate operations
@@ -682,6 +652,8 @@ func (q *Query) CountDistinct(field string) (int64, error) {
 // Having is deprecated - use GroupBy().Having() instead for proper aggregate filtering
 // This method is kept for backward compatibility but does nothing
 func (q *Query) Having(condition string, value any) core.Query {
+	_ = condition
+	_ = value
 	// Use GroupBy().Having() for actual functionality
 	return q
 }

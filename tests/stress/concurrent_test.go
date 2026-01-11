@@ -13,13 +13,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
 	"github.com/pay-theory/dynamorm/tests/models"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestConcurrentQueries tests system behavior under heavy concurrent load
@@ -33,9 +34,10 @@ func TestConcurrentQueries(t *testing.T) {
 
 	// Clean up any existing items
 	for i := 0; i < 100; i++ {
-		_ = db.Model(&models.TestUser{}).
+		err := db.Model(&models.TestUser{}).
 			Where("ID", "=", fmt.Sprintf("concurrent-user-%d", i)).
 			Delete()
+		require.NoError(t, err)
 	}
 
 	// Create test data
@@ -163,13 +165,25 @@ func TestConcurrentQueries(t *testing.T) {
 	// Calculate memory increase safely
 	var memIncrease uint64
 	var memIncreaseMB int64
+	const bytesPerMB = uint64(1024 * 1024)
+	const maxInt64 = int64(^uint64(0) >> 1)
 	if endMem >= startMem {
 		memIncrease = endMem - startMem
-		memIncreaseMB = int64(memIncrease / (1024 * 1024))
+		memIncreaseMBU64 := memIncrease / bytesPerMB
+		if memIncreaseMBU64 > uint64(maxInt64) {
+			memIncreaseMB = maxInt64
+		} else {
+			memIncreaseMB = int64(memIncreaseMBU64)
+		}
 	} else {
 		// Memory decreased (possible due to GC)
 		memDecrease := startMem - endMem
-		memIncreaseMB = -int64(memDecrease / (1024 * 1024))
+		memDecreaseMBU64 := memDecrease / bytesPerMB
+		if memDecreaseMBU64 > uint64(maxInt64) {
+			memIncreaseMB = -maxInt64
+		} else {
+			memIncreaseMB = -int64(memDecreaseMBU64)
+		}
 	}
 
 	t.Logf("Concurrent test results:")
@@ -202,14 +216,14 @@ func TestLargeItemHandling(t *testing.T) {
 
 		// Using a custom type with Description field
 		type LargeUser struct {
+			CreatedAt   time.Time `dynamorm:"sk"`
 			ID          string    `dynamorm:"pk"`
 			Email       string    `dynamorm:"index:gsi-email"`
-			CreatedAt   time.Time `dynamorm:"sk"`
-			Age         int       `dynamorm:""`
 			Status      string    `dynamorm:""`
-			Tags        []string  `dynamorm:""`
 			Name        string    `dynamorm:""`
 			Description string    `dynamorm:""`
+			Tags        []string  `dynamorm:""`
+			Age         int       `dynamorm:""`
 		}
 
 		// Create table for LargeUser
@@ -217,9 +231,10 @@ func TestLargeItemHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clean up any existing item
-		_ = db.Model(&LargeUser{}).
+		err = db.Model(&LargeUser{}).
 			Where("ID", "=", "large-string-user").
 			Delete()
+		require.NoError(t, err)
 
 		// Use a fixed timestamp for both create and query
 		timestamp := time.Now()
@@ -250,8 +265,8 @@ func TestLargeItemHandling(t *testing.T) {
 	t.Run("Many Attributes", func(t *testing.T) {
 		// Create item with 100+ attributes (using a map)
 		type FlexibleItem struct {
-			ID         string            `dynamorm:"pk"`
 			Attributes map[string]string `dynamorm:""`
+			ID         string            `dynamorm:"pk"`
 		}
 
 		// Create table for FlexibleItem
@@ -259,9 +274,10 @@ func TestLargeItemHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Clean up any existing item
-		_ = db.Model(&FlexibleItem{}).
+		err = db.Model(&FlexibleItem{}).
 			Where("ID", "=", "many-attributes-item").
 			Delete()
+		require.NoError(t, err)
 
 		item := FlexibleItem{
 			ID:         "many-attributes-item",
@@ -352,9 +368,10 @@ func TestMemoryStability(t *testing.T) {
 
 	// Clean up any existing items
 	for i := 0; i < 100; i++ {
-		_ = db.Model(&models.TestUser{}).
+		err := db.Model(&models.TestUser{}).
 			Where("ID", "=", fmt.Sprintf("mem-test-user-%d", i)).
 			Delete()
+		require.NoError(t, err)
 	}
 
 	// Create test data
@@ -508,13 +525,14 @@ drainLoop:
 		// Calculate memory growth with safety checks
 		var memGrowth float64
 
-		if firstSample == 0 {
+		switch {
+		case firstSample == 0:
 			t.Logf("Warning: Initial memory sample was 0, cannot calculate growth percentage")
 			memGrowth = 0
-		} else if firstSample < 100*1024 { // Less than 100KB seems too small for a realistic baseline
+		case firstSample < 100*1024: // Less than 100KB seems too small for a realistic baseline
 			t.Logf("Warning: Initial memory sample too small (%d bytes = %.2f KB), growth calculation may be unreliable", firstSample, float64(firstSample)/1024)
 			memGrowth = 0
-		} else {
+		default:
 			memGrowth = float64(lastSample-firstSample) / float64(firstSample) * 100
 
 			// Sanity check: if growth is over 1000%, something is likely wrong

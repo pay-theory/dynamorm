@@ -1,12 +1,13 @@
 # DynamORM Makefile
 
-.PHONY: all build test test-unit unit-cover clean lint fmt docker-up docker-down docker-clean integration benchmark stress test-all
+.PHONY: all build test test-unit unit-cover clean lint fmt fmt-check docker-up docker-down docker-clean integration benchmark stress test-all verify-coverage verify-go-modules verify-ci-toolchain verify-planning-docs sec rubric
 
 # Variables
 GOMOD := github.com/pay-theory/dynamorm
 UNIT_PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/ | grep -v /tests/stress | grep -v /tests/integration)
 ALL_PACKAGES := $(shell go list ./... | grep -v /vendor/ | grep -v /examples/ | grep -v /tests/stress)
 INTEGRATION_PACKAGES := $(shell go list ./tests/integration/...)
+DYNAMODB_LOCAL_IMAGE ?= amazon/dynamodb-local:3.1.0
 
 # Default target
 all: fmt lint test build
@@ -31,6 +32,9 @@ test-unit:
 unit-cover:
 	@echo "Running offline unit coverage..."
 	@go test ./... -short -coverpkg=./... -coverprofile=coverage_unit.out
+
+verify-coverage:
+	@./scripts/verify-coverage.sh
 
 # Run integration tests (requires DynamoDB Local)
 integration: docker-up
@@ -61,12 +65,18 @@ test-all: docker-up
 fmt:
 	@echo "Formatting code..."
 	@go fmt ./...
-	@gofmt -s -w .
+	@files="$$(git ls-files '*.go' | while read -r f; do if [ -f "$$f" ]; then echo "$$f"; fi; done)"; \
+	if [ -n "$$files" ]; then \
+		gofmt -s -w $$files; \
+	fi
+
+fmt-check:
+	@./scripts/fmt-check.sh
 
 # Run linters
 lint:
 	@echo "Running linters..."
-	@golangci-lint run ./...
+	@golangci-lint run --timeout=5m --config .golangci-v2.yml ./...
 
 # Clean build artifacts
 clean:
@@ -77,19 +87,22 @@ clean:
 # Start DynamoDB Local
 docker-up:
 	@echo "Starting DynamoDB Local..."
-	@if docker ps -a | grep -q dynamodb-local; then \
-		if docker ps | grep -q dynamodb-local; then \
-			echo "DynamoDB Local is already running"; \
-		else \
-			echo "Starting existing container..."; \
-			docker start dynamodb-local; \
-		fi \
+	@if curl -s http://localhost:8000 > /dev/null 2>&1; then \
+		echo "DynamoDB Local is already running"; \
 	else \
 		if [ -f docker-compose.yml ]; then \
-			docker-compose up -d dynamodb-local; \
+			if command -v docker-compose > /dev/null 2>&1; then \
+				docker-compose up -d dynamodb-local; \
+			else \
+				docker compose up -d dynamodb-local; \
+			fi; \
 		else \
-			docker run -d --name dynamodb-local -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -inMemory -sharedDb; \
-		fi \
+			if docker ps -a --format '{{.Names}}' | grep -qx 'dynamodb-local'; then \
+				docker start dynamodb-local; \
+			else \
+				docker run -d --name dynamodb-local -p 8000:8000 $(DYNAMODB_LOCAL_IMAGE) -jar DynamoDBLocal.jar -inMemory -sharedDb; \
+			fi; \
+		fi; \
 	fi
 	@echo "Waiting for DynamoDB Local to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
@@ -108,7 +121,13 @@ docker-up:
 # Stop DynamoDB Local
 docker-down:
 	@echo "Stopping DynamoDB Local..."
-	@if docker ps | grep -q dynamodb-local; then \
+	@if [ -f docker-compose.yml ]; then \
+		if command -v docker-compose > /dev/null 2>&1; then \
+			docker-compose stop dynamodb-local; \
+		else \
+			docker compose stop dynamodb-local; \
+		fi; \
+	elif docker ps --format '{{.Names}}' | grep -qx 'dynamodb-local'; then \
 		docker stop dynamodb-local; \
 	else \
 		echo "DynamoDB Local is not running"; \
@@ -117,7 +136,14 @@ docker-down:
 # Remove DynamoDB Local container (useful for cleanup)
 docker-clean:
 	@echo "Removing DynamoDB Local container..."
-	@if docker ps -a | grep -q dynamodb-local; then \
+	@if [ -f docker-compose.yml ]; then \
+		if command -v docker-compose > /dev/null 2>&1; then \
+			docker-compose down; \
+		else \
+			docker compose down; \
+		fi; \
+		echo "Containers removed"; \
+	elif docker ps -a --format '{{.Names}}' | grep -qx 'dynamodb-local'; then \
 		docker rm -f dynamodb-local; \
 		echo "Container removed"; \
 	else \
@@ -127,7 +153,7 @@ docker-clean:
 # Install development dependencies
 install-tools:
 	@echo "Installing development tools..."
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
 	@go install github.com/golang/mock/mockgen@latest
 
 # Generate mocks
@@ -139,6 +165,23 @@ generate:
 check:
 	@echo "Checking for compilation errors..."
 	@go build -o /dev/null ./... 2>&1 | grep -E "^#|error" || echo "✅ No compilation errors"
+
+verify-go-modules:
+	@./scripts/verify-go-modules.sh
+
+verify-ci-toolchain:
+	@./scripts/verify-ci-toolchain.sh
+
+verify-planning-docs:
+	@./scripts/verify-planning-docs.sh
+
+sec:
+	@./scripts/sec-gosec.sh
+	@./scripts/sec-govulncheck.sh
+	@go mod verify
+
+rubric:
+	@./scripts/verify-rubric.sh
 
 # Show test coverage in browser
 coverage: test
@@ -184,10 +227,17 @@ help:
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  make fmt         - Format code"
+	@echo "  make fmt-check   - Verify formatting is clean"
 	@echo "  make lint        - Run linters"
 	@echo "  make check       - Check for compilation errors"
 	@echo "  make coverage    - Show test coverage in browser"
 	@echo "  make coverage-dashboard - Show coverage dashboard in terminal"
+	@echo "  make verify-coverage - Verify library coverage threshold"
+	@echo "  make verify-go-modules - Compile all Go modules"
+	@echo "  make verify-ci-toolchain - Verify CI toolchain alignment"
+	@echo "  make verify-planning-docs - Verify planning docs exist"
+	@echo "  make sec         - Run security gates (gosec + govulncheck + go mod verify)"
+	@echo "  make rubric      - Run full rubric gate set"
 	@echo ""
 	@echo "Docker/DynamoDB:"
 	@echo "  make docker-up   - Start DynamoDB Local"

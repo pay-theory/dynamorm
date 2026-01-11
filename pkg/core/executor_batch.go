@@ -22,7 +22,7 @@ type BatchWriteExecutor struct {
 }
 
 // NewBatchWriteExecutor creates a new batch write executor
-func NewBatchWriteExecutor(client *dynamodb.Client, ctx context.Context) *BatchWriteExecutor {
+func NewBatchWriteExecutor(client *dynamodb.Client, ctx context.Context) *BatchWriteExecutor { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &BatchWriteExecutor{
 		client: client,
 		ctx:    ctx,
@@ -65,6 +65,8 @@ func (e *BatchWriteExecutor) ExecuteBatchWriteItem(tableName string, writeReques
 
 // ExecuteQuery implements the QueryExecutor interface
 func (e *BatchWriteExecutor) ExecuteQuery(input *CompiledQuery, dest any) error {
+	_ = input
+	_ = dest
 	// BatchWriteExecutor is optimized for batch write operations.
 	// For query operations, use the query package's MainExecutor or dynamorm.Model().
 	return fmt.Errorf("BatchWriteExecutor does not support ExecuteQuery - this executor is specialized for batch write operations only. Use dynamorm.Model() for queries")
@@ -72,6 +74,8 @@ func (e *BatchWriteExecutor) ExecuteQuery(input *CompiledQuery, dest any) error 
 
 // ExecuteScan implements the QueryExecutor interface
 func (e *BatchWriteExecutor) ExecuteScan(input *CompiledQuery, dest any) error {
+	_ = input
+	_ = dest
 	// BatchWriteExecutor is optimized for batch write operations.
 	// For scan operations, use the query package's MainExecutor or dynamorm.Model().
 	return fmt.Errorf("BatchWriteExecutor does not support ExecuteScan - this executor is specialized for batch write operations only. Use dynamorm.Model() for scans")
@@ -141,10 +145,10 @@ func (e *BatchWriteExecutor) BatchDeleteWithResult(tableName string, keys []map[
 
 // BatchDeleteResult represents the result of a batch delete operation
 type BatchDeleteResult struct {
-	Succeeded       int
-	Failed          int
 	UnprocessedKeys []map[string]types.AttributeValue
 	Errors          []error
+	Succeeded       int
+	Failed          int
 }
 
 // ExecutorWithBatchSupport wraps an executor to add batch write support
@@ -154,8 +158,34 @@ type ExecutorWithBatchSupport struct {
 	deleteClient *dynamodb.Client
 }
 
+func (e *ExecutorWithBatchSupport) ctxOrBackground() context.Context {
+	if e.BatchWriteExecutor.ctx != nil {
+		return e.BatchWriteExecutor.ctx
+	}
+	return context.Background()
+}
+
+func compiledQueryWriteConditions(input *CompiledQuery) (*string, map[string]string, map[string]types.AttributeValue) {
+	var conditionExpression *string
+	if input.ConditionExpression != "" {
+		conditionExpression = aws.String(input.ConditionExpression)
+	}
+
+	var expressionAttributeNames map[string]string
+	if len(input.ExpressionAttributeNames) > 0 {
+		expressionAttributeNames = input.ExpressionAttributeNames
+	}
+
+	var expressionAttributeValues map[string]types.AttributeValue
+	if len(input.ExpressionAttributeValues) > 0 {
+		expressionAttributeValues = input.ExpressionAttributeValues
+	}
+
+	return conditionExpression, expressionAttributeNames, expressionAttributeValues
+}
+
 // NewExecutorWithBatchSupport creates a new executor with batch support
-func NewExecutorWithBatchSupport(client *dynamodb.Client, ctx context.Context) *ExecutorWithBatchSupport {
+func NewExecutorWithBatchSupport(client *dynamodb.Client, ctx context.Context) *ExecutorWithBatchSupport { //nolint:revive // context-as-argument: keep signature for compatibility
 	return &ExecutorWithBatchSupport{
 		UpdateExecutor:     NewUpdateExecutor(client, ctx),
 		BatchWriteExecutor: NewBatchWriteExecutor(client, ctx),
@@ -165,29 +195,17 @@ func NewExecutorWithBatchSupport(client *dynamodb.Client, ctx context.Context) *
 
 // ExecuteDeleteItem implements DeleteItemExecutor interface
 func (e *ExecutorWithBatchSupport) ExecuteDeleteItem(input *CompiledQuery, key map[string]types.AttributeValue) error {
+	conditionExpression, expressionAttributeNames, expressionAttributeValues := compiledQueryWriteConditions(input)
 	deleteInput := &dynamodb.DeleteItemInput{
-		TableName: aws.String(input.TableName),
-		Key:       key,
-	}
-
-	// Add condition expression if present
-	if input.ConditionExpression != "" {
-		deleteInput.ConditionExpression = aws.String(input.ConditionExpression)
-	}
-	if len(input.ExpressionAttributeNames) > 0 {
-		deleteInput.ExpressionAttributeNames = input.ExpressionAttributeNames
-	}
-	if len(input.ExpressionAttributeValues) > 0 {
-		deleteInput.ExpressionAttributeValues = input.ExpressionAttributeValues
+		TableName:                 aws.String(input.TableName),
+		Key:                       key,
+		ConditionExpression:       conditionExpression,
+		ExpressionAttributeNames:  expressionAttributeNames,
+		ExpressionAttributeValues: expressionAttributeValues,
 	}
 
 	// Execute delete
-	ctx := e.BatchWriteExecutor.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	_, err := e.deleteClient.DeleteItem(ctx, deleteInput)
+	_, err := e.deleteClient.DeleteItem(e.ctxOrBackground(), deleteInput)
 	if err != nil {
 		return fmt.Errorf("failed to delete item: %w", err)
 	}
@@ -197,29 +215,17 @@ func (e *ExecutorWithBatchSupport) ExecuteDeleteItem(input *CompiledQuery, key m
 
 // ExecutePutItem implements PutItemExecutor interface
 func (e *ExecutorWithBatchSupport) ExecutePutItem(input *CompiledQuery, item map[string]types.AttributeValue) error {
+	conditionExpression, expressionAttributeNames, expressionAttributeValues := compiledQueryWriteConditions(input)
 	putInput := &dynamodb.PutItemInput{
-		TableName: aws.String(input.TableName),
-		Item:      item,
-	}
-
-	// Add condition expression if present
-	if input.ConditionExpression != "" {
-		putInput.ConditionExpression = aws.String(input.ConditionExpression)
-	}
-	if len(input.ExpressionAttributeNames) > 0 {
-		putInput.ExpressionAttributeNames = input.ExpressionAttributeNames
-	}
-	if len(input.ExpressionAttributeValues) > 0 {
-		putInput.ExpressionAttributeValues = input.ExpressionAttributeValues
+		TableName:                 aws.String(input.TableName),
+		Item:                      item,
+		ConditionExpression:       conditionExpression,
+		ExpressionAttributeNames:  expressionAttributeNames,
+		ExpressionAttributeValues: expressionAttributeValues,
 	}
 
 	// Execute put
-	ctx := e.BatchWriteExecutor.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	_, err := e.deleteClient.PutItem(ctx, putInput)
+	_, err := e.deleteClient.PutItem(e.ctxOrBackground(), putInput)
 	if err != nil {
 		return fmt.Errorf("failed to put item: %w", err)
 	}

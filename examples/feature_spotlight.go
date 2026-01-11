@@ -15,12 +15,12 @@ import (
 
 // Bookmark models a bookmark stored in a single-table design.
 type Bookmark struct {
+	Created  time.Time `json:"created_at"`
 	PK       string    `dynamorm:"pk" json:"pk"`
 	SK       string    `dynamorm:"sk" json:"sk"`
 	UserID   string    `json:"user_id"`
 	URL      string    `json:"url"`
 	Category string    `json:"category"`
-	Created  time.Time `json:"created_at"`
 }
 
 // BookmarkQuota tracks how many writes a user can make in a window.
@@ -32,19 +32,19 @@ type BookmarkQuota struct {
 
 // BookmarkAudit is written alongside bookmark mutations.
 type BookmarkAudit struct {
+	CreatedAt time.Time `json:"created_at"`
 	PK        string    `dynamorm:"pk" json:"pk"`
 	SK        string    `dynamorm:"sk" json:"sk"`
 	Action    string    `json:"action"`
 	ActorID   string    `json:"actor_id"`
-	CreatedAt time.Time `json:"created_at"`
 }
 
 // Session demonstrates optimistic updates with conditional helpers.
 type Session struct {
+	LastSeen time.Time `json:"last_seen"`
 	PK       string    `dynamorm:"pk" json:"pk"`
 	SK       string    `dynamorm:"sk" json:"sk"`
 	Status   string    `json:"status"`
-	LastSeen time.Time `json:"last_seen"`
 	Version  int64     `json:"version"`
 }
 

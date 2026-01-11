@@ -6,16 +6,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/examples/blog/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/examples/blog/models"
 )
 
 // MockProvider is a mock notification provider for testing
 type MockProvider struct {
+	name              string
 	sentNotifications []*Notification
 	shouldFail        bool
-	name              string
 }
 
 func NewMockProvider(name string) *MockProvider {

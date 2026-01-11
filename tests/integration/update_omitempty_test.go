@@ -3,21 +3,19 @@ package integration
 import (
 	"testing"
 
-	"github.com/pay-theory/dynamorm/tests"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/tests"
 )
 
 type UpdateOmitEmptyItem struct {
-	ID string `dynamorm:"pk"`
-	SK string `dynamorm:"sk"`
-
-	// These fields should not be overwritten when empty and tagged omitempty.
-	ProcessorTokens []string          `dynamorm:"attr:processorTokens,omitempty"`
-	Attributes      map[string]string `dynamorm:"attr:attributes,omitempty"`
-
-	EncryptedPaymentData string `dynamorm:"attr:encryptedPaymentData"`
-	UpdateTimestamp      string `dynamorm:"attr:updateTimestamp"`
+	Attributes           map[string]string `dynamorm:"attr:attributes,omitempty"`
+	ID                   string            `dynamorm:"pk"`
+	SK                   string            `dynamorm:"sk"`
+	EncryptedPaymentData string            `dynamorm:"attr:encryptedPaymentData"`
+	UpdateTimestamp      string            `dynamorm:"attr:updateTimestamp"`
+	ProcessorTokens      []string          `dynamorm:"attr:processorTokens,omitempty"`
 }
 
 func (UpdateOmitEmptyItem) TableName() string { return "UpdateOmitEmptyItems" }

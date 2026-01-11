@@ -52,6 +52,19 @@ var legitimateFieldPatterns = []regexp.Regexp{
 	*regexp.MustCompile(`(?i)^select(ed|or)_?(at|time|date)$`),    // selected_at, selector_time, etc.
 }
 
+var valueScriptPatterns = []string{
+	"<script", "</script", "eval(", "expression(", "import(", "require(",
+	"javascript:", "vbscript:", "onload=", "onerror=", "onclick=",
+}
+
+var valueSQLInjectionPatterns = []string{
+	"'; drop table", "'; delete from", "'; update ", "'; insert into",
+	"\"; drop table", "\"; delete from", "\"; update ", "\"; insert into",
+	"' or 1=1", "\" or 1=1", "' or '1'='1", "\" or \"1\"=\"1",
+	"/**/union/**/select", "concat(0x", "char(", "load_file(",
+	"--", // SQL comment at end of value is suspicious
+}
+
 // Valid operator whitelist
 var allowedOperators = map[string]bool{
 	"=":                    true,
@@ -79,6 +92,39 @@ var allowedOperators = map[string]bool{
 
 // ValidateFieldName validates a DynamoDB attribute name according to AWS rules and security best practices
 func ValidateFieldName(field string) error {
+	if err := validateFieldNameBasics(field); err != nil {
+		return err
+	}
+
+	fieldLower := strings.ToLower(field)
+	if containsAnySubstring(fieldLower, dangerousPatterns) {
+		return &SecurityError{
+			Type:   "InjectionAttempt",
+			Field:  "",
+			Detail: "field name contains dangerous pattern",
+		}
+	}
+
+	if err := validateFieldNameKeywords(fieldLower, field); err != nil {
+		return err
+	}
+
+	if containsControlCharacters(field) {
+		return &SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "field name contains control characters",
+		}
+	}
+
+	if strings.Contains(field, ".") {
+		return validateNestedFieldPath(field)
+	}
+
+	return validateFieldPart(field)
+}
+
+func validateFieldNameBasics(field string) error {
 	if field == "" {
 		return &SecurityError{
 			Type:   "InvalidField",
@@ -95,78 +141,64 @@ func ValidateFieldName(field string) error {
 		}
 	}
 
-	// Check for dangerous patterns (exact matches and clearly malicious patterns)
-	fieldLower := strings.ToLower(field)
-	for _, pattern := range dangerousPatterns {
-		if strings.Contains(fieldLower, pattern) {
+	return nil
+}
+
+func validateFieldNameKeywords(fieldLower, field string) error {
+	for _, keyword := range sqlKeywords {
+		if !strings.Contains(fieldLower, keyword) {
+			continue
+		}
+		if isLegitimateFieldName(field) {
+			continue
+		}
+		if isStandaloneOrSuspiciousKeyword(fieldLower, keyword) {
 			return &SecurityError{
 				Type:   "InjectionAttempt",
 				Field:  "",
-				Detail: "field name contains dangerous pattern",
+				Detail: "field name contains suspicious content",
 			}
 		}
 	}
+	return nil
+}
 
-	// Check for SQL keywords, but allow legitimate field name patterns
-	for _, keyword := range sqlKeywords {
-		if strings.Contains(fieldLower, keyword) {
-			// Check if this matches a legitimate field pattern
-			isLegitimate := false
-			for _, pattern := range legitimateFieldPatterns {
-				if pattern.MatchString(field) {
-					isLegitimate = true
-					break
-				}
-			}
-
-			// If not a legitimate pattern, check if it's a suspicious usage
-			if !isLegitimate {
-				// Allow if it's part of a compound word (like "CreateTime" or "user_created")
-				// but reject standalone keywords or suspicious combinations
-				if isStandaloneOrSuspiciousKeyword(fieldLower, keyword) {
-					return &SecurityError{
-						Type:   "InjectionAttempt",
-						Field:  "",
-						Detail: "field name contains suspicious content",
-					}
-				}
-			}
+func isLegitimateFieldName(field string) bool {
+	for _, pattern := range legitimateFieldPatterns {
+		if pattern.MatchString(field) {
+			return true
 		}
 	}
+	return false
+}
 
-	// Check for control characters
+func containsControlCharacters(field string) bool {
 	for _, r := range field {
 		if unicode.IsControl(r) {
-			return &SecurityError{
-				Type:   "InvalidField",
-				Field:  "",
-				Detail: "field name contains control characters",
-			}
+			return true
+		}
+	}
+	return false
+}
+
+func validateNestedFieldPath(field string) error {
+	parts := strings.Split(field, ".")
+	if len(parts) > MaxNestedDepth {
+		return &SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "nested field depth exceeds maximum",
 		}
 	}
 
-	// Validate nested field paths
-	if strings.Contains(field, ".") {
-		parts := strings.Split(field, ".")
-		if len(parts) > MaxNestedDepth {
+	for _, part := range parts {
+		if err := validateFieldPart(part); err != nil {
 			return &SecurityError{
 				Type:   "InvalidField",
 				Field:  "",
-				Detail: "nested field depth exceeds maximum",
+				Detail: "invalid field part",
 			}
 		}
-
-		for _, part := range parts {
-			if err := validateFieldPart(part); err != nil {
-				return &SecurityError{
-					Type:   "InvalidField",
-					Field:  "",
-					Detail: "invalid field part",
-				}
-			}
-		}
-	} else {
-		return validateFieldPart(field)
 	}
 
 	return nil
@@ -299,34 +331,6 @@ func ValidateValue(value any) error {
 		return validateStringValue(v)
 	case []any:
 		return validateSliceValue(v)
-	case []string:
-		return validateSliceLength(len(v))
-	case []int:
-		return validateSliceLength(len(v))
-	case []int8:
-		return validateSliceLength(len(v))
-	case []int16:
-		return validateSliceLength(len(v))
-	case []int32:
-		return validateSliceLength(len(v))
-	case []int64:
-		return validateSliceLength(len(v))
-	case []uint:
-		return validateSliceLength(len(v))
-	case []uint8:
-		return validateSliceLength(len(v))
-	case []uint16:
-		return validateSliceLength(len(v))
-	case []uint32:
-		return validateSliceLength(len(v))
-	case []uint64:
-		return validateSliceLength(len(v))
-	case []float32:
-		return validateSliceLength(len(v))
-	case []float64:
-		return validateSliceLength(len(v))
-	case []bool:
-		return validateSliceLength(len(v))
 	case map[string]any:
 		return validateMapValue(v)
 	case map[string]string:
@@ -334,7 +338,9 @@ func ValidateValue(value any) error {
 	case map[string]int:
 		return validateTypedMapIntValue(v)
 	default:
-		// For other types (int, float, bool, etc.), basic validation
+		if length, ok := isBuiltInScalarSlice(v); ok {
+			return validateSliceLength(length)
+		}
 		return validateBasicValue(v)
 	}
 }
@@ -349,30 +355,12 @@ func validateStringValue(s string) error {
 		}
 	}
 
-	// For string VALUES (not field names), we should be more permissive
-	// DynamoDB stores data, including JSON, HTML, etc. which naturally contain quotes
-	// We only need to check for actual injection attempts, not legitimate data
-
 	stringLower := strings.ToLower(s)
 
-	// Check for script injection patterns (but allow quotes and semicolons in data)
-	scriptPatterns := []string{
-		"<script", "</script", "eval(", "expression(", "import(", "require(",
-		"javascript:", "vbscript:", "onload=", "onerror=", "onclick=",
-	}
-
-	for _, pattern := range scriptPatterns {
-		if strings.Contains(stringLower, pattern) {
-			return &SecurityError{
-				Type:   "InjectionAttempt",
-				Field:  "",
-				Detail: "string value contains dangerous pattern",
-			}
-		}
-	}
-
-	// Check for comment patterns that are clearly malicious
-	if strings.Contains(s, "/*") && strings.Contains(s, "*/") {
+	if containsAnySubstring(stringLower, valueScriptPatterns) ||
+		(strings.Contains(s, "/*") && strings.Contains(s, "*/")) ||
+		containsAnySubstring(stringLower, valueSQLInjectionPatterns) ||
+		looksLikeUnionSelectInjection(stringLower, s) {
 		return &SecurityError{
 			Type:   "InjectionAttempt",
 			Field:  "",
@@ -380,49 +368,56 @@ func validateStringValue(s string) error {
 		}
 	}
 
-	// Check for SQL injection patterns in string values
-	// Be more nuanced - allow legitimate use of SQL keywords in data
-	// but reject clear injection attempts
-	sqlInjectionPatterns := []string{
-		"'; drop table", "'; delete from", "'; update ", "'; insert into",
-		"\"; drop table", "\"; delete from", "\"; update ", "\"; insert into",
-		"' or 1=1", "\" or 1=1", "' or '1'='1", "\" or \"1\"=\"1",
-		"/**/union/**/select", "concat(0x", "char(", "load_file(",
-		"--", // SQL comment at end of value is suspicious
-	}
-
-	for _, pattern := range sqlInjectionPatterns {
-		if strings.Contains(stringLower, pattern) {
-			return &SecurityError{
-				Type:   "InjectionAttempt",
-				Field:  "",
-				Detail: "string value contains dangerous pattern",
-			}
-		}
-	}
-
-	// Check for specific dangerous command patterns
-	// Allow "union select" in general text but block with dangerous context
-	if strings.Contains(stringLower, "union") && strings.Contains(stringLower, "select") {
-		// Check if it looks like a SQL injection attempt
-		if strings.Contains(stringLower, "union select") ||
-			strings.Contains(stringLower, "union all select") ||
-			strings.Contains(stringLower, "union/**/select") {
-			// Check for additional SQL patterns that indicate injection
-			if strings.Contains(stringLower, "from") ||
-				strings.Contains(stringLower, "*") ||
-				strings.HasSuffix(s, "--") ||
-				strings.HasSuffix(s, ";") {
-				return &SecurityError{
-					Type:   "InjectionAttempt",
-					Field:  "",
-					Detail: "string value contains dangerous pattern",
-				}
-			}
-		}
-	}
-
 	return nil
+}
+
+func containsAnySubstring(haystack string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(haystack, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBuiltInScalarSlice(value any) (int, bool) {
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Slice {
+		return 0, false
+	}
+
+	elem := rv.Type().Elem()
+	if elem.PkgPath() != "" {
+		return 0, false
+	}
+
+	switch elem.Kind() {
+	case reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64,
+		reflect.Bool:
+		return rv.Len(), true
+	default:
+		return 0, false
+	}
+}
+
+func looksLikeUnionSelectInjection(stringLower, raw string) bool {
+	if !strings.Contains(stringLower, "union") || !strings.Contains(stringLower, "select") {
+		return false
+	}
+
+	if !strings.Contains(stringLower, "union select") &&
+		!strings.Contains(stringLower, "union all select") &&
+		!strings.Contains(stringLower, "union/**/select") {
+		return false
+	}
+
+	return strings.Contains(stringLower, "from") ||
+		strings.Contains(stringLower, "*") ||
+		strings.HasSuffix(raw, "--") ||
+		strings.HasSuffix(raw, ";")
 }
 
 // validateSliceValue validates slice values (for IN operator, etc.)
@@ -577,7 +572,6 @@ func validateBasicValue(value any) error {
 
 	return nil
 }
-
 
 // ValidateExpression validates a complete expression for security
 func ValidateExpression(expression string) error {

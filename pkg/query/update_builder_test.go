@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // Mock types for testing
@@ -33,14 +34,14 @@ func (m *mockUpdateExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key ma
 
 // Test model
 type BlogPost struct {
+	PublishedAt time.Time
+	UpdatedAt   time.Time
 	ID          string `dynamorm:"pk"`
 	Title       string
 	Content     string
+	Tags        []string
 	ViewCount   int64
 	LikeCount   int64
-	Tags        []string
-	PublishedAt time.Time
-	UpdatedAt   time.Time
 	Version     int64
 }
 
@@ -484,8 +485,8 @@ func TestUpdateBuilderReturnValues(t *testing.T) {
 
 // mockUpdateWithResultExecutor implements UpdateItemWithResultExecutor for testing
 type mockUpdateWithResultExecutor struct {
-	mockUpdateExecutor
 	ExecuteUpdateItemWithResultFunc func(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error)
+	mockUpdateExecutor
 }
 
 func (m *mockUpdateWithResultExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error) {

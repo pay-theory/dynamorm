@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/pkg/model"
-	"github.com/pay-theory/dynamorm/pkg/query"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/model"
+	"github.com/pay-theory/dynamorm/pkg/query"
 )
 
 // Mock types for testing
@@ -190,11 +191,11 @@ func (m *mockExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
 // Test model
 type TestItem struct {
 	ID        string `dynamodb:"id"`
-	Timestamp int64  `dynamodb:"timestamp"`
 	Status    string `dynamodb:"status"`
 	UserID    string `dynamodb:"userId"`
-	CreatedAt int64  `dynamodb:"createdAt"`
 	Data      string `dynamodb:"data"`
+	Timestamp int64  `dynamodb:"timestamp"`
+	CreatedAt int64  `dynamodb:"createdAt"`
 }
 
 func TestQuery_BasicQuery(t *testing.T) {
@@ -753,9 +754,9 @@ func TestQuery_ComplexExpressions(t *testing.T) {
 
 	// Test various operators
 	testCases := []struct {
-		name     string
 		setup    func(*query.Query)
 		validate func(*testing.T, *core.CompiledQuery)
+		name     string
 	}{
 		{
 			name: "IN operator",

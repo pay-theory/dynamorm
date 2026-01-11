@@ -5,20 +5,21 @@ import (
 	"testing"
 	"time"
 
-	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // TestItem for testing create operations
 type TestItem struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	ID        string    `dynamorm:"pk"`
 	SK        string    `dynamorm:"sk"`
 	Name      string    `json:"name"`
 	Value     int       `json:"value"`
 	Version   int64     `dynamorm:"version"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 func (TestItem) TableName() string {

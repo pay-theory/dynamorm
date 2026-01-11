@@ -1,10 +1,11 @@
 package testing
 
 import (
+	"github.com/stretchr/testify/mock"
+
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/mocks"
-	"github.com/stretchr/testify/mock"
 )
 
 // TestDB provides a fluent interface for setting up mock expectations
@@ -113,7 +114,10 @@ func (t *TestDB) ExpectCount(count int64) *TestDB {
 func (t *TestDB) ExpectTransaction(setupFunc func(tx *core.Tx)) *TestDB {
 	t.MockDB.On("Transaction", mock.AnythingOfType("func(*core.Tx) error")).
 		Run(func(args mock.Arguments) {
-			txFn := args.Get(0).(func(*core.Tx) error)
+			txFn, ok := args.Get(0).(func(*core.Tx) error)
+			if !ok {
+				panic("unexpected Transaction callback type")
+			}
 
 			// Create a mock transaction
 			mockTx := &core.Tx{}
@@ -123,10 +127,10 @@ func (t *TestDB) ExpectTransaction(setupFunc func(tx *core.Tx)) *TestDB {
 				setupFunc(mockTx)
 			}
 
-		// Execute the transaction function
-		if err := txFn(mockTx); err != nil {
-			panic(err)
-		}
+			// Execute the transaction function
+			if err := txFn(mockTx); err != nil {
+				panic(err)
+			}
 		}).Return(nil).Once()
 	return t
 }

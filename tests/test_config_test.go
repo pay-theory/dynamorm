@@ -48,7 +48,9 @@ func TestIsDynamoDBLocalRunning(t *testing.T) {
 		resp := map[string]any{
 			"TableNames": []string{},
 		}
-		_ = json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer successServer.Close()
 

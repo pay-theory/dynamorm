@@ -4,9 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
 // Test models with various struct tag configurations
@@ -26,23 +28,23 @@ type IndexedModel struct {
 	ID       string  `dynamorm:"pk"`
 	Email    string  `dynamorm:"index:gsi-email"`
 	Category string  `dynamorm:"index:gsi-category-price,pk"`
-	Price    float64 `dynamorm:"index:gsi-category-price,sk"`
 	Status   string  `dynamorm:"lsi:lsi-status"`
+	Price    float64 `dynamorm:"index:gsi-category-price,sk"`
 }
 
 type SpecialFieldsModel struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	ID        string    `dynamorm:"pk"`
 	Version   int       `dynamorm:"version"`
 	TTL       int64     `dynamorm:"ttl"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 type CustomAttributeModel struct {
 	ID       string   `dynamorm:"pk,attr:userId"`
 	UserName string   `dynamorm:"attr:username"`
-	Tags     []string `dynamorm:"set"`
 	Optional string   `dynamorm:"omitempty"`
+	Tags     []string `dynamorm:"set"`
 }
 
 type InvalidModel struct {
@@ -50,9 +52,9 @@ type InvalidModel struct {
 }
 
 type ImplicitTimestampModel struct {
-	ID        string `dynamorm:"pk"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	ID        string `dynamorm:"pk"`
 }
 
 func TestNewRegistry(t *testing.T) {
@@ -291,6 +293,29 @@ func TestRegisterModelWithIndexModifiers(t *testing.T) {
 	require.NotNil(t, roleIndex)
 	assert.Equal(t, "GSI2PK", roleIndex.PartitionKey.Name)
 	assert.Equal(t, "GSI2SK", roleIndex.SortKey.Name)
+}
+
+func TestRegisterRejectsEncryptedOnKeyFields(t *testing.T) {
+	t.Run("PrimaryKey", func(t *testing.T) {
+		type EncryptedPKModel struct {
+			PK string `dynamorm:"pk,encrypted"`
+		}
+
+		registry := model.NewRegistry()
+		err := registry.Register(&EncryptedPKModel{})
+		require.ErrorIs(t, err, dynamormErrors.ErrInvalidTag)
+	})
+
+	t.Run("IndexKey", func(t *testing.T) {
+		type EncryptedIndexKeyModel struct {
+			ID    string `dynamorm:"pk"`
+			Email string `dynamorm:"index:gsi-email,pk,encrypted"`
+		}
+
+		registry := model.NewRegistry()
+		err := registry.Register(&EncryptedIndexKeyModel{})
+		require.ErrorIs(t, err, dynamormErrors.ErrInvalidTag)
+	})
 }
 
 func TestRegisterInvalidTagTypes(t *testing.T) {

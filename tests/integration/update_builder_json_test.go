@@ -10,12 +10,12 @@ import (
 )
 
 type IdempotencyKey struct {
+	UpdatedAt      time.Time `dynamorm:""`
 	PK             string    `dynamorm:"pk"`
 	SK             string    `dynamorm:"sk"`
 	ResponseBody   string    `dynamorm:""`
-	ResponseStatus int       `dynamorm:""`
 	Status         string    `dynamorm:""`
-	UpdatedAt      time.Time `dynamorm:""`
+	ResponseStatus int       `dynamorm:""`
 }
 
 func (IdempotencyKey) TableName() string {

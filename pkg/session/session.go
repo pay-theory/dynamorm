@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
@@ -17,35 +18,19 @@ var configLoadFunc = config.LoadDefaultConfig
 
 // Config holds the configuration for DynamORM
 type Config struct {
-	// AWS region
-	Region string
-
-	// Optional endpoint for local development (e.g., DynamoDB Local)
-	Endpoint string
-
-	// Maximum number of retries for failed requests
-	MaxRetries int
-
-	// Default read capacity units for table creation
-	DefaultRCU int64
-
-	// Default write capacity units for table creation
-	DefaultWCU int64
-
-	// Whether to automatically create tables if they don't exist
-	AutoMigrate bool
-
-	// Whether to enable metrics collection
-	EnableMetrics bool
-
-	// Custom AWS config options
-	AWSConfigOptions []func(*config.LoadOptions) error
-
-	// Custom DynamoDB client options
-	DynamoDBOptions []func(*dynamodb.Options)
-
-	// Credentials provider
 	CredentialsProvider aws.CredentialsProvider
+	Region              string
+	Endpoint            string
+	// KMSKeyARN is required when using dynamorm:"encrypted" fields.
+	// DynamORM does not manage KMS keys; callers must provide a valid key ARN.
+	KMSKeyARN        string
+	AWSConfigOptions []func(*config.LoadOptions) error
+	DynamoDBOptions  []func(*dynamodb.Options)
+	MaxRetries       int
+	DefaultRCU       int64
+	DefaultWCU       int64
+	AutoMigrate      bool
+	EnableMetrics    bool
 }
 
 // DefaultConfig returns the default configuration
@@ -63,8 +48,8 @@ func DefaultConfig() *Config {
 // Session manages the AWS session and DynamoDB client
 type Session struct {
 	config    *Config
-	awsConfig aws.Config
 	client    *dynamodb.Client
+	awsConfig aws.Config
 }
 
 // NewSession creates a new session with the given configuration
@@ -95,7 +80,8 @@ func NewSession(cfg *Config) (*Session, error) {
 	options = append(options, config.WithRetryMaxAttempts(maxAttempts))
 
 	// Add HTTP client
-	options = append(options, config.WithHTTPClient(&http.Client{}))
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	options = append(options, config.WithHTTPClient(httpClient))
 
 	// Add custom options
 	options = append(options, cfg.AWSConfigOptions...)
@@ -132,7 +118,7 @@ func NewSession(cfg *Config) (*Session, error) {
 
 			// Ensure HTTP client is set
 			if o.HTTPClient == nil {
-				o.HTTPClient = &http.Client{}
+				o.HTTPClient = httpClient
 			}
 		},
 	}
@@ -178,6 +164,7 @@ func (s *Session) AWSConfig() aws.Config {
 
 // WithContext returns a new session with the given context
 func (s *Session) WithContext(ctx context.Context) *Session {
+	_ = ctx
 	// DynamoDB client operations accept context at the operation level
 	// This method is here for consistency with the DB interface
 	return s

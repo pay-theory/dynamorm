@@ -10,18 +10,18 @@ import (
 )
 
 type ChargeBase struct {
-	PK        string    `dynamorm:"pk"`
-	SK        string    `dynamorm:"sk"`
 	CreatedAt time.Time `dynamorm:""`
 	UpdatedAt time.Time `dynamorm:""`
+	PK        string    `dynamorm:"pk"`
+	SK        string    `dynamorm:"sk"`
 }
 
 type ChargeModel struct {
 	ChargeBase
-	Amount         int    `dynamorm:""`
 	Currency       string `dynamorm:""`
 	Status         string `dynamorm:""`
 	ResponseBody   string `dynamorm:""`
+	Amount         int    `dynamorm:""`
 	ResponseStatus int    `dynamorm:""`
 }
 

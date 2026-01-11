@@ -366,6 +366,54 @@ func TestMemoryMonitoring(t *testing.T) {
 	})
 }
 
+func TestMemoryMonitor_determineSeverity_COV6(t *testing.T) {
+	mm := &MemoryMonitor{}
+
+	assert.Equal(t, "CRITICAL", mm.determineSeverity(0.95))
+	assert.Equal(t, "HIGH", mm.determineSeverity(0.90))
+	assert.Equal(t, "MEDIUM", mm.determineSeverity(0.80))
+	assert.Equal(t, "LOW", mm.determineSeverity(0.10))
+}
+
+func TestMemoryMonitor_checkMemory_TriggersAlertAndGC_COV6(t *testing.T) {
+	config := DefaultResourceLimits()
+	config.MaxMemoryMB = 1
+	config.MemoryPanicThreshold = 0.0
+
+	protector := NewResourceProtector(config)
+
+	// Ensure the heap is non-trivially allocated so memory usage crosses the threshold.
+	buf := make([]byte, 10*1024*1024)
+	for i := range buf {
+		buf[i] = byte(i)
+	}
+
+	alerts := make(chan MemoryAlert, 1)
+	protector.memoryMonitor.mu.Lock()
+	protector.memoryMonitor.alertCallback = func(alert MemoryAlert) {
+		select {
+		case alerts <- alert:
+		default:
+		}
+	}
+	protector.memoryMonitor.mu.Unlock()
+
+	protector.memoryMonitor.checkMemory()
+
+	stats := protector.GetStats()
+	assert.Greater(t, stats.MemoryAlerts, int64(0))
+	assert.GreaterOrEqual(t, stats.CurrentMemoryMB, int64(0))
+
+	select {
+	case alert := <-alerts:
+		assert.Equal(t, "MemoryThresholdExceeded", alert.Type)
+		assert.NotEmpty(t, alert.Severity)
+		assert.Greater(t, alert.UsagePercent, 0.0)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected memory alert callback to run")
+	}
+}
+
 // TestProtectionErrors tests protection error handling
 func TestProtectionErrors(t *testing.T) {
 	t.Run("ProtectionErrorInterface", func(t *testing.T) {
@@ -397,14 +445,55 @@ func TestHealthCheck(t *testing.T) {
 	assert.NotNil(t, health)
 	assert.Equal(t, "healthy", health["status"])
 
-	checks := health["checks"].(map[string]any)
+	checks, ok := health["checks"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
 	assert.Contains(t, checks, "memory")
 	assert.Contains(t, checks, "concurrency")
 	assert.Contains(t, checks, "rate_limiting")
 
-	memoryCheck := checks["memory"].(map[string]any)
+	memoryCheck, ok := checks["memory"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
 	assert.Equal(t, "ok", memoryCheck["status"])
 	assert.GreaterOrEqual(t, memoryCheck["current_mb"], int64(0))
+}
+
+func TestHealthCheck_DegradesOnHighUsage_COV6(t *testing.T) {
+	config := DefaultResourceLimits()
+	config.MaxMemoryMB = 100
+	config.MaxConcurrentReq = 10
+
+	protector := NewResourceProtector(config)
+	atomic.StoreInt64(&protector.stats.CurrentMemoryMB, 95)
+	atomic.StoreInt64(&protector.stats.ConcurrentRequests, 9)
+
+	health := protector.HealthCheck()
+	assert.Equal(t, "degraded", health["status"])
+
+	checks, ok := health["checks"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
+
+	memoryCheck, ok := checks["memory"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
+	assert.Equal(t, "warning", memoryCheck["status"])
+
+	concurrencyCheck, ok := checks["concurrency"].(map[string]any)
+	assert.True(t, ok)
+	if !ok {
+		return
+	}
+	assert.Equal(t, "warning", concurrencyCheck["status"])
 }
 
 // TestResourceStats tests statistics tracking
@@ -417,7 +506,8 @@ func TestResourceStats(t *testing.T) {
 	req := &http.Request{Body: io.NopCloser(body)}
 	req = req.WithContext(context.Background())
 
-	_, _ = protector.SecureBodyReader(req)
+	_, err := protector.SecureBodyReader(req)
+	assert.NoError(t, err)
 
 	stats := protector.GetStats()
 	assert.Greater(t, stats.TotalRequests, int64(0))
@@ -460,7 +550,9 @@ func BenchmarkResourceProtection(b *testing.B) {
 			req := &http.Request{Body: io.NopCloser(reader)}
 			req = req.WithContext(context.Background())
 
-			_, _ = protector.SecureBodyReader(req)
+			if _, err := protector.SecureBodyReader(req); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 

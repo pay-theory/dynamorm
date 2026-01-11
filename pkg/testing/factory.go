@@ -25,6 +25,7 @@ type DefaultDBFactory struct{}
 
 // CreateDB creates a real DynamORM database connection
 func (f *DefaultDBFactory) CreateDB(config session.Config) (core.ExtendedDB, error) {
+	_ = config
 	// In the real implementation, this would call dynamorm.New(config)
 	// which returns an ExtendedDB instance
 	// For now, we'll return a placeholder
@@ -77,14 +78,9 @@ func (f *MockDBFactory) WithError(err error) *MockDBFactory {
 
 // FactoryConfig provides configuration options for database factories
 type FactoryConfig struct {
-	// EnableLogging enables debug logging for database operations
+	Middleware    []Middleware
 	EnableLogging bool
-
-	// EnableMetrics enables metrics collection
 	EnableMetrics bool
-
-	// Middleware allows injecting custom middleware into the database
-	Middleware []Middleware
 }
 
 // Middleware represents a database operation middleware
@@ -126,7 +122,7 @@ func (f *ConfigurableMockDBFactory) CreateDB(config session.Config) (core.Extend
 	// Apply any configuration-specific behavior here
 	if f.config.EnableLogging {
 		if f.OnCreateDB == nil {
-			f.OnCreateDB = func(cfg session.Config) {
+			f.OnCreateDB = func(_ session.Config) {
 				// Placeholder hook for logging; callers can replace this function to capture config.
 			}
 		}
@@ -137,11 +133,8 @@ func (f *ConfigurableMockDBFactory) CreateDB(config session.Config) (core.Extend
 
 // TestDBFactory is a specialized factory for testing that tracks all created instances
 type TestDBFactory struct {
-	// Instances tracks all database instances created by this factory
-	Instances []core.ExtendedDB
-
-	// CreateFunc allows customizing the creation behavior
 	CreateFunc func(config session.Config) (core.ExtendedDB, error)
+	Instances  []core.ExtendedDB
 }
 
 // CreateDB creates a database instance and tracks it

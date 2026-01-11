@@ -10,13 +10,13 @@ import (
 
 // UserActivity represents user activity tracking
 type UserActivity struct {
-	UserID       string    `dynamorm:"pk"`
 	ActivityTime time.Time `dynamorm:"sk"`
-	ActivityType string    `dynamorm:"gsi:TypeIndex:pk"`
-	SessionID    string    `dynamorm:"gsi:SessionIndex:pk"`
-	Duration     int
 	Details      map[string]string
+	UserID       string `dynamorm:"pk"`
+	ActivityType string `dynamorm:"gsi:TypeIndex:pk"`
+	SessionID    string `dynamorm:"gsi:SessionIndex:pk"`
 	Tags         []string
+	Duration     int
 }
 
 // MockMetadata implements core.ModelMetadata for testing

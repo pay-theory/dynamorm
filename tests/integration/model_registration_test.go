@@ -10,9 +10,9 @@ import (
 
 // ModelRegTest is used for testing model registration
 type ModelRegTest struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
 	ID        string    `dynamorm:"pk"`
 	Name      string    `dynamorm:"sk"`
-	CreatedAt time.Time `dynamorm:"created_at"`
 }
 
 // TableName returns the DynamoDB table name
@@ -22,10 +22,10 @@ func (ModelRegTest) TableName() string {
 
 // BinRecordTest is the same structure from the user's report
 type BinRecordTest struct {
+	UpdatedRowAt    time.Time `json:"updated_row_at"`
 	CardBin         string    `dynamorm:"pk" json:"card_bin"`
 	CardBinExtended string    `dynamorm:"sk" json:"card_bin_extended"`
 	CardBrand       string    `json:"card_brand"`
-	UpdatedRowAt    time.Time `json:"updated_row_at"`
 }
 
 // TableName returns the DynamoDB table name
@@ -51,12 +51,14 @@ func TestModelWithContext(t *testing.T) {
 
 		// Clean up any existing data first
 		var existing []ModelRegTest
-		_ = testCtx.DB.Model(&ModelRegTest{}).All(&existing)
+		err := testCtx.DB.Model(&ModelRegTest{}).All(&existing)
+		require.NoError(t, err)
 		for _, item := range existing {
-			_ = testCtx.DB.Model(&ModelRegTest{}).
+			err = testCtx.DB.Model(&ModelRegTest{}).
 				Where("ID", "=", item.ID).
 				Where("Name", "=", item.Name).
 				Delete()
+			require.NoError(t, err)
 		}
 
 		// Create a record using WithContext
@@ -66,7 +68,7 @@ func TestModelWithContext(t *testing.T) {
 		}
 
 		// This should work - the model should be registered correctly
-		err := testCtx.DB.WithContext(ctx).Model(model).Create()
+		err = testCtx.DB.WithContext(ctx).Model(model).Create()
 		require.NoError(t, err, "Model registration should work with WithContext")
 
 		// Verify the record was created

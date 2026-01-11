@@ -86,79 +86,25 @@ func ToSnakeCase(name string) string {
 		return strings.ToLower(name)
 	}
 
-	var result []rune
-	var currentWord []rune
+	var b strings.Builder
+	b.Grow(len(runes) + len(runes)/2)
 
-	for i := 0; i < len(runes); i++ {
-		ch := runes[i]
-
-		// If we hit an uppercase letter, we might be starting a new word
+	for i, ch := range runes {
 		if unicode.IsUpper(ch) {
-			// Look ahead to determine if this is part of an acronym sequence
-			isAcronym := false
-			if i+1 < len(runes) && unicode.IsUpper(runes[i+1]) {
-				// Next char is also uppercase, so this is part of an acronym
-				isAcronym = true
+			if i > 0 {
+				prev := runes[i-1]
+				nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+				if !unicode.IsDigit(prev) && (unicode.IsLower(prev) || (unicode.IsUpper(prev) && nextIsLower)) {
+					b.WriteByte('_')
+				}
 			}
-
-			// Check if previous character was a digit
-			previousWasDigit := i > 0 && unicode.IsDigit(runes[i-1])
-
-			// If we have a current word, flush it before starting new one
-			// But don't add underscore if previous char was a digit
-			if len(currentWord) > 0 {
-				if len(result) > 0 && !previousWasDigit {
-					result = append(result, '_')
-				}
-				result = append(result, currentWord...)
-				currentWord = nil
-			}
-
-			// Start collecting the new word (or acronym)
-			if isAcronym {
-				// Collect the acronym sequence
-				acronym := []rune{ch}
-				j := i + 1
-				for j < len(runes) && unicode.IsUpper(runes[j]) {
-					// Check if next char after this is lowercase (end of acronym)
-					if j+1 < len(runes) && !unicode.IsUpper(runes[j+1]) {
-						// This uppercase char belongs to the next word
-						// e.g., in "URLValue", 'V' starts "Value"
-						break
-					}
-					acronym = append(acronym, runes[j])
-					j++
-				}
-
-				// Add the acronym as a word
-				if len(result) > 0 {
-					result = append(result, '_')
-				}
-				for _, r := range acronym {
-					result = append(result, unicode.ToLower(r))
-				}
-				i = j - 1 // -1 because loop will increment
-			} else {
-				// Single uppercase letter starting a word
-				currentWord = []rune{unicode.ToLower(ch)}
-			}
-		} else {
-			// Lowercase or digit, add to current word
-			currentWord = append(currentWord, ch)
+			b.WriteRune(unicode.ToLower(ch))
+			continue
 		}
+		b.WriteRune(unicode.ToLower(ch))
 	}
 
-	// Flush any remaining word
-	if len(currentWord) > 0 {
-		// Check if last character of result is a digit
-		shouldAddUnderscore := len(result) > 0 && !unicode.IsDigit(result[len(result)-1])
-		if shouldAddUnderscore {
-			result = append(result, '_')
-		}
-		result = append(result, currentWord...)
-	}
-
-	return string(result)
+	return b.String()
 }
 
 // ConvertAttrName converts a field name to the appropriate naming convention.

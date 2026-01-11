@@ -8,25 +8,26 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // BatchTestItem represents a test item for batch operations
 type BatchTestItem struct {
-	ID        string `dynamorm:"pk"`
-	SKValue   string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	SKValue   string    `dynamorm:"sk"`
 	Name      string
 	Category  string
+	Tags      []string
 	Value     int
 	Price     float64
 	Active    bool
-	Tags      []string
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 func (BatchTestItem) TableName() string {
@@ -201,11 +202,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range cleanupItems {
-			_ = testCtx.DB.Model(&BatchTestItem{}).
+			err := testCtx.DB.Model(&BatchTestItem{}).
 				Where("ID", "=", item.ID).
 				Where("SKValue", "=", item.SKValue).
 				WithContext(ctx).
 				Delete()
+			require.NoError(t, err)
 		}
 
 		// Setup: Create items to delete
@@ -252,11 +254,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range cleanupItems {
-			_ = testCtx.DB.Model(&BatchTestItem{}).
+			err := testCtx.DB.Model(&BatchTestItem{}).
 				Where("ID", "=", item.ID).
 				Where("SKValue", "=", item.SKValue).
 				WithContext(ctx).
 				Delete()
+			require.NoError(t, err)
 		}
 
 		// Setup: Create items to be deleted

@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/pkg/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/mocks"
 )
 
 // TestMockQueryImplementsInterface verifies MockQuery implements core.Query
@@ -45,7 +46,10 @@ func TestBasicQueryChaining(t *testing.T) {
 	mockQuery.On("Where", "ID", "=", "123").Return(mockQuery)
 	mockQuery.On("First", mock.Anything).Run(func(args mock.Arguments) {
 		// Populate the result
-		user := args.Get(0).(*User)
+		user, ok := args.Get(0).(*User)
+		if !ok {
+			t.Fatalf("expected *User, got %T", args.Get(0))
+		}
 		user.ID = "123"
 		user.Name = "John Doe"
 		user.Email = "john@example.com"
@@ -78,7 +82,10 @@ func TestComplexQueryChaining(t *testing.T) {
 	mockQuery.On("OrderBy", "CreatedAt", "DESC").Return(mockQuery)
 	mockQuery.On("Limit", 10).Return(mockQuery)
 	mockQuery.On("All", mock.Anything).Run(func(args mock.Arguments) {
-		users := args.Get(0).(*[]User)
+		users, ok := args.Get(0).(*[]User)
+		if !ok {
+			t.Fatalf("expected *[]User, got %T", args.Get(0))
+		}
 		*users = []User{
 			{ID: "1", Name: "Alice", Status: "active"},
 			{ID: "2", Name: "Bob", Status: "active"},

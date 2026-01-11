@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"runtime"
 	"sync"
@@ -59,68 +60,53 @@ func DefaultResourceLimits() ResourceLimits {
 
 // ResourceProtector provides resource protection and monitoring
 type ResourceProtector struct {
-	config ResourceLimits
-
-	// Rate limiters
-	globalLimiter *SimpleLimiter
-	batchLimiter  *SimpleLimiter
-
-	// Concurrency controls
+	globalLimiter    *SimpleLimiter
+	batchLimiter     *SimpleLimiter
 	requestSemaphore chan struct{}
 	batchSemaphore   chan struct{}
-
-	// Memory monitoring
-	memoryMonitor *MemoryMonitor
-
-	// Statistics
-	stats *ResourceStats
-	mu    sync.RWMutex
+	memoryMonitor    *MemoryMonitor
+	stats            *ResourceStats
+	config           ResourceLimits
+	mu               sync.RWMutex
 }
 
 // ResourceStats tracks resource usage statistics
 type ResourceStats struct {
-	// Request stats
-	TotalRequests      int64 `json:"total_requests"`
-	RejectedRequests   int64 `json:"rejected_requests"`
-	ConcurrentRequests int64 `json:"concurrent_requests"`
-	MaxConcurrentReq   int64 `json:"max_concurrent_requests"`
-
-	// Batch stats
-	TotalBatchOps      int64 `json:"total_batch_operations"`
-	RejectedBatchOps   int64 `json:"rejected_batch_operations"`
-	ConcurrentBatchOps int64 `json:"concurrent_batch_operations"`
-	MaxConcurrentBatch int64 `json:"max_concurrent_batch"`
-
-	// Memory stats
-	CurrentMemoryMB int64 `json:"current_memory_mb"`
-	PeakMemoryMB    int64 `json:"peak_memory_mb"`
-	MemoryAlerts    int64 `json:"memory_alerts"`
-
-	// Rate limiting stats
-	RateLimitHits   int64     `json:"rate_limit_hits"`
-	LastStatsUpdate time.Time `json:"last_stats_update"`
+	LastStatsUpdate    time.Time `json:"last_stats_update"`
+	ConcurrentBatchOps int64     `json:"concurrent_batch_operations"`
+	ConcurrentRequests int64     `json:"concurrent_requests"`
+	MaxConcurrentReq   int64     `json:"max_concurrent_requests"`
+	TotalBatchOps      int64     `json:"total_batch_operations"`
+	RejectedBatchOps   int64     `json:"rejected_batch_operations"`
+	TotalRequests      int64     `json:"total_requests"`
+	MaxConcurrentBatch int64     `json:"max_concurrent_batch"`
+	CurrentMemoryMB    int64     `json:"current_memory_mb"`
+	PeakMemoryMB       int64     `json:"peak_memory_mb"`
+	MemoryAlerts       int64     `json:"memory_alerts"`
+	RateLimitHits      int64     `json:"rate_limit_hits"`
+	RejectedRequests   int64     `json:"rejected_requests"`
 }
 
 // MemoryMonitor monitors memory usage
 type MemoryMonitor struct {
-	limits        ResourceLimits
 	alertCallback func(MemoryAlert)
 	stopChan      chan struct{}
 	stats         *ResourceStats
-	running       int32          // Use int32 for atomic operations (0 = stopped, 1 = running)
-	mu            sync.RWMutex   // For callback access only
-	stopOnce      sync.Once      // Ensure stopChan is only closed once
-	wg            sync.WaitGroup // Wait for monitor goroutine to exit
+	limits        ResourceLimits
+	wg            sync.WaitGroup
+	mu            sync.RWMutex
+	stopOnce      sync.Once
+	running       int32
 }
 
 // MemoryAlert represents a memory usage alert
 type MemoryAlert struct {
+	Timestamp    time.Time `json:"timestamp"`
 	Type         string    `json:"type"`
+	Severity     string    `json:"severity"`
 	CurrentMB    int64     `json:"current_mb"`
 	LimitMB      int64     `json:"limit_mb"`
 	UsagePercent float64   `json:"usage_percent"`
-	Timestamp    time.Time `json:"timestamp"`
-	Severity     string    `json:"severity"`
 }
 
 // NewResourceProtector creates a new resource protector
@@ -180,8 +166,8 @@ func (rp *ResourceProtector) SecureBodyReader(r *http.Request) ([]byte, error) {
 
 	// Update max concurrent requests
 	for {
-		max := atomic.LoadInt64(&rp.stats.MaxConcurrentReq)
-		if current <= max || atomic.CompareAndSwapInt64(&rp.stats.MaxConcurrentReq, max, current) {
+		maxConcurrent := atomic.LoadInt64(&rp.stats.MaxConcurrentReq)
+		if current <= maxConcurrent || atomic.CompareAndSwapInt64(&rp.stats.MaxConcurrentReq, maxConcurrent, current) {
 			break
 		}
 	}
@@ -266,8 +252,8 @@ func (bl *BatchLimiter) AcquireBatch(ctx context.Context, batchSize int) error {
 
 	// Update max concurrent batch ops
 	for {
-		max := atomic.LoadInt64(&bl.protector.stats.MaxConcurrentBatch)
-		if current <= max || atomic.CompareAndSwapInt64(&bl.protector.stats.MaxConcurrentBatch, max, current) {
+		maxConcurrent := atomic.LoadInt64(&bl.protector.stats.MaxConcurrentBatch)
+		if current <= maxConcurrent || atomic.CompareAndSwapInt64(&bl.protector.stats.MaxConcurrentBatch, maxConcurrent, current) {
 			break
 		}
 	}
@@ -359,7 +345,11 @@ func (mm *MemoryMonitor) checkMemory() {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
-	currentMB := int64(memStats.Alloc / 1024 / 1024)
+	currentMBu := memStats.Alloc / 1024 / 1024
+	currentMB := int64(currentMBu)
+	if currentMBu > uint64(math.MaxInt64) {
+		currentMB = math.MaxInt64
+	}
 
 	// Store current memory with atomic operation (stats fields are accessed atomically elsewhere)
 	atomic.StoreInt64(&mm.stats.CurrentMemoryMB, currentMB)
@@ -470,28 +460,33 @@ func GetResourceProtectionType(err error) string {
 func (rp *ResourceProtector) HealthCheck() map[string]any {
 	stats := rp.GetStats()
 
+	memoryCheck := map[string]any{
+		"status":        "ok",
+		"current_mb":    stats.CurrentMemoryMB,
+		"limit_mb":      rp.config.MaxMemoryMB,
+		"usage_percent": float64(stats.CurrentMemoryMB) / float64(rp.config.MaxMemoryMB) * 100,
+	}
+	concurrencyCheck := map[string]any{
+		"status":              "ok",
+		"concurrent_requests": stats.ConcurrentRequests,
+		"max_requests":        rp.config.MaxConcurrentReq,
+		"concurrent_batches":  stats.ConcurrentBatchOps,
+		"max_batches":         rp.config.MaxConcurrentBatch,
+	}
+	rateLimitingCheck := map[string]any{
+		"status":           "ok",
+		"rate_limit_hits":  stats.RateLimitHits,
+		"requests_per_sec": rp.config.RequestsPerSecond,
+	}
+	checks := map[string]any{
+		"memory":        memoryCheck,
+		"concurrency":   concurrencyCheck,
+		"rate_limiting": rateLimitingCheck,
+	}
+
 	health := map[string]any{
-		"status": "healthy",
-		"checks": map[string]any{
-			"memory": map[string]any{
-				"status":        "ok",
-				"current_mb":    stats.CurrentMemoryMB,
-				"limit_mb":      rp.config.MaxMemoryMB,
-				"usage_percent": float64(stats.CurrentMemoryMB) / float64(rp.config.MaxMemoryMB) * 100,
-			},
-			"concurrency": map[string]any{
-				"status":              "ok",
-				"concurrent_requests": stats.ConcurrentRequests,
-				"max_requests":        rp.config.MaxConcurrentReq,
-				"concurrent_batches":  stats.ConcurrentBatchOps,
-				"max_batches":         rp.config.MaxConcurrentBatch,
-			},
-			"rate_limiting": map[string]any{
-				"status":           "ok",
-				"rate_limit_hits":  stats.RateLimitHits,
-				"requests_per_sec": rp.config.RequestsPerSecond,
-			},
-		},
+		"status":    "healthy",
+		"checks":    checks,
 		"timestamp": time.Now(),
 	}
 
@@ -499,12 +494,12 @@ func (rp *ResourceProtector) HealthCheck() map[string]any {
 	memoryUsage := float64(stats.CurrentMemoryMB) / float64(rp.config.MaxMemoryMB)
 	if memoryUsage > 0.9 {
 		health["status"] = "degraded"
-		health["checks"].(map[string]any)["memory"].(map[string]any)["status"] = "warning"
+		memoryCheck["status"] = "warning"
 	}
 
 	if stats.ConcurrentRequests >= int64(float64(rp.config.MaxConcurrentReq)*0.9) {
 		health["status"] = "degraded"
-		health["checks"].(map[string]any)["concurrency"].(map[string]any)["status"] = "warning"
+		concurrencyCheck["status"] = "warning"
 	}
 
 	return health

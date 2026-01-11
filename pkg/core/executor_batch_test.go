@@ -23,17 +23,17 @@ import (
 type testContextKey string
 
 type httpStubResponse struct {
-	target   string
-	status   int
-	body     string
 	err      error
 	validate func(*http.Request)
+	target   string
+	body     string
+	status   int
 }
 
 type httpClientStub struct {
 	t         *testing.T
-	mu        sync.Mutex
 	responses []httpStubResponse
+	mu        sync.Mutex
 }
 
 func newHTTPClientStub(t *testing.T, responses []httpStubResponse) *httpClientStub {
@@ -133,6 +133,20 @@ func marshalJSON(t *testing.T, v any) string {
 	return string(data)
 }
 
+func requireMapStringAny(t *testing.T, v any) map[string]any {
+	t.Helper()
+	m, ok := v.(map[string]any)
+	require.True(t, ok, "expected map[string]any, got %T", v)
+	return m
+}
+
+func requireSliceAny(t *testing.T, v any) []any {
+	t.Helper()
+	s, ok := v.([]any)
+	require.True(t, ok, "expected []any, got %T", v)
+	return s
+}
+
 func TestNewBatchWriteExecutor(t *testing.T) {
 	stub := newHTTPClientStub(t, nil)
 	client := newStubbedDynamoClient(t, stub)
@@ -198,16 +212,20 @@ func TestExecuteBatchWriteItem(t *testing.T) {
 					payload := readRequestJSON(t, req)
 					assert.Equal(t, "TOTAL", payload["ReturnConsumedCapacity"])
 
-					requestItems := payload["RequestItems"].(map[string]any)
+					requestItems := requireMapStringAny(t, payload["RequestItems"])
 					assert.Len(t, requestItems, 1)
-					items := requestItems["tbl"].([]any)
+					items := requireSliceAny(t, requestItems["tbl"])
 					require.Len(t, items, 2)
 
-					item0 := items[0].(map[string]any)["PutRequest"].(map[string]any)["Item"].(map[string]any)
-					assert.Equal(t, "alpha", item0["id"].(map[string]any)["S"])
+					item0Request := requireMapStringAny(t, items[0])
+					putRequest := requireMapStringAny(t, item0Request["PutRequest"])
+					item0 := requireMapStringAny(t, putRequest["Item"])
+					assert.Equal(t, "alpha", requireMapStringAny(t, item0["id"])["S"])
 
-					item1 := items[1].(map[string]any)["DeleteRequest"].(map[string]any)["Key"].(map[string]any)
-					assert.Equal(t, "bravo", item1["pk"].(map[string]any)["S"])
+					item1Request := requireMapStringAny(t, items[1])
+					deleteRequest := requireMapStringAny(t, item1Request["DeleteRequest"])
+					item1 := requireMapStringAny(t, deleteRequest["Key"])
+					assert.Equal(t, "bravo", requireMapStringAny(t, item1["pk"])["S"])
 				},
 			},
 		})
@@ -286,7 +304,9 @@ func TestExecuteBatchWriteItem(t *testing.T) {
 
 		require.Contains(t, result.UnprocessedItems, "tbl")
 		require.Len(t, result.UnprocessedItems["tbl"], 1)
-		assert.Equal(t, "unprocessed", result.UnprocessedItems["tbl"][0].DeleteRequest.Key["pk"].(*types.AttributeValueMemberS).Value)
+		pk, ok := result.UnprocessedItems["tbl"][0].DeleteRequest.Key["pk"].(*types.AttributeValueMemberS)
+		require.True(t, ok)
+		assert.Equal(t, "unprocessed", pk.Value)
 
 		stub.AssertDrained(t)
 	})
@@ -316,6 +336,18 @@ func TestExecuteBatchWriteItem(t *testing.T) {
 		assert.Contains(t, err.Error(), "batch write failed")
 		assert.Contains(t, err.Error(), "network down")
 	})
+}
+
+func TestBatchWriteExecutor_ExecuteQueryAndScan_ReturnErrors_COV6(t *testing.T) {
+	executor := &BatchWriteExecutor{}
+
+	err := executor.ExecuteQuery(&CompiledQuery{Operation: "Query"}, &struct{}{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support ExecuteQuery")
+
+	err = executor.ExecuteScan(&CompiledQuery{Operation: "Scan"}, &struct{}{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support ExecuteScan")
 }
 
 func TestBatchDeleteWithResult(t *testing.T) {
@@ -371,7 +403,8 @@ func TestBatchDeleteWithResult(t *testing.T) {
 				validate: func(req *http.Request) {
 					payload := readRequestJSON(t, req)
 					assert.Equal(t, "TOTAL", payload["ReturnConsumedCapacity"])
-					items := payload["RequestItems"].(map[string]any)["tbl"].([]any)
+					requestItems := requireMapStringAny(t, payload["RequestItems"])
+					items := requireSliceAny(t, requestItems["tbl"])
 					assert.Len(t, items, 25)
 				},
 			},
@@ -380,7 +413,8 @@ func TestBatchDeleteWithResult(t *testing.T) {
 				body:   marshalJSON(t, map[string]any{}),
 				validate: func(req *http.Request) {
 					payload := readRequestJSON(t, req)
-					items := payload["RequestItems"].(map[string]any)["tbl"].([]any)
+					requestItems := requireMapStringAny(t, payload["RequestItems"])
+					items := requireSliceAny(t, requestItems["tbl"])
 					assert.Len(t, items, totalKeys-25)
 				},
 			},
@@ -394,7 +428,9 @@ func TestBatchDeleteWithResult(t *testing.T) {
 		assert.Equal(t, totalKeys-1, result.Succeeded)
 		assert.Equal(t, 1, result.Failed)
 		require.Len(t, result.UnprocessedKeys, 1)
-		assert.Equal(t, "3", result.UnprocessedKeys[0]["pk"].(*types.AttributeValueMemberN).Value)
+		pk, ok := result.UnprocessedKeys[0]["pk"].(*types.AttributeValueMemberN)
+		require.True(t, ok)
+		assert.Equal(t, "3", pk.Value)
 		assert.Empty(t, result.Errors)
 
 		assert.Len(t, keys, len(original))
@@ -467,16 +503,16 @@ func TestExecuteDeleteItem(t *testing.T) {
 					payload := readRequestJSON(t, req)
 
 					assert.Equal(t, "tbl", payload["TableName"])
-					key := payload["Key"].(map[string]any)
-					assert.Equal(t, "123", key["id"].(map[string]any)["S"])
+					key := requireMapStringAny(t, payload["Key"])
+					assert.Equal(t, "123", requireMapStringAny(t, key["id"])["S"])
 
 					assert.Equal(t, "attribute_exists(id)", payload["ConditionExpression"])
 
-					names := payload["ExpressionAttributeNames"].(map[string]any)
+					names := requireMapStringAny(t, payload["ExpressionAttributeNames"])
 					assert.Equal(t, "name", names["#n"])
 
-					values := payload["ExpressionAttributeValues"].(map[string]any)
-					assert.Equal(t, "John", values[":name"].(map[string]any)["S"])
+					values := requireMapStringAny(t, payload["ExpressionAttributeValues"])
+					assert.Equal(t, "John", requireMapStringAny(t, values[":name"])["S"])
 				},
 			},
 		})
@@ -580,15 +616,15 @@ func TestExecutePutItem(t *testing.T) {
 					payload := readRequestJSON(t, req)
 
 					assert.Equal(t, "tbl", payload["TableName"])
-					item := payload["Item"].(map[string]any)
-					assert.Equal(t, "alpha", item["id"].(map[string]any)["S"])
+					item := requireMapStringAny(t, payload["Item"])
+					assert.Equal(t, "alpha", requireMapStringAny(t, item["id"])["S"])
 
 					assert.Equal(t, "attribute_not_exists(id)", payload["ConditionExpression"])
-					names := payload["ExpressionAttributeNames"].(map[string]any)
+					names := requireMapStringAny(t, payload["ExpressionAttributeNames"])
 					assert.Equal(t, "status", names["#st"])
 
-					values := payload["ExpressionAttributeValues"].(map[string]any)
-					assert.Equal(t, "active", values[":status"].(map[string]any)["S"])
+					values := requireMapStringAny(t, payload["ExpressionAttributeValues"])
+					assert.Equal(t, "active", requireMapStringAny(t, values[":status"])["S"])
 				},
 			},
 		})

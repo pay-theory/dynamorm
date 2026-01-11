@@ -1,17 +1,12 @@
 package testing
 
 import (
-	"fmt"
 	"reflect"
 )
 
 // getTypeString returns the type string for use with mock.AnythingOfType
 func getTypeString(v interface{}) string {
-	t := reflect.TypeOf(v)
-	if t.Kind() == reflect.Ptr {
-		return fmt.Sprintf("*%s", t.Elem().Name())
-	}
-	return t.Name()
+	return reflect.TypeOf(v).String()
 }
 
 // copyValue copies the value from src to dst using reflection
