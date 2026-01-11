@@ -2,9 +2,9 @@ name: Quality Gates (10/10 Rubric)
 
 on:
   push:
-    branches: ["premain"]
+    branches: ["premain", "main"]
   pull_request:
-    branches: ["premain"]
+    branches: ["premain", "main"]
   workflow_dispatch: {}
 
 permissions:
