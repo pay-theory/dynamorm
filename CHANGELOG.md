@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-rc](https://github.com/pay-theory/dynamorm/compare/v1.0.37...v1.1.0-rc) (2026-01-11)
+
+
+### Features
+
+* decrypt encrypted tag fields on read ([af82905](https://github.com/pay-theory/dynamorm/commit/af82905cce303088cc0a2481cfad9c11d5e5e42c))
+* fail closed on encrypted fields without KMSKeyARN ([6b88a8d](https://github.com/pay-theory/dynamorm/commit/6b88a8d74cb463ee9c4ae1ed9a96bb883cd28be2))
+* implement encrypted tag write-time encryption ([301c0e0](https://github.com/pay-theory/dynamorm/commit/301c0e01a17b45e8246466fb1bd2393d21ef091d))
+* make marshaling safe by default ([24cf465](https://github.com/pay-theory/dynamorm/commit/24cf465021cacac366edd75446b95a0f519dfbff))
+
+
+### Bug Fixes
+
+* **ci:** install golangci-lint v2.5.0 ([d9b270f](https://github.com/pay-theory/dynamorm/commit/d9b270fa1d66dc34dd2a7b1e9346043becdaebd8))
+* **ci:** install ripgrep for rubric scripts ([807df03](https://github.com/pay-theory/dynamorm/commit/807df0392d6a60b38861d40bd7e1b8f3898a7e81))
+* **ci:** pin golangci-lint to v1.64.8 ([e5cecd5](https://github.com/pay-theory/dynamorm/commit/e5cecd56c8563e1bd45e47560547a5375cafcd58))
+* consistent omitempty behavior for Update() ([aa86849](https://github.com/pay-theory/dynamorm/commit/aa868496c39bdd8610b99dd6a6f4d62b16b9de49))
+* **encryption:** harden encrypted tag semantics ([2d591a0](https://github.com/pay-theory/dynamorm/commit/2d591a0ad5a4dc08778e62e62352745c7f849553))
+* enforce network hygiene defaults ([a2dcb8b](https://github.com/pay-theory/dynamorm/commit/a2dcb8bb35ec981df869ab2b5202b4e1776b28f0))
+* ensure BatchGetBuilder uses model metadata ([4171c33](https://github.com/pay-theory/dynamorm/commit/4171c3304524a66102e093b820d88b0a9e59683e))
+* **expr:** harden list index update expressions ([95d22b7](https://github.com/pay-theory/dynamorm/commit/95d22b7235807da81b26c0212467c6f5b2d99ae8))
+* handle version fields across numeric types ([aacb69d](https://github.com/pay-theory/dynamorm/commit/aacb69d0d7a9fa0ba749a3bb7e11da223f72d4df))
+* only skip zero values in nested struct marshaling when omitempty is set ([f0d31ac](https://github.com/pay-theory/dynamorm/commit/f0d31acf1cddb066d67c7713470d652bb260d194))
+* only skip zero values in nested struct marshaling when omitempty… ([86a3b43](https://github.com/pay-theory/dynamorm/commit/86a3b430190dc6852a4d2c9f9d2e73087c441ed1))
+* **query:** align UnmarshalItem with DynamORM tags ([b2d580b](https://github.com/pay-theory/dynamorm/commit/b2d580b9b0a94961c0fde67a9d5b4d1a90a82f71))
+* **query:** correct ScanAllSegments destination type ([685ddc3](https://github.com/pay-theory/dynamorm/commit/685ddc3f1d4eda52c7d78cd3c77efaa80fc2684e))
+* remove panics from expression builder ([dfd5445](https://github.com/pay-theory/dynamorm/commit/dfd5445ba537190d82e86b1dfa5eea439f773db5))
+* respect omitempty for empty collections in Update ([9fb7f1f](https://github.com/pay-theory/dynamorm/commit/9fb7f1f8ce8cbd9999271b7c2183628a8dbd6fff))
+* **rubric:** make rubric green ([ef074bc](https://github.com/pay-theory/dynamorm/commit/ef074bca8cbca23498dcf4a3dcf8127785ff28a4))
+* **testing:** correct getTypeString for AnythingOfType ([7104519](https://github.com/pay-theory/dynamorm/commit/710451944e823d09e02c9b441f892acd71999fcc))
+
 ## [Unreleased]
 
 - **[CRITICAL]** Resolved expression placeholder collisions in `UpdateBuilder` when combining update expressions with query conditions.
@@ -220,4 +251,4 @@ See [Release Notes v1.0.1](docs/releases/v1.0.1-interface-improvements.md) for d
 [1.0.2]: https://github.com/pay-theory/dynamorm/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/pay-theory/dynamorm/compare/v0.1.1...v1.0.1
 [0.1.1]: https://github.com/pay-theory/dynamorm/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/pay-theory/dynamorm/releases/tag/v0.1.0 
+[0.1.0]: https://github.com/pay-theory/dynamorm/releases/tag/v0.1.0
