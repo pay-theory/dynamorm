@@ -2006,6 +2006,10 @@ func (q *query) updateTimestampsInModel(metadata *model.Metadata) {
 
 // marshalItem converts a Go struct to DynamoDB item
 func (q *query) marshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	if err := failClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
+		return nil, err
+	}
+
 	// Use optimized marshaler if available
 	if q.db.marshaler != nil {
 		return q.db.marshaler.MarshalItem(model, metadata)
@@ -2094,6 +2098,37 @@ func (q *query) convertFieldValue(fieldMeta *model.FieldMetadata, value any) (ty
 		return q.db.converter.ConvertToSet(value, true)
 	}
 	return q.db.converter.ToAttributeValue(value)
+}
+
+func failClosedIfEncryptedWithoutKMSKeyARN(sess *session.Session, metadata *model.Metadata) error {
+	if metadata == nil || !metadataHasEncryptedFields(metadata) {
+		return nil
+	}
+
+	keyARN := ""
+	if sess != nil && sess.Config() != nil {
+		keyARN = sess.Config().KMSKeyARN
+	}
+	if keyARN != "" {
+		return nil
+	}
+
+	return fmt.Errorf("%w: model %s contains dynamorm:\"encrypted\" fields but session.Config.KMSKeyARN is empty", customerrors.ErrEncryptionNotConfigured, metadata.Type.Name())
+}
+
+func metadataHasEncryptedFields(metadata *model.Metadata) bool {
+	if metadata == nil {
+		return false
+	}
+	for _, fieldMeta := range metadata.Fields {
+		if fieldMeta == nil {
+			continue
+		}
+		if _, ok := fieldMeta.Tags["encrypted"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // isConditionalCheckFailedException checks if the error is a conditional check failure
@@ -2558,6 +2593,10 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	pk := q.extractPrimaryKey(metadata)
 	if pk == nil {
 		return fmt.Errorf("update requires primary key")
+	}
+
+	if err := failClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
+		return err
 	}
 
 	keyMap, err := q.buildKeyMapFromPrimaryKey(metadata, pk)
@@ -3581,6 +3620,14 @@ func (qe *queryExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error 
 
 // ExecuteUpdateItem implements UpdateItemExecutor interface
 func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
+	metadata, err := qe.db.registry.GetMetadataByTable(input.TableName)
+	if err != nil {
+		return fmt.Errorf("failed to resolve model metadata for table %s: %w", input.TableName, err)
+	}
+	if err := failClosedIfEncryptedWithoutKMSKeyARN(qe.db.session, metadata); err != nil {
+		return err
+	}
+
 	client, err := qe.db.session.Client()
 	if err != nil {
 		return fmt.Errorf("failed to get client for update item: %w", err)
@@ -3615,6 +3662,14 @@ func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[st
 
 // ExecuteUpdateItemWithResult implements UpdateItemWithResultExecutor interface
 func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, key map[string]types.AttributeValue) (*core.UpdateResult, error) {
+	metadata, err := qe.db.registry.GetMetadataByTable(input.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve model metadata for table %s: %w", input.TableName, err)
+	}
+	if err := failClosedIfEncryptedWithoutKMSKeyARN(qe.db.session, metadata); err != nil {
+		return nil, err
+	}
+
 	client, err := qe.db.session.Client()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for update item: %w", err)

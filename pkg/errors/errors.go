@@ -49,6 +49,9 @@ var (
 
 	// ErrInvalidOperator is returned when an invalid query operator is used
 	ErrInvalidOperator = errors.New("invalid query operator")
+
+	// ErrEncryptionNotConfigured is returned when a model uses dynamorm:"encrypted" fields but no KMS key ARN is configured.
+	ErrEncryptionNotConfigured = errors.New("encryption not configured")
 )
 
 // DynamORMError represents a detailed error with context

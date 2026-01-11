@@ -21,13 +21,16 @@ type Config struct {
 	CredentialsProvider aws.CredentialsProvider
 	Region              string
 	Endpoint            string
-	AWSConfigOptions    []func(*config.LoadOptions) error
-	DynamoDBOptions     []func(*dynamodb.Options)
-	MaxRetries          int
-	DefaultRCU          int64
-	DefaultWCU          int64
-	AutoMigrate         bool
-	EnableMetrics       bool
+	// KMSKeyARN is required when using dynamorm:"encrypted" fields.
+	// DynamORM does not manage KMS keys; callers must provide a valid key ARN.
+	KMSKeyARN        string
+	AWSConfigOptions []func(*config.LoadOptions) error
+	DynamoDBOptions  []func(*dynamodb.Options)
+	MaxRetries       int
+	DefaultRCU       int64
+	DefaultWCU       int64
+	AutoMigrate      bool
+	EnableMetrics    bool
 }
 
 // DefaultConfig returns the default configuration
