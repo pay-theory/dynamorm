@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-rc.1](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc...v1.1.0-rc.1) (2026-01-11)
+
+
+### Bug Fixes
+
+* **ci:** pin release-please action by SHA ([2d6a7dc](https://github.com/pay-theory/dynamorm/commit/2d6a7dcdd4cd77c178526915ce2d32d339ff6629))
+* **ci:** pin release-please action SHA ([719d667](https://github.com/pay-theory/dynamorm/commit/719d66793575bbf331895c82d01f0bc547a9737b))
+
 ## [1.1.0-rc](https://github.com/pay-theory/dynamorm/compare/v1.0.37...v1.1.0-rc) (2026-01-11)
 
 
