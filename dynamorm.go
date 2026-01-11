@@ -1888,6 +1888,18 @@ func (q *query) unmarshalItem(item map[string]types.AttributeValue, dest any, me
 	}
 	destValue = destValue.Elem()
 
+	var encSvc *encryption.Service
+	if metadata != nil && encryption.MetadataHasEncryptedFields(metadata) {
+		if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
+			return err
+		}
+		svc, err := newEncryptionService(q.db.session)
+		if err != nil {
+			return err
+		}
+		encSvc = svc
+	}
+
 	// Handle map destination (e.g., when ExecuteWithResult is used with a map)
 	if destValue.Kind() == reflect.Map {
 		// If it's a map, just convert each attribute value
@@ -1896,6 +1908,20 @@ func (q *query) unmarshalItem(item map[string]types.AttributeValue, dest any, me
 		}
 
 		for attrName, attrValue := range item {
+			if encSvc != nil && metadata != nil {
+				if fieldMeta, ok := metadata.FieldsByDBName[attrName]; ok && fieldMeta != nil && fieldMeta.IsEncrypted {
+					decrypted, err := encSvc.DecryptAttributeValue(contextOrBackground(q.ctx), fieldMeta.DBName, attrValue)
+					if err != nil {
+						return &customerrors.EncryptedFieldError{
+							Operation: "decrypt",
+							Field:     fieldMeta.Name,
+							Err:       err,
+						}
+					}
+					attrValue = decrypted
+				}
+			}
+
 			// Convert the attribute value to the appropriate Go type
 			var val any
 			if err := q.db.converter.FromAttributeValue(attrValue, &val); err != nil {
@@ -1920,6 +1946,18 @@ func (q *query) unmarshalItem(item map[string]types.AttributeValue, dest any, me
 		field, exists := metadata.FieldsByDBName[attrName]
 		if !exists {
 			continue // Skip unknown fields
+		}
+
+		if encSvc != nil && field != nil && field.IsEncrypted {
+			decrypted, err := encSvc.DecryptAttributeValue(contextOrBackground(q.ctx), field.DBName, attrValue)
+			if err != nil {
+				return &customerrors.EncryptedFieldError{
+					Operation: "decrypt",
+					Field:     field.Name,
+					Err:       err,
+				}
+			}
+			attrValue = decrypted
 		}
 
 		// Get the struct field
@@ -3771,6 +3809,30 @@ func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, 
 			return nil, customerrors.ErrConditionFailed
 		}
 		return nil, fmt.Errorf("failed to update item: %w", err)
+	}
+
+	if encryption.MetadataHasEncryptedFields(metadata) && len(output.Attributes) > 0 {
+		svc, err := newEncryptionService(qe.db.session)
+		if err != nil {
+			return nil, err
+		}
+
+		for attrName, attrValue := range output.Attributes {
+			fieldMeta, ok := metadata.FieldsByDBName[attrName]
+			if !ok || fieldMeta == nil || !fieldMeta.IsEncrypted {
+				continue
+			}
+
+			decrypted, err := svc.DecryptAttributeValue(contextOrBackground(qe.db.ctx), fieldMeta.DBName, attrValue)
+			if err != nil {
+				return nil, &customerrors.EncryptedFieldError{
+					Operation: "decrypt",
+					Field:     fieldMeta.Name,
+					Err:       err,
+				}
+			}
+			output.Attributes[attrName] = decrypted
+		}
 	}
 
 	return &core.UpdateResult{

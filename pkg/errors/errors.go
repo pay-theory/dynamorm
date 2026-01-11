@@ -52,7 +52,46 @@ var (
 
 	// ErrEncryptionNotConfigured is returned when a model uses dynamorm:"encrypted" fields but no KMS key ARN is configured.
 	ErrEncryptionNotConfigured = errors.New("encryption not configured")
+
+	// ErrInvalidEncryptedEnvelope is returned when an encrypted attribute value is not a valid DynamORM envelope.
+	ErrInvalidEncryptedEnvelope = errors.New("invalid encrypted envelope")
 )
+
+// EncryptedFieldError wraps failures related to dynamorm:"encrypted" fields (encryption/decryption).
+// It is safe-by-default: the error string must never include decrypted plaintext.
+type EncryptedFieldError struct {
+	Err       error
+	Field     string
+	Operation string
+}
+
+func (e *EncryptedFieldError) Error() string {
+	if e == nil {
+		return "dynamorm: encrypted field error"
+	}
+
+	op := e.Operation
+	if op == "" {
+		op = "operation"
+	}
+
+	field := e.Field
+	if field == "" {
+		field = "field"
+	}
+
+	if e.Err == nil {
+		return fmt.Sprintf("dynamorm: encrypted %s failed for %s", op, field)
+	}
+	return fmt.Sprintf("dynamorm: encrypted %s failed for %s: %v", op, field, e.Err)
+}
+
+func (e *EncryptedFieldError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // DynamORMError represents a detailed error with context
 type DynamORMError struct {

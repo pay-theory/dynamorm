@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmsTypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
+
+	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 const (
@@ -124,27 +126,27 @@ func (s *Service) DecryptAttributeValue(ctx context.Context, attributeName strin
 
 	env, ok := envelope.(*types.AttributeValueMemberM)
 	if !ok || env == nil {
-		return nil, fmt.Errorf("expected encrypted envelope map, got %T", envelope)
+		return nil, fmt.Errorf("%w: expected encrypted envelope map, got %T", customerrors.ErrInvalidEncryptedEnvelope, envelope)
 	}
 
 	versionAV, ok := env.Value[envelopeKeyVersion].(*types.AttributeValueMemberN)
 	if !ok || versionAV == nil || versionAV.Value != envelopeVersionV1 {
-		return nil, fmt.Errorf("unsupported encrypted envelope version")
+		return nil, fmt.Errorf("%w: unsupported encrypted envelope version", customerrors.ErrInvalidEncryptedEnvelope)
 	}
 
 	edkAV, ok := env.Value[envelopeKeyEDK].(*types.AttributeValueMemberB)
 	if !ok || edkAV == nil || len(edkAV.Value) == 0 {
-		return nil, fmt.Errorf("missing encrypted data key")
+		return nil, fmt.Errorf("%w: missing encrypted data key", customerrors.ErrInvalidEncryptedEnvelope)
 	}
 
 	nonceAV, ok := env.Value[envelopeKeyNonce].(*types.AttributeValueMemberB)
 	if !ok || nonceAV == nil || len(nonceAV.Value) == 0 {
-		return nil, fmt.Errorf("missing nonce")
+		return nil, fmt.Errorf("%w: missing nonce", customerrors.ErrInvalidEncryptedEnvelope)
 	}
 
 	ctAV, ok := env.Value[envelopeKeyCiphertext].(*types.AttributeValueMemberB)
 	if !ok || ctAV == nil {
-		return nil, fmt.Errorf("missing ciphertext")
+		return nil, fmt.Errorf("%w: missing ciphertext", customerrors.ErrInvalidEncryptedEnvelope)
 	}
 
 	dec, err := s.kms.Decrypt(ctx, &kms.DecryptInput{
