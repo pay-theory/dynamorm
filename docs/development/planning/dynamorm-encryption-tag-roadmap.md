@@ -9,7 +9,7 @@ Constraint: encryption must use a **provided AWS KMS Key ARN**. Creating/rotatin
 - The `encrypted` tag is **parsed and enforced** across supported read and write surfaces.
 - Fields tagged `dynamorm:"encrypted"` are encrypted on write and decrypted on read using envelope encryption.
 - If any model contains encrypted fields and `session.Config.KMSKeyARN` is empty, DynamORM **fails closed** (no silent plaintext writes).
-- Encrypted fields are rejected for PK/SK and GSI/LSI keys, and are not queryable/filterable.
+- Encrypted fields are rejected for PK/SK and GSI/LSI keys, and are not queryable/filterable (returns `errors.ErrEncryptedFieldNotQueryable`).
 
 ## Desired semantics (what the tag must mean)
 
@@ -33,6 +33,7 @@ When a struct field has `dynamorm:"encrypted"`:
 Use **envelope encryption**:
 
 - KMS: `GenerateDataKey` with `KeyId=<provided ARN>` + `KeySpec=AES_256`
+- KMS: `Decrypt` with `CiphertextBlob=<EDK>` + `KeyId=<provided ARN>`
 - Local: encrypt plaintext bytes with **AES-256-GCM** using a fresh random 12-byte nonce per value
 - Store: ciphertext + nonce + encrypted data key (EDK) + a version marker
 

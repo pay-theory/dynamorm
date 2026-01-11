@@ -37,6 +37,7 @@ func (f fakeKMS) Decrypt(_ context.Context, _ *kms.DecryptInput, _ ...func(*kms.
 }
 
 func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
+	keyARN := "arn:aws:kms:us-east-1:111111111111:key/test"
 	plaintextKey := bytes.Repeat([]byte{0x02}, 32)
 	plaintextKeyB64 := base64.StdEncoding.EncodeToString(plaintextKey)
 
@@ -52,7 +53,7 @@ func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
 
 	dbAny, err := New(session.Config{
 		Region:    "us-east-1",
-		KMSKeyARN: "arn:aws:kms:us-east-1:111111111111:key/test",
+		KMSKeyARN: keyARN,
 	})
 	require.NoError(t, err)
 	db := mustDB(t, dbAny)
@@ -61,7 +62,7 @@ func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
 	metadata, err := db.registry.GetMetadata(&encryptedTagWriteModel{})
 	require.NoError(t, err)
 
-	encSvc := encryption.NewService("arn:aws:kms:us-east-1:111111111111:key/test", fakeKMS{
+	encSvc := encryption.NewService(keyARN, fakeKMS{
 		edk:       []byte("edk"),
 		plaintext: plaintextKey,
 	})
@@ -81,6 +82,9 @@ func TestEncryptedTag_ReadTimeDecryption(t *testing.T) {
 		var out encryptedTagWriteModel
 		require.NoError(t, q.unmarshalItem(item, &out, metadata))
 		require.Equal(t, "top-secret", out.Secret)
+
+		decrypt := findCapturedRequest(t, httpClient, "TrentService.Decrypt")
+		require.Equal(t, keyARN, decrypt.Payload["KeyId"])
 	})
 
 	t.Run("Invalid envelope returns typed error", func(t *testing.T) {

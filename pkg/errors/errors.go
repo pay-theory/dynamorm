@@ -55,6 +55,9 @@ var (
 
 	// ErrInvalidEncryptedEnvelope is returned when an encrypted attribute value is not a valid DynamORM envelope.
 	ErrInvalidEncryptedEnvelope = errors.New("invalid encrypted envelope")
+
+	// ErrEncryptedFieldNotQueryable is returned when a dynamorm:"encrypted" field is used in query/filter conditions.
+	ErrEncryptedFieldNotQueryable = errors.New("encrypted fields are not queryable/filterable")
 )
 
 // EncryptedFieldError wraps failures related to dynamorm:"encrypted" fields (encryption/decryption).

@@ -151,6 +151,7 @@ func (s *Service) DecryptAttributeValue(ctx context.Context, attributeName strin
 
 	dec, err := s.kms.Decrypt(ctx, &kms.DecryptInput{
 		CiphertextBlob: edkAV.Value,
+		KeyId:          aws.String(s.keyARN),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kms Decrypt failed: %w", err)

@@ -13,6 +13,7 @@ import (
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/index"
 )
 
@@ -73,6 +74,28 @@ func (q *Query) normalizeCondition(cond Condition) (Condition, string, string) {
 	}
 
 	return normalized, goField, attrName
+}
+
+func (q *Query) rejectEncryptedConditionField(field string) error {
+	if q == nil || q.metadata == nil || field == "" {
+		return nil
+	}
+
+	meta := q.metadata.AttributeMetadata(field)
+	if meta == nil || len(meta.Tags) == 0 {
+		return nil
+	}
+
+	if _, ok := meta.Tags["encrypted"]; !ok {
+		return nil
+	}
+
+	name := meta.Name
+	if name == "" {
+		name = field
+	}
+
+	return fmt.Errorf("%w: %s", dynamormErrors.ErrEncryptedFieldNotQueryable, name)
 }
 
 // addPrimaryKeyCondition appends a condition targeting the table primary key
@@ -184,6 +207,9 @@ func (q *Query) addWriteConditions(builder *expr.Builder) (bool, error) {
 		if cond.Field == "" {
 			return false, fmt.Errorf("condition field cannot be empty")
 		}
+		if err := q.rejectEncryptedConditionField(cond.Field); err != nil {
+			return false, err
+		}
 		if err := builder.AddConditionExpression(cond.Field, cond.Operator, cond.Value); err != nil {
 			return false, fmt.Errorf("failed to add condition for %s: %w", cond.Field, err)
 		}
@@ -200,6 +226,9 @@ func (q *Query) addWhereConditions(builder *expr.Builder, skipKeyConditions bool
 
 	hasCondition := false
 	for _, original := range q.conditions {
+		if err := q.rejectEncryptedConditionField(original.Field); err != nil {
+			return false, err
+		}
 		normalized, goField, attrName := q.normalizeCondition(original)
 		if skipKeyConditions && q.isKeyField(primaryKey, goField, attrName) {
 			continue
@@ -358,6 +387,10 @@ func New(model any, metadata core.ModelMetadata, executor QueryExecutor) *Query 
 
 // Where adds a condition to the query
 func (q *Query) Where(field string, op string, value any) core.Query {
+	if err := q.rejectEncryptedConditionField(field); err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
 	q.conditions = append(q.conditions, Condition{
 		Field:    field,
 		Operator: op,
@@ -368,6 +401,10 @@ func (q *Query) Where(field string, op string, value any) core.Query {
 
 // Filter adds a filter expression to the query
 func (q *Query) Filter(field string, op string, value any) core.Query {
+	if err := q.rejectEncryptedConditionField(field); err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
 	// Initialize builder if not already done
 	if q.builder == nil {
 		q.builder = expr.NewBuilder()
@@ -1686,6 +1723,10 @@ func convertItemToAttributeValue(item any) (map[string]types.AttributeValue, err
 
 // OrFilter adds an OR filter condition
 func (q *Query) OrFilter(field string, op string, value any) core.Query {
+	if err := q.rejectEncryptedConditionField(field); err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
 	// Initialize builder if not already done
 	if q.builder == nil {
 		q.builder = expr.NewBuilder()
@@ -1751,6 +1792,10 @@ func (q *Query) IfExists() core.Query {
 
 // WithCondition appends an additional write condition
 func (q *Query) WithCondition(field, operator string, value any) core.Query {
+	if err := q.rejectEncryptedConditionField(field); err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
 	attrName := q.resolveAttributeName(field)
 	q.writeConditions = append(q.writeConditions, Condition{
 		Field:    attrName,

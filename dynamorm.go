@@ -582,6 +582,19 @@ func (q *query) checkLambdaTimeout() error {
 
 // Where adds a condition to the query
 func (q *query) Where(field string, op string, value any) core.Query {
+	metadata, err := q.db.registry.GetMetadata(q.model)
+	if err != nil {
+		q.recordBuilderError(err)
+		return q
+	}
+
+	if fieldMeta, exists := lookupField(metadata, field); exists && fieldMeta != nil {
+		if fieldMeta.IsEncrypted {
+			q.recordBuilderError(fmt.Errorf("%w: %s", customerrors.ErrEncryptedFieldNotQueryable, fieldMeta.Name))
+			return q
+		}
+	}
+
 	q.conditions = append(q.conditions, condition{
 		field: field,
 		op:    op,
@@ -618,6 +631,11 @@ func (q *query) addFilterCondition(logicalOp, field, op string, value any) {
 	metadata, err := q.db.registry.GetMetadata(q.model)
 	if err != nil {
 		q.recordBuilderError(err)
+		return
+	}
+
+	if fieldMeta, exists := lookupField(metadata, field); exists && fieldMeta != nil && fieldMeta.IsEncrypted {
+		q.recordBuilderError(fmt.Errorf("%w: %s", customerrors.ErrEncryptedFieldNotQueryable, fieldMeta.Name))
 		return
 	}
 
@@ -666,6 +684,11 @@ func (q *query) WithCondition(field, operator string, value any) core.Query {
 	}
 
 	if fieldMeta, exists := lookupField(metadata, field); exists {
+		if fieldMeta != nil && fieldMeta.IsEncrypted {
+			q.recordBuilderError(fmt.Errorf("%w: %s", customerrors.ErrEncryptedFieldNotQueryable, fieldMeta.Name))
+			return q
+		}
+
 		q.writeConditions = append(q.writeConditions, condition{
 			field: fieldMeta.DBName,
 			op:    op,

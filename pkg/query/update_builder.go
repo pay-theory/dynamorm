@@ -9,6 +9,7 @@ import (
 
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // UpdateBuilder provides a fluent API for building complex update expressions
@@ -172,6 +173,19 @@ func (ub *UpdateBuilder) SetListElement(field string, index int, value any) core
 
 // Condition adds a condition that must be met for the update to succeed
 func (ub *UpdateBuilder) Condition(field string, operator string, value any) core.UpdateBuilder {
+	if ub.buildErr == nil && ub.query != nil && ub.query.metadata != nil {
+		if meta := ub.query.metadata.AttributeMetadata(field); meta != nil && len(meta.Tags) > 0 {
+			if _, ok := meta.Tags["encrypted"]; ok {
+				name := meta.Name
+				if name == "" {
+					name = field
+				}
+				ub.buildErr = fmt.Errorf("%w: %s", dynamormErrors.ErrEncryptedFieldNotQueryable, name)
+				return ub
+			}
+		}
+	}
+
 	ub.conditions = append(ub.conditions, updateCondition{
 		field:    field,
 		operator: operator,
@@ -183,6 +197,19 @@ func (ub *UpdateBuilder) Condition(field string, operator string, value any) cor
 
 // OrCondition adds a condition with OR logic
 func (ub *UpdateBuilder) OrCondition(field string, operator string, value any) core.UpdateBuilder {
+	if ub.buildErr == nil && ub.query != nil && ub.query.metadata != nil {
+		if meta := ub.query.metadata.AttributeMetadata(field); meta != nil && len(meta.Tags) > 0 {
+			if _, ok := meta.Tags["encrypted"]; ok {
+				name := meta.Name
+				if name == "" {
+					name = field
+				}
+				ub.buildErr = fmt.Errorf("%w: %s", dynamormErrors.ErrEncryptedFieldNotQueryable, name)
+				return ub
+			}
+		}
+	}
+
 	ub.conditions = append(ub.conditions, updateCondition{
 		field:    field,
 		operator: operator,
@@ -230,36 +257,35 @@ func (ub *UpdateBuilder) populateKeyValues() error {
 
 	ub.keyValues = make(map[string]any)
 	primaryKey := ub.query.metadata.PrimaryKey()
+	resolveAttr := func(field string) string {
+		if field == "" || ub.query.metadata == nil {
+			return field
+		}
+		if meta := ub.query.metadata.AttributeMetadata(field); meta != nil && meta.DynamoDBName != "" {
+			return meta.DynamoDBName
+		}
+		return field
+	}
+
+	pkAttr := resolveAttr(primaryKey.PartitionKey)
+	skAttr := resolveAttr(primaryKey.SortKey)
 
 	for _, cond := range ub.query.conditions {
-		if cond.Field == primaryKey.PartitionKey ||
-			(primaryKey.SortKey != "" && cond.Field == primaryKey.SortKey) {
+		condAttr := resolveAttr(cond.Field)
+		if condAttr == pkAttr || (primaryKey.SortKey != "" && condAttr == skAttr) {
 			if cond.Operator != "=" {
 				return fmt.Errorf("key condition must use '=' operator")
 			}
-
-			keyName := cond.Field
-			if attrMeta := ub.query.metadata.AttributeMetadata(cond.Field); attrMeta != nil && attrMeta.DynamoDBName != "" {
-				keyName = attrMeta.DynamoDBName
-			}
-			ub.keyValues[keyName] = cond.Value
+			ub.keyValues[condAttr] = cond.Value
 		}
 	}
 
-	pkName := primaryKey.PartitionKey
-	if attrMeta := ub.query.metadata.AttributeMetadata(primaryKey.PartitionKey); attrMeta != nil && attrMeta.DynamoDBName != "" {
-		pkName = attrMeta.DynamoDBName
-	}
-	if _, ok := ub.keyValues[pkName]; !ok {
+	if _, ok := ub.keyValues[pkAttr]; !ok {
 		return fmt.Errorf("partition key %s is required for update", primaryKey.PartitionKey)
 	}
 
 	if primaryKey.SortKey != "" {
-		skName := primaryKey.SortKey
-		if attrMeta := ub.query.metadata.AttributeMetadata(primaryKey.SortKey); attrMeta != nil && attrMeta.DynamoDBName != "" {
-			skName = attrMeta.DynamoDBName
-		}
-		if _, ok := ub.keyValues[skName]; !ok {
+		if _, ok := ub.keyValues[skAttr]; !ok {
 			return fmt.Errorf("sort key %s is required for update", primaryKey.SortKey)
 		}
 	}
