@@ -66,6 +66,50 @@ type Item struct {
 }
 ```
 
+## Field-level encryption (`encrypted`)
+
+Use `dynamorm:"encrypted"` to store an attribute encrypted at rest using AWS KMS envelope encryption (AES-256-GCM + KMS data key).
+
+Rules:
+
+- `session.Config.KMSKeyARN` is required for any model with encrypted fields (DynamORM fails closed if it is empty).
+- Encrypted fields cannot be used as `pk`, `sk`, or any GSI/LSI key.
+- Encrypted fields are not queryable/filterable (ciphertext is non-deterministic). If you need lookups, index a separate deterministic value (e.g., a hash).
+
+```go
+type Customer struct {
+	ID string `dynamorm:"pk" json:"id"`
+
+	EmailHash string `dynamorm:"index:gsi-email,pk" json:"email_hash"`
+	Email     string `dynamorm:"encrypted" json:"email"`
+}
+```
+
+```go
+db, err := dynamorm.New(session.Config{
+	Region:    "us-east-1",
+	KMSKeyARN: os.Getenv("KMS_KEY_ARN"),
+})
+```
+
+```go
+c := &Customer{
+	ID:        "cust_1",
+	EmailHash: HashEmail("a@example.com"), // application-defined deterministic hash
+	Email:     "a@example.com",
+}
+
+if err := db.Model(c).Create(); err != nil {
+	return err
+}
+
+var out Customer
+if err := db.Model(&Customer{}).Where("ID", "=", c.ID).First(&out); err != nil {
+	return err
+}
+// out.Email is decrypted.
+```
+
 ## Optional fields and sets
 
 ### Omitting empty values

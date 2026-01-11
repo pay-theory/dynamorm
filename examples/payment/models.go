@@ -61,7 +61,8 @@ type Customer struct {
 	Metadata       map[string]string `dynamorm:"json" json:"metadata,omitempty"`
 	ID             string            `dynamorm:"pk" json:"id"`
 	MerchantID     string            `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
-	Email          string            `dynamorm:"index:gsi-email,pk,encrypted" json:"email"`
+	EmailHash      string            `dynamorm:"index:gsi-email,pk" json:"email_hash"`
+	Email          string            `dynamorm:"encrypted" json:"email"`
 	Name           string            `dynamorm:"encrypted" json:"name"`
 	Phone          string            `dynamorm:"encrypted" json:"phone,omitempty"`
 	DefaultMethod  string            `json:"default_method,omitempty"`

@@ -15,7 +15,7 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 | Quality | 10/10 | — |
 | Consistency | 10/10 | — |
 | Completeness | 10/10 | — |
-| Security | 9/10 | `SEC-8` |
+| Security | 10/10 | — |
 | Maintainability | 3/10 | `MAI-1`, `MAI-3` |
 | Docs | 10/10 | — |
 
@@ -37,7 +37,7 @@ Evidence (refresh whenever behavior changes):
 - `bash scripts/verify-no-panics.sh`
 - `bash scripts/verify-safe-defaults.sh`
 - `bash scripts/verify-network-hygiene.sh`
-- `bash scripts/verify-encrypted-tag-implemented.sh` (**expected FAIL** until `dynamorm:"encrypted"` is implemented)
+- `bash scripts/verify-encrypted-tag-implemented.sh`
 - `bash scripts/verify-go-file-size.sh` (**expected FAIL** until `dynamorm.go` is decomposed)
 - `bash scripts/verify-maintainability-roadmap.sh`
 - `bash scripts/verify-query-singleton.sh` (**expected FAIL** until query implementations converge)

@@ -4,10 +4,12 @@ Goal: implement **real, enforced field-level encryption semantics** for `dynamor
 
 Constraint: encryption must use a **provided AWS KMS Key ARN**. Creating/rotating/managing KMS keys, policies, aliases, and grants is **out of scope** for DynamORM.
 
-## Current state (baseline)
+## Current state (implemented)
 
-- The `encrypted` tag is **parsed** and stored in model metadata, but it is **not enforced** in marshaling/unmarshaling paths today.
-- This means a model can appear “encrypted” in code while data is stored in plaintext unless the application encrypts manually.
+- The `encrypted` tag is **parsed and enforced** across supported read and write surfaces.
+- Fields tagged `dynamorm:"encrypted"` are encrypted on write and decrypted on read using envelope encryption.
+- If any model contains encrypted fields and `session.Config.KMSKeyARN` is empty, DynamORM **fails closed** (no silent plaintext writes).
+- Encrypted fields are rejected for PK/SK and GSI/LSI keys, and are not queryable/filterable.
 
 ## Desired semantics (what the tag must mean)
 
@@ -133,4 +135,3 @@ make rubric
 # Focused check
 bash scripts/verify-encrypted-tag-implemented.sh
 ```
-
