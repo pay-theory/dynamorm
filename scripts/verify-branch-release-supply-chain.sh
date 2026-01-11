@@ -27,8 +27,8 @@ if [[ -f ".github/workflows/prerelease.yml" ]]; then
     echo "branch-release: prerelease workflow must target premain"
     failures=$((failures + 1))
   }
-  grep -q 'googleapis/release-please-action@v4' ".github/workflows/prerelease.yml" || {
-    echo "branch-release: prerelease workflow must use release-please v4"
+  grep -Eq 'googleapis/release-please-action@[0-9a-fA-F]{40}.*\bv4\b' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must pin release-please v4 by commit SHA"
     failures=$((failures + 1))
   }
   grep -Eq 'contents:\s*write' ".github/workflows/prerelease.yml" || {
@@ -42,8 +42,8 @@ if [[ -f ".github/workflows/release.yml" ]]; then
     echo "branch-release: release workflow must target main"
     failures=$((failures + 1))
   }
-  grep -q 'googleapis/release-please-action@v4' ".github/workflows/release.yml" || {
-    echo "branch-release: release workflow must use release-please v4"
+  grep -Eq 'googleapis/release-please-action@[0-9a-fA-F]{40}.*\bv4\b' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must pin release-please v4 by commit SHA"
     failures=$((failures + 1))
   }
   grep -Eq 'contents:\s*write' ".github/workflows/release.yml" || {
@@ -68,4 +68,3 @@ if [[ "${failures}" -ne 0 ]]; then
 fi
 
 echo "branch-release: PASS"
-
