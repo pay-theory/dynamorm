@@ -11,7 +11,10 @@ import (
 	"github.com/pay-theory/dynamorm/pkg/naming"
 )
 
-const tagValueTrue = "true"
+const (
+	tagValueTrue = "true"
+	tagEncrypted = "encrypted"
+)
 
 // Registry manages registered models and their metadata
 type Registry struct {
@@ -466,8 +469,8 @@ func applyKeyValueTag(meta *FieldMetadata, key, value string) error {
 	case "project":
 		meta.Tags["project"] = value
 		return nil
-	case "encrypted":
-		meta.Tags["encrypted"] = value
+	case tagEncrypted:
+		meta.Tags[tagEncrypted] = value
 		meta.IsEncrypted = true
 		return nil
 	default:
@@ -502,9 +505,9 @@ func applySimpleTag(meta *FieldMetadata, tag string) error {
 	case "omitempty":
 		meta.OmitEmpty = true
 		return nil
-	case "binary", "json", "encrypted":
+	case "binary", "json", tagEncrypted:
 		meta.Tags[tag] = tagValueTrue
-		if tag == "encrypted" {
+		if tag == tagEncrypted {
 			meta.IsEncrypted = true
 		}
 		return nil

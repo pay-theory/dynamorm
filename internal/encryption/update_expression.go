@@ -51,64 +51,98 @@ func EncryptUpdateExpressionValues(
 
 	sections := splitUpdateExpressionSections(updateExpression)
 
-	if setExpr, ok := sections["SET"]; ok && setExpr != "" {
-		assignments := splitTopLevelCommaSeparated(setExpr)
-		for _, assignment := range assignments {
-			lhs, rhs, ok := splitAssignment(assignment)
-			if !ok {
-				continue
-			}
+	if err := encryptSetUpdateExpressionSection(ctx, svc, encrypted, sections["SET"], exprAttrNames, exprAttrValues); err != nil {
+		return err
+	}
 
-			baseName, hasIndexOrNested := baseNamePlaceholder(lhs)
-			attrName := exprAttrNames[baseName]
-			if attrName == "" {
-				continue
-			}
+	return rejectEncryptedAddDeleteUpdateExpressionSections(sections, encrypted, exprAttrNames)
+}
 
-			if _, isEncrypted := encrypted[attrName]; !isEncrypted {
-				continue
-			}
+func encryptSetUpdateExpressionSection(
+	ctx context.Context,
+	svc *Service,
+	encrypted map[string]struct{},
+	setExpr string,
+	exprAttrNames map[string]string,
+	exprAttrValues map[string]types.AttributeValue,
+) error {
+	setExpr = strings.TrimSpace(setExpr)
+	if setExpr == "" {
+		return nil
+	}
 
-			if hasIndexOrNested {
-				return fmt.Errorf("encrypted field %s does not support nested or indexed updates", attrName)
-			}
-
-			if strings.HasPrefix(rhs, "if_not_exists(") {
-				valueRef, ok := ifNotExistsDefaultValueRef(rhs)
-				if !ok {
-					return fmt.Errorf("unsupported if_not_exists expression for encrypted field %s", attrName)
-				}
-				if err := encryptValueRef(ctx, svc, attrName, valueRef, exprAttrValues); err != nil {
-					return err
-				}
-				continue
-			}
-
-			if isValuePlaceholder(rhs) {
-				if err := encryptValueRef(ctx, svc, attrName, rhs, exprAttrValues); err != nil {
-					return err
-				}
-				continue
-			}
-
-			return fmt.Errorf("unsupported update expression for encrypted field %s", attrName)
+	assignments := splitTopLevelCommaSeparated(setExpr)
+	for _, assignment := range assignments {
+		if err := encryptSetAssignment(ctx, svc, encrypted, assignment, exprAttrNames, exprAttrValues); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func encryptSetAssignment(
+	ctx context.Context,
+	svc *Service,
+	encrypted map[string]struct{},
+	assignment string,
+	exprAttrNames map[string]string,
+	exprAttrValues map[string]types.AttributeValue,
+) error {
+	lhs, rhs, ok := splitAssignment(assignment)
+	if !ok {
+		return nil
+	}
+
+	baseName, hasIndexOrNested := baseNamePlaceholder(lhs)
+	attrName := exprAttrNames[baseName]
+	if attrName == "" {
+		return nil
+	}
+
+	if _, isEncrypted := encrypted[attrName]; !isEncrypted {
+		return nil
+	}
+
+	if hasIndexOrNested {
+		return fmt.Errorf("encrypted field %s does not support nested or indexed updates", attrName)
+	}
+
+	rhs = strings.TrimSpace(rhs)
+	if strings.HasPrefix(rhs, "if_not_exists(") {
+		valueRef, ok := ifNotExistsDefaultValueRef(rhs)
+		if !ok {
+			return fmt.Errorf("unsupported if_not_exists expression for encrypted field %s", attrName)
+		}
+		return encryptValueRef(ctx, svc, attrName, valueRef, exprAttrValues)
+	}
+
+	if isValuePlaceholder(rhs) {
+		return encryptValueRef(ctx, svc, attrName, rhs, exprAttrValues)
+	}
+
+	return fmt.Errorf("unsupported update expression for encrypted field %s", attrName)
+}
+
+func rejectEncryptedAddDeleteUpdateExpressionSections(
+	sections map[string]string,
+	encrypted map[string]struct{},
+	exprAttrNames map[string]string,
+) error {
 	for _, action := range []string{"ADD", "DELETE"} {
-		segment, ok := sections[action]
-		if !ok || segment == "" {
+		segment := strings.TrimSpace(sections[action])
+		if segment == "" {
 			continue
 		}
 
 		parts := splitTopLevelCommaSeparated(segment)
 		for _, part := range parts {
-			fields := strings.Fields(part)
-			if len(fields) < 1 {
+			base := strings.Fields(part)
+			if len(base) < 1 {
 				continue
 			}
-			base := fields[0]
-			attrName := exprAttrNames[base]
+
+			attrName := exprAttrNames[base[0]]
 			if attrName == "" {
 				continue
 			}

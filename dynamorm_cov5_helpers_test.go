@@ -64,10 +64,15 @@ func TestQueryExecutor_unmarshalItem_MapDestinationAndTypeErrors_COV5(t *testing
 	}
 
 	var dest map[string]any
-	require.Error(t, executor.unmarshalItem(item, &dest))
+	require.NoError(t, executor.unmarshalItem(item, &dest))
 	require.NotNil(t, dest)
+	require.Equal(t, "u1", dest["id"])
+	require.EqualValues(t, 3, dest["n"])
 
 	require.Error(t, executor.unmarshalItem(item, dest))
+
+	var invalidKeyDest map[int]any
+	require.Error(t, executor.unmarshalItem(item, &invalidKeyDest))
 
 	var invalid int
 	require.Error(t, executor.unmarshalItem(item, &invalid))

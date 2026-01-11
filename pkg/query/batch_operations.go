@@ -338,40 +338,49 @@ func (q *Query) extractKey(item any) (map[string]any, error) {
 	}
 
 	if pair, ok := item.(core.KeyPair); ok {
-		if pair.PartitionKey == nil {
-			return nil, fmt.Errorf("partition key value is required for %s", primaryKey.PartitionKey)
-		}
-		if primaryKey.SortKey != "" && pair.SortKey == nil {
-			return nil, fmt.Errorf("sort key value is required for %s", primaryKey.SortKey)
-		}
-
-		key := map[string]any{
-			primaryKey.PartitionKey: pair.PartitionKey,
-		}
-		if primaryKey.SortKey != "" {
-			key[primaryKey.SortKey] = pair.SortKey
-		}
-		return key, nil
+		return q.extractKeyFromPair(primaryKey, pair)
 	}
 
 	itemValue := reflect.ValueOf(item)
 	if itemValue.Kind() == reflect.Ptr {
 		if itemValue.IsNil() {
-			if primaryKey.SortKey != "" {
-				return nil, fmt.Errorf("composite key requires both %s and %s", primaryKey.PartitionKey, primaryKey.SortKey)
-			}
-			return map[string]any{primaryKey.PartitionKey: item}, nil
+			return extractKeyFromPrimitive(primaryKey, item)
 		}
 		itemValue = itemValue.Elem()
 	}
 
 	if itemValue.Kind() != reflect.Struct {
-		if primaryKey.SortKey != "" {
-			return nil, fmt.Errorf("composite key requires both %s and %s", primaryKey.PartitionKey, primaryKey.SortKey)
-		}
-		return map[string]any{primaryKey.PartitionKey: item}, nil
+		return extractKeyFromPrimitive(primaryKey, item)
 	}
 
+	return q.extractKeyFromStruct(primaryKey, itemValue)
+}
+
+func (q *Query) extractKeyFromPair(primaryKey core.KeySchema, pair core.KeyPair) (map[string]any, error) {
+	if pair.PartitionKey == nil {
+		return nil, fmt.Errorf("partition key value is required for %s", primaryKey.PartitionKey)
+	}
+	if primaryKey.SortKey != "" && pair.SortKey == nil {
+		return nil, fmt.Errorf("sort key value is required for %s", primaryKey.SortKey)
+	}
+
+	key := map[string]any{
+		primaryKey.PartitionKey: pair.PartitionKey,
+	}
+	if primaryKey.SortKey != "" {
+		key[primaryKey.SortKey] = pair.SortKey
+	}
+	return key, nil
+}
+
+func extractKeyFromPrimitive(primaryKey core.KeySchema, value any) (map[string]any, error) {
+	if primaryKey.SortKey != "" {
+		return nil, fmt.Errorf("composite key requires both %s and %s", primaryKey.PartitionKey, primaryKey.SortKey)
+	}
+	return map[string]any{primaryKey.PartitionKey: value}, nil
+}
+
+func (q *Query) extractKeyFromStruct(primaryKey core.KeySchema, itemValue reflect.Value) (map[string]any, error) {
 	key := make(map[string]any, 2)
 
 	pkField, ok := q.findKeyField(itemValue, primaryKey.PartitionKey)
@@ -380,14 +389,15 @@ func (q *Query) extractKey(item any) (map[string]any, error) {
 	}
 	key[primaryKey.PartitionKey] = pkField.Interface()
 
-	if primaryKey.SortKey != "" {
-		skField, ok := q.findKeyField(itemValue, primaryKey.SortKey)
-		if !ok {
-			return nil, fmt.Errorf("sort key field %s not found", primaryKey.SortKey)
-		}
-		key[primaryKey.SortKey] = skField.Interface()
+	if primaryKey.SortKey == "" {
+		return key, nil
 	}
 
+	skField, ok := q.findKeyField(itemValue, primaryKey.SortKey)
+	if !ok {
+		return nil, fmt.Errorf("sort key field %s not found", primaryKey.SortKey)
+	}
+	key[primaryKey.SortKey] = skField.Interface()
 	return key, nil
 }
 
@@ -707,7 +717,7 @@ func (q *Query) BatchWriteWithOptions(putItems []any, deleteKeys []any, opts *Ba
 func (q *Query) buildBatchWriteRequests(putItems []any, deleteKeys []any, capacity int, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
 	allRequests := make([]types.WriteRequest, 0, capacity)
 
-	requests, err := appendPutWriteRequests(allRequests, putItems, opts)
+	requests, err := q.appendPutWriteRequests(allRequests, putItems, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -720,9 +730,9 @@ func (q *Query) buildBatchWriteRequests(putItems []any, deleteKeys []any, capaci
 	return requests, nil
 }
 
-func appendPutWriteRequests(requests []types.WriteRequest, putItems []any, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
+func (q *Query) appendPutWriteRequests(requests []types.WriteRequest, putItems []any, opts *BatchUpdateOptions) ([]types.WriteRequest, error) {
 	for _, item := range putItems {
-		itemAV, err := convertItemToAttributeValue(item)
+		itemAV, err := q.marshalItem(item)
 		if err != nil {
 			if handlerErr := handleBatchUpdateError(opts, item, err, fmt.Errorf("failed to marshal item: %w", err)); handlerErr != nil {
 				return nil, handlerErr

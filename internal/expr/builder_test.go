@@ -487,6 +487,18 @@ func TestAddUpdateFunction(t *testing.T) {
 			args:     []any{"history", []string{"new_event"}},
 		},
 		{
+			name:     "list_append prepend",
+			field:    "history",
+			function: "list_append",
+			args:     []any{[]string{"new_event"}, "history"},
+		},
+		{
+			name:     "list_append merge lists",
+			field:    "history",
+			function: "list_append",
+			args:     []any{[]string{"a"}, []string{"b"}},
+		},
+		{
 			name:        "if_not_exists missing args",
 			field:       "views",
 			function:    "if_not_exists",
@@ -524,6 +536,18 @@ func TestAddUpdateFunction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAddKeyCondition_BetweenRequiresTwoValues(t *testing.T) {
+	builder := expr.NewBuilder()
+	err := builder.AddKeyCondition("timestamp", "BETWEEN", []any{1000})
+	require.Error(t, err)
+}
+
+func TestAddFilterCondition_IN_RequiresSlice(t *testing.T) {
+	builder := expr.NewBuilder()
+	err := builder.AddFilterCondition("AND", "status", "IN", "not-a-slice")
+	require.Error(t, err)
 }
 
 func TestBuildCompleteExpression(t *testing.T) {

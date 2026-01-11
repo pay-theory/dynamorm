@@ -21,11 +21,6 @@ import (
 	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
-const (
-	operatorBeginsWith = "BEGINS_WITH"
-	operatorBetween    = "BETWEEN"
-)
-
 // DB is the main DynamORM database instance
 type DB struct {
 	lambdaDeadline      time.Time

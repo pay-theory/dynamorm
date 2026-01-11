@@ -88,8 +88,8 @@ func (tx *Transaction) Update(model any) error {
 		return fmt.Errorf("failed to get model metadata: %w", err)
 	}
 
-	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(tx.session, metadata); err != nil {
-		return err
+	if encryptionErr := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(tx.session, metadata); encryptionErr != nil {
+		return encryptionErr
 	}
 
 	key, err := tx.extractPrimaryKey(model, metadata)
@@ -417,6 +417,19 @@ func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[str
 		return nil, err
 	}
 
+	item, err := tx.marshalPlainItem(model, metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.encryptItemIfNeeded(metadata, item); err != nil {
+		return nil, err
+	}
+
+	return item, nil
+}
+
+func (tx *Transaction) marshalPlainItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
 	item := make(map[string]types.AttributeValue)
 
 	modelValue := reflect.ValueOf(model)
@@ -446,31 +459,37 @@ func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[str
 		item[fieldMeta.DBName] = av
 	}
 
-	if encryption.MetadataHasEncryptedFields(metadata) && len(item) > 0 {
-		svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
-		ctx := tx.ctx
-		if ctx == nil {
-			ctx = context.Background()
-		}
+	return item, nil
+}
 
-		for _, fieldMeta := range metadata.Fields {
-			if fieldMeta == nil || !fieldMeta.IsEncrypted {
-				continue
-			}
-			av, ok := item[fieldMeta.DBName]
-			if !ok {
-				continue
-			}
-
-			encryptedAV, err := svc.EncryptAttributeValue(ctx, fieldMeta.DBName, av)
-			if err != nil {
-				return nil, fmt.Errorf("failed to encrypt field %s: %w", fieldMeta.DBName, err)
-			}
-			item[fieldMeta.DBName] = encryptedAV
-		}
+func (tx *Transaction) encryptItemIfNeeded(metadata *model.Metadata, item map[string]types.AttributeValue) error {
+	if !encryption.MetadataHasEncryptedFields(metadata) || len(item) == 0 {
+		return nil
 	}
 
-	return item, nil
+	svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+	ctx := tx.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	for _, fieldMeta := range metadata.Fields {
+		if fieldMeta == nil || !fieldMeta.IsEncrypted {
+			continue
+		}
+		av, ok := item[fieldMeta.DBName]
+		if !ok {
+			continue
+		}
+
+		encryptedAV, err := svc.EncryptAttributeValue(ctx, fieldMeta.DBName, av)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt field %s: %w", fieldMeta.DBName, err)
+		}
+		item[fieldMeta.DBName] = encryptedAV
+	}
+
+	return nil
 }
 
 // extractPrimaryKey extracts the primary key from a model

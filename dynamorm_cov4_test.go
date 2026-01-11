@@ -30,13 +30,6 @@ type cov4RootItem struct {
 
 func (cov4RootItem) TableName() string { return "cov4_items" }
 
-type cov4CompositeItem struct {
-	PK string `dynamorm:"pk,attr:pk"`
-	SK string `dynamorm:"sk,attr:sk"`
-}
-
-func (cov4CompositeItem) TableName() string { return "cov4_composite_items" }
-
 type cov4CtxKey struct{}
 
 type cov4MarshalModel struct {

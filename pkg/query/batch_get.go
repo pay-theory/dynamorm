@@ -610,44 +610,63 @@ func (q *Query) unmarshalItemWithMetadata(item map[string]types.AttributeValue, 
 	}
 	destValue = destValue.Elem()
 
-	if destValue.Kind() == reflect.Map {
-		if destValue.IsNil() {
-			destValue.Set(reflect.MakeMap(destValue.Type()))
-		}
-
-		keyType := destValue.Type().Key()
-		if keyType.Kind() != reflect.String {
-			return fmt.Errorf("destination map must have string keys")
-		}
-
-		for attrName, attrValue := range item {
-			var val any
-			if err := q.converter.FromAttributeValue(attrValue, &val); err != nil {
-				return fmt.Errorf("failed to unmarshal field %s: %w", attrName, err)
-			}
-
-			key := reflect.ValueOf(attrName).Convert(keyType)
-			value := reflect.ValueOf(val)
-			if !value.IsValid() {
-				value = reflect.Zero(destValue.Type().Elem())
-			} else if !value.Type().AssignableTo(destValue.Type().Elem()) {
-				if value.Type().ConvertibleTo(destValue.Type().Elem()) {
-					value = value.Convert(destValue.Type().Elem())
-				} else {
-					continue
-				}
-			}
-
-			destValue.SetMapIndex(key, value)
-		}
-
-		return nil
-	}
-
-	if destValue.Kind() != reflect.Struct {
+	switch destValue.Kind() {
+	case reflect.Map:
+		return q.unmarshalItemWithMetadataToMap(item, destValue)
+	case reflect.Struct:
+		return q.unmarshalItemWithMetadataToStruct(item, destValue)
+	default:
 		return fmt.Errorf("destination must be a pointer to a struct or map")
 	}
+}
 
+func (q *Query) unmarshalItemWithMetadataToMap(item map[string]types.AttributeValue, destValue reflect.Value) error {
+	if destValue.IsNil() {
+		destValue.Set(reflect.MakeMap(destValue.Type()))
+	}
+
+	keyType := destValue.Type().Key()
+	if keyType.Kind() != reflect.String {
+		return fmt.Errorf("destination map must have string keys")
+	}
+
+	elemType := destValue.Type().Elem()
+	for attrName, attrValue := range item {
+		var val any
+		if err := q.converter.FromAttributeValue(attrValue, &val); err != nil {
+			return fmt.Errorf("failed to unmarshal field %s: %w", attrName, err)
+		}
+
+		value, ok := mapValueForType(val, elemType)
+		if !ok {
+			continue
+		}
+
+		key := reflect.ValueOf(attrName).Convert(keyType)
+		destValue.SetMapIndex(key, value)
+	}
+
+	return nil
+}
+
+func mapValueForType(value any, elemType reflect.Type) (reflect.Value, bool) {
+	converted := reflect.ValueOf(value)
+	if !converted.IsValid() {
+		return reflect.Zero(elemType), true
+	}
+
+	if converted.Type().AssignableTo(elemType) {
+		return converted, true
+	}
+
+	if converted.Type().ConvertibleTo(elemType) {
+		return converted.Convert(elemType), true
+	}
+
+	return reflect.Value{}, false
+}
+
+func (q *Query) unmarshalItemWithMetadataToStruct(item map[string]types.AttributeValue, destValue reflect.Value) error {
 	for attrName, attrValue := range item {
 		fieldMeta, ok := q.rawMetadata.FieldsByDBName[attrName]
 		if !ok || fieldMeta == nil {

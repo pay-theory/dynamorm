@@ -674,13 +674,14 @@ func (q *Query) allWithRetry(dest any) error {
 
 		err := q.allInternal(dest)
 		lastErr = err
-		if err != nil {
+		switch {
+		case err != nil:
 			if attempt >= q.retryConfig.MaxRetries {
 				return err
 			}
-		} else if destValue.Elem().Len() > 0 {
+		case destValue.Elem().Len() > 0:
 			return nil
-		} else if attempt >= q.retryConfig.MaxRetries {
+		case attempt >= q.retryConfig.MaxRetries:
 			return nil
 		}
 
@@ -814,117 +815,20 @@ func (q *Query) Update(fields ...string) error {
 		return err
 	}
 
-	key, err := q.buildPrimaryKeyMap("update")
+	key, keyErr := q.buildPrimaryKeyMap("update")
+	if keyErr != nil {
+		return keyErr
+	}
+
+	modelValue, err := q.updateModelValue()
 	if err != nil {
 		return err
 	}
 
-	modelValue := reflect.ValueOf(q.model)
-	if modelValue.Kind() == reflect.Ptr {
-		if modelValue.IsNil() {
-			return fmt.Errorf("model cannot be nil")
-		}
-		modelValue = modelValue.Elem()
-	}
-	if modelValue.Kind() != reflect.Struct {
-		return fmt.Errorf("model must be a struct or pointer to struct")
-	}
-
 	builder := q.newBuilder()
 
-	// Build SET updates either from registry metadata (preferred) or from struct tags.
-	if q.rawMetadata != nil {
-		fieldsToUpdate := fields
-		if len(fieldsToUpdate) == 0 {
-			fieldsToUpdate = make([]string, 0, len(q.rawMetadata.Fields))
-			for fieldName, fieldMeta := range q.rawMetadata.Fields {
-				if fieldMeta == nil || fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt || fieldMeta.IsVersion {
-					continue
-				}
-				fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-				if fieldMeta.OmitEmpty && reflectutil.IsEmpty(fieldValue) {
-					continue
-				}
-				fieldsToUpdate = append(fieldsToUpdate, fieldName)
-			}
-		}
-
-		for _, fieldName := range fieldsToUpdate {
-			fieldMeta, ok := q.rawMetadata.Fields[fieldName]
-			if !ok {
-				fieldMeta, ok = q.rawMetadata.FieldsByDBName[fieldName]
-			}
-			if !ok || fieldMeta == nil {
-				return fmt.Errorf("field '%s' not found in model metadata (use Go field name or DB attribute name)", fieldName)
-			}
-
-			switch {
-			case fieldMeta.IsPK || fieldMeta.IsSK:
-				return fmt.Errorf("field '%s' is part of the primary key and cannot be updated", fieldName)
-			case fieldMeta.IsCreatedAt:
-				continue
-			case fieldMeta.IsUpdatedAt, fieldMeta.IsVersion:
-				continue // handled below
-			}
-
-			fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-			if err := builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface()); err != nil {
-				return fmt.Errorf("failed to build update for %s: %w", fieldName, err)
-			}
-		}
-
-		// Always update updated_at and increment version when present.
-		if q.rawMetadata.UpdatedAtField != nil {
-			if err := builder.AddUpdateSet(q.rawMetadata.UpdatedAtField.DBName, time.Now()); err != nil {
-				return fmt.Errorf("failed to build updated_at update: %w", err)
-			}
-		}
-
-		if q.rawMetadata.VersionField != nil {
-			current := modelValue.FieldByIndex(q.rawMetadata.VersionField.IndexPath).Int()
-			if err := builder.AddConditionExpression(q.rawMetadata.VersionField.DBName, "=", current); err != nil {
-				return fmt.Errorf("failed to add version condition: %w", err)
-			}
-			if err := builder.AddUpdateAdd(q.rawMetadata.VersionField.DBName, int64(1)); err != nil {
-				return fmt.Errorf("failed to build version increment: %w", err)
-			}
-		}
-	} else {
-		if len(fields) > 0 {
-			for _, field := range fields {
-				fieldValue := modelValue.FieldByName(field)
-				if !fieldValue.IsValid() {
-					return fmt.Errorf("field %s not found in model", field)
-				}
-				if err := builder.AddUpdateSet(q.resolveAttributeName(field), fieldValue.Interface()); err != nil {
-					return fmt.Errorf("failed to build update for %s: %w", field, err)
-				}
-			}
-		} else {
-			primaryKey := q.metadata.PrimaryKey()
-			modelType := modelValue.Type()
-			for i := 0; i < modelType.NumField(); i++ {
-				field := modelType.Field(i)
-				if !field.IsExported() {
-					continue
-				}
-
-				tag := field.Tag.Get("dynamorm")
-				if shouldSkipUpdateField(field, tag, primaryKey) {
-					continue
-				}
-
-				fieldValue := modelValue.Field(i)
-				if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
-					continue
-				}
-
-				attrName := q.resolveAttributeName(field.Name)
-				if err := builder.AddUpdateSet(attrName, fieldValue.Interface()); err != nil {
-					return fmt.Errorf("failed to build update for %s: %w", field.Name, err)
-				}
-			}
-		}
+	if buildErr := q.buildUpdateExpression(builder, modelValue, fields); buildErr != nil {
+		return buildErr
 	}
 
 	conditionExpr, names, values, err := q.buildConditionExpression(builder, true, true, false)
@@ -951,6 +855,147 @@ func (q *Query) Update(fields ...string) error {
 	}
 
 	return fmt.Errorf("executor does not support UpdateItem operation")
+}
+
+func (q *Query) updateModelValue() (reflect.Value, error) {
+	modelValue := reflect.ValueOf(q.model)
+	if modelValue.Kind() == reflect.Ptr {
+		if modelValue.IsNil() {
+			return reflect.Value{}, fmt.Errorf("model cannot be nil")
+		}
+		modelValue = modelValue.Elem()
+	}
+	if modelValue.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf("model must be a struct or pointer to struct")
+	}
+	return modelValue, nil
+}
+
+func (q *Query) buildUpdateExpression(builder *expr.Builder, modelValue reflect.Value, fields []string) error {
+	if q.rawMetadata != nil {
+		return q.buildUpdateExpressionFromMetadata(builder, modelValue, fields)
+	}
+	return q.buildUpdateExpressionFromTags(builder, modelValue, fields)
+}
+
+func (q *Query) buildUpdateExpressionFromMetadata(builder *expr.Builder, modelValue reflect.Value, fields []string) error {
+	fieldsToUpdate := fields
+	if len(fieldsToUpdate) == 0 {
+		fieldsToUpdate = q.metadataFieldsToUpdate(modelValue)
+	}
+
+	for _, fieldName := range fieldsToUpdate {
+		fieldMeta, err := q.updateFieldMetadata(fieldName)
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case fieldMeta.IsPK || fieldMeta.IsSK:
+			return fmt.Errorf("field '%s' is part of the primary key and cannot be updated", fieldName)
+		case fieldMeta.IsCreatedAt:
+			continue
+		case fieldMeta.IsUpdatedAt, fieldMeta.IsVersion:
+			continue // handled below
+		}
+
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if err := builder.AddUpdateSet(fieldMeta.DBName, fieldValue.Interface()); err != nil {
+			return fmt.Errorf("failed to build update for %s: %w", fieldName, err)
+		}
+	}
+
+	return q.appendUpdatedAtAndVersionUpdates(builder, modelValue)
+}
+
+func (q *Query) metadataFieldsToUpdate(modelValue reflect.Value) []string {
+	fieldsToUpdate := make([]string, 0, len(q.rawMetadata.Fields))
+	for fieldName, fieldMeta := range q.rawMetadata.Fields {
+		if fieldMeta == nil || fieldMeta.IsPK || fieldMeta.IsSK || fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt || fieldMeta.IsVersion {
+			continue
+		}
+		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+		if fieldMeta.OmitEmpty && reflectutil.IsEmpty(fieldValue) {
+			continue
+		}
+		fieldsToUpdate = append(fieldsToUpdate, fieldName)
+	}
+	return fieldsToUpdate
+}
+
+func (q *Query) updateFieldMetadata(fieldName string) (*model.FieldMetadata, error) {
+	fieldMeta, ok := q.rawMetadata.Fields[fieldName]
+	if !ok {
+		fieldMeta, ok = q.rawMetadata.FieldsByDBName[fieldName]
+	}
+	if !ok || fieldMeta == nil {
+		return nil, fmt.Errorf("field '%s' not found in model metadata (use Go field name or DB attribute name)", fieldName)
+	}
+	return fieldMeta, nil
+}
+
+func (q *Query) appendUpdatedAtAndVersionUpdates(builder *expr.Builder, modelValue reflect.Value) error {
+	if q.rawMetadata.UpdatedAtField != nil {
+		if err := builder.AddUpdateSet(q.rawMetadata.UpdatedAtField.DBName, time.Now()); err != nil {
+			return fmt.Errorf("failed to build updated_at update: %w", err)
+		}
+	}
+
+	if q.rawMetadata.VersionField != nil {
+		current := modelValue.FieldByIndex(q.rawMetadata.VersionField.IndexPath).Int()
+		if err := builder.AddConditionExpression(q.rawMetadata.VersionField.DBName, "=", current); err != nil {
+			return fmt.Errorf("failed to add version condition: %w", err)
+		}
+		if err := builder.AddUpdateAdd(q.rawMetadata.VersionField.DBName, int64(1)); err != nil {
+			return fmt.Errorf("failed to build version increment: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (q *Query) buildUpdateExpressionFromTags(builder *expr.Builder, modelValue reflect.Value, fields []string) error {
+	if len(fields) > 0 {
+		return q.buildUpdateExpressionFromNamedFields(builder, modelValue, fields)
+	}
+
+	primaryKey := q.metadata.PrimaryKey()
+	modelType := modelValue.Type()
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+
+		tag := field.Tag.Get("dynamorm")
+		if shouldSkipUpdateField(field, tag, primaryKey) {
+			continue
+		}
+
+		fieldValue := modelValue.Field(i)
+		if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
+			continue
+		}
+
+		attrName := q.resolveAttributeName(field.Name)
+		if err := builder.AddUpdateSet(attrName, fieldValue.Interface()); err != nil {
+			return fmt.Errorf("failed to build update for %s: %w", field.Name, err)
+		}
+	}
+	return nil
+}
+
+func (q *Query) buildUpdateExpressionFromNamedFields(builder *expr.Builder, modelValue reflect.Value, fields []string) error {
+	for _, field := range fields {
+		fieldValue := modelValue.FieldByName(field)
+		if !fieldValue.IsValid() {
+			return fmt.Errorf("field %s not found in model", field)
+		}
+		if err := builder.AddUpdateSet(q.resolveAttributeName(field), fieldValue.Interface()); err != nil {
+			return fmt.Errorf("failed to build update for %s: %w", field, err)
+		}
+	}
+	return nil
 }
 
 func extractKeyValues(primaryKey core.KeySchema, conditions []Condition) (map[string]any, error) {
@@ -981,97 +1026,6 @@ func validateKeyValues(primaryKey core.KeySchema, keyValues map[string]any, oper
 	return nil
 }
 
-func (q *Query) buildUpdateComponents(fields []string) (string, map[string]string, map[string]types.AttributeValue, error) {
-	modelValue := reflect.ValueOf(q.model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
-	}
-
-	updateParts, updateValues, fieldNames, err := q.buildUpdateAssignments(modelValue, fields)
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	updateExpression := "SET " + strings.Join(updateParts, ", ")
-	expressionAttributeNames := buildExpressionAttributeNames(fieldNames)
-
-	expressionAttributeValues, err := convertAnyMapToAttributeValues(updateValues, "failed to convert update value")
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	return updateExpression, expressionAttributeNames, expressionAttributeValues, nil
-}
-
-func (q *Query) buildUpdateAssignments(modelValue reflect.Value, fields []string) ([]string, map[string]any, []string, error) {
-	if len(fields) > 0 {
-		return buildUpdateAssignmentsForFields(modelValue, fields)
-	}
-	return buildUpdateAssignmentsForAllFields(modelValue, q.metadata.PrimaryKey())
-}
-
-func buildUpdateAssignmentsForFields(modelValue reflect.Value, fields []string) ([]string, map[string]any, []string, error) {
-	updateParts := make([]string, 0, len(fields))
-	updateValues := make(map[string]any, len(fields))
-	fieldNames := make([]string, 0, len(fields))
-
-	for i, field := range fields {
-		fieldValue := modelValue.FieldByName(field)
-		if !fieldValue.IsValid() {
-			return nil, nil, nil, fmt.Errorf("field %s not found in model", field)
-		}
-
-		placeholder := fmt.Sprintf(":val%d", i)
-		updateParts = append(updateParts, fmt.Sprintf("#%s = %s", field, placeholder))
-		updateValues[placeholder] = fieldValue.Interface()
-		fieldNames = append(fieldNames, field)
-	}
-
-	return updateParts, updateValues, fieldNames, nil
-}
-
-func buildUpdateAssignmentsForAllFields(modelValue reflect.Value, primaryKey core.KeySchema) ([]string, map[string]any, []string, error) {
-	modelType := modelValue.Type()
-	fieldIndex := 0
-
-	updateParts := make([]string, 0, modelType.NumField())
-	updateValues := make(map[string]any)
-	fieldNames := make([]string, 0, modelType.NumField())
-
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-		if !field.IsExported() {
-			continue
-		}
-
-		tag := field.Tag.Get("dynamorm")
-		if shouldSkipUpdateField(field, tag, primaryKey) {
-			continue
-		}
-
-		fieldValue := modelValue.Field(i)
-		if !fieldValue.IsValid() {
-			continue
-		}
-
-		if strings.Contains(tag, "omitempty") && isZeroValue(fieldValue) {
-			continue
-		}
-
-		placeholder := fmt.Sprintf(":val%d", fieldIndex)
-		updateParts = append(updateParts, fmt.Sprintf("#%s = %s", field.Name, placeholder))
-		updateValues[placeholder] = fieldValue.Interface()
-		fieldNames = append(fieldNames, field.Name)
-		fieldIndex++
-	}
-
-	if len(updateParts) == 0 {
-		return nil, nil, nil, fmt.Errorf("no non-key fields to update")
-	}
-
-	return updateParts, updateValues, fieldNames, nil
-}
-
 func shouldSkipUpdateField(field reflect.StructField, tag string, primaryKey core.KeySchema) bool {
 	if tag == "-" {
 		return true
@@ -1085,57 +1039,15 @@ func shouldSkipUpdateField(field reflect.StructField, tag string, primaryKey cor
 	return strings.Contains(tag, "created_at")
 }
 
-func buildExpressionAttributeNames(fields []string) map[string]string {
-	names := make(map[string]string, len(fields))
-	for _, field := range fields {
-		names["#"+field] = field
-	}
-	return names
-}
-
-func convertAnyMapToAttributeValues(values map[string]any, errorPrefix string) (map[string]types.AttributeValue, error) {
-	expressionAttributeValues := make(map[string]types.AttributeValue, len(values))
-	for k, v := range values {
-		av, err := expr.ConvertToAttributeValue(v)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", errorPrefix, err)
-		}
-		expressionAttributeValues[k] = av
-	}
-	return expressionAttributeValues, nil
-}
-
-func mergeExpressionAttributeNames(dst map[string]string, src map[string]string) {
-	if len(src) == 0 {
-		return
-	}
-	for k, v := range src {
-		dst[k] = v
-	}
-}
-
-func mergeExpressionAttributeValues(dst map[string]types.AttributeValue, src map[string]types.AttributeValue) error {
-	if len(src) == 0 {
-		return nil
-	}
-	for k, v := range src {
-		if _, exists := dst[k]; exists {
-			return fmt.Errorf("duplicate expression attribute value placeholder: %s", k)
-		}
-		dst[k] = v
-	}
-	return nil
-}
-
 // Delete deletes an item
 func (q *Query) Delete() error {
 	if err := q.checkBuilderError(); err != nil {
 		return err
 	}
 
-	key, err := q.buildPrimaryKeyMap("delete")
-	if err != nil {
-		return err
+	key, keyErr := q.buildPrimaryKeyMap("delete")
+	if keyErr != nil {
+		return keyErr
 	}
 
 	builder := q.newBuilder()
@@ -1454,66 +1366,8 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 		TableName: q.metadata.TableName(),
 	}
 
-	if q.index != "" {
-		compiled.IndexName = q.index
-
-		var indexSchema *core.IndexSchema
-		for _, idx := range q.metadata.Indexes() {
-			if idx.Name == q.index {
-				copyIdx := idx
-				indexSchema = &copyIdx
-				break
-			}
-		}
-
-		keys := q.keyNamesForIndex(indexSchema)
-		keyConditions, filterConditions := q.partitionConditionsForKeys(keys)
-		hasPartitionKey := false
-		for _, cond := range keyConditions {
-			if strings.EqualFold(cond.Field, keys.pkAttr) {
-				hasPartitionKey = true
-				break
-			}
-		}
-
-		if hasPartitionKey {
-			compiled.Operation = operationQuery
-			for _, cond := range keyConditions {
-				if err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value); err != nil {
-					return nil, err
-				}
-			}
-			for _, cond := range filterConditions {
-				if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
-					return nil, err
-				}
-			}
-		} else {
-			compiled.Operation = operationScan
-			if err := q.applyScanConditions(builder); err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		bestIndex, err := q.selectBestIndex()
-		if err != nil {
-			return nil, err
-		}
-
-		if bestIndex != nil {
-			compiled.Operation = operationQuery
-			if bestIndex.Name != "" {
-				compiled.IndexName = bestIndex.Name
-			}
-			if err := q.applyQueryConditions(builder, bestIndex); err != nil {
-				return nil, err
-			}
-		} else {
-			compiled.Operation = operationScan
-			if err := q.applyScanConditions(builder); err != nil {
-				return nil, err
-			}
-		}
+	if err := q.compileOperation(builder, compiled); err != nil {
+		return nil, err
 	}
 
 	q.applyProjections(builder)
@@ -1521,6 +1375,78 @@ func (q *Query) Compile() (*core.CompiledQuery, error) {
 	q.applyCompiledSettings(compiled)
 
 	return compiled, nil
+}
+
+func (q *Query) compileOperation(builder *expr.Builder, compiled *core.CompiledQuery) error {
+	if q.index != "" {
+		return q.compileWithExplicitIndex(builder, compiled, q.index)
+	}
+	return q.compileWithBestIndex(builder, compiled)
+}
+
+func (q *Query) compileWithExplicitIndex(builder *expr.Builder, compiled *core.CompiledQuery, name string) error {
+	compiled.IndexName = name
+
+	keys := q.keyNamesForIndex(q.indexSchemaByName(name))
+	keyConditions, filterConditions := q.partitionConditionsForKeys(keys)
+	if q.hasPartitionKeyCondition(keyConditions, keys.pkAttr) {
+		compiled.Operation = operationQuery
+		return q.applyKeyAndFilterConditions(builder, keyConditions, filterConditions)
+	}
+
+	compiled.Operation = operationScan
+	return q.applyScanConditions(builder)
+}
+
+func (q *Query) compileWithBestIndex(builder *expr.Builder, compiled *core.CompiledQuery) error {
+	bestIndex, err := q.selectBestIndex()
+	if err != nil {
+		return err
+	}
+
+	if bestIndex != nil {
+		compiled.Operation = operationQuery
+		if bestIndex.Name != "" {
+			compiled.IndexName = bestIndex.Name
+		}
+		return q.applyQueryConditions(builder, bestIndex)
+	}
+
+	compiled.Operation = operationScan
+	return q.applyScanConditions(builder)
+}
+
+func (q *Query) indexSchemaByName(name string) *core.IndexSchema {
+	for _, idx := range q.metadata.Indexes() {
+		if idx.Name == name {
+			copyIdx := idx
+			return &copyIdx
+		}
+	}
+	return nil
+}
+
+func (q *Query) hasPartitionKeyCondition(conditions []Condition, pkName string) bool {
+	for _, cond := range conditions {
+		if strings.EqualFold(cond.Field, pkName) {
+			return true
+		}
+	}
+	return false
+}
+
+func (q *Query) applyKeyAndFilterConditions(builder *expr.Builder, keyConditions []Condition, filterConditions []Condition) error {
+	for _, cond := range keyConditions {
+		if err := builder.AddKeyCondition(cond.Field, cond.Operator, cond.Value); err != nil {
+			return err
+		}
+	}
+	for _, cond := range filterConditions {
+		if err := builder.AddFilterCondition("AND", cond.Field, cond.Operator, cond.Value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (q *Query) partitionConditionsForKeys(keys keyNameSet) ([]Condition, []Condition) {
@@ -1578,17 +1504,111 @@ func (q *Query) toAttributeValue(value any) (types.AttributeValue, error) {
 	return expr.ConvertToAttributeValue(value)
 }
 
+func (q *Query) fillKeyValuesFromModel(pkGo, skGo string, pkValue *any, pkFound *bool, skValue *any, skFound *bool) {
+	if q == nil || q.model == nil || pkValue == nil || pkFound == nil || skValue == nil || skFound == nil {
+		return
+	}
+	if *pkFound && (skGo == "" || *skFound) {
+		return
+	}
+
+	modelValue, ok := q.modelStructValue()
+	if !ok {
+		return
+	}
+
+	q.fillKeyValuesFromRawMetadata(modelValue, skGo, pkValue, pkFound, skValue, skFound)
+	q.fillKeyValuesByName(modelValue, pkGo, skGo, pkValue, pkFound, skValue, skFound)
+}
+
+func (q *Query) modelStructValue() (reflect.Value, bool) {
+	modelValue := reflect.ValueOf(q.model)
+	if !modelValue.IsValid() {
+		return reflect.Value{}, false
+	}
+	if modelValue.Kind() == reflect.Ptr {
+		if modelValue.IsNil() {
+			return reflect.Value{}, false
+		}
+		modelValue = modelValue.Elem()
+	}
+	if !modelValue.IsValid() || modelValue.Kind() != reflect.Struct {
+		return reflect.Value{}, false
+	}
+	return modelValue, true
+}
+
+func (q *Query) fillKeyValuesFromRawMetadata(modelValue reflect.Value, skGo string, pkValue *any, pkFound *bool, skValue *any, skFound *bool) {
+	if q.rawMetadata == nil || q.rawMetadata.PrimaryKey == nil {
+		return
+	}
+
+	if q.rawMetadata.PrimaryKey.PartitionKey != nil && !*pkFound {
+		field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.PartitionKey.IndexPath)
+		if field.IsValid() && !field.IsZero() {
+			*pkValue = field.Interface()
+			*pkFound = true
+		}
+	}
+
+	if skGo != "" && q.rawMetadata.PrimaryKey.SortKey != nil && !*skFound {
+		field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.SortKey.IndexPath)
+		if field.IsValid() && !field.IsZero() {
+			*skValue = field.Interface()
+			*skFound = true
+		}
+	}
+}
+
+func (q *Query) fillKeyValuesByName(modelValue reflect.Value, pkGo, skGo string, pkValue *any, pkFound *bool, skValue *any, skFound *bool) {
+	if !*pkFound {
+		field := modelValue.FieldByName(pkGo)
+		if field.IsValid() && !field.IsZero() {
+			*pkValue = field.Interface()
+			*pkFound = true
+		}
+	}
+
+	if skGo != "" && !*skFound {
+		field := modelValue.FieldByName(skGo)
+		if field.IsValid() && !field.IsZero() {
+			*skValue = field.Interface()
+			*skFound = true
+		}
+	}
+}
+
 func (q *Query) buildPrimaryKeyMap(operation string) (map[string]types.AttributeValue, error) {
+	pkGo, pkAttr, skGo, skAttr, err := q.resolvePrimaryKeyNames(operation)
+	if err != nil {
+		return nil, err
+	}
+
+	pkValue, pkFound, skValue, skFound, err := q.extractPrimaryKeyValuesFromConditions(pkGo, pkAttr, skGo, skAttr)
+	if err != nil {
+		return nil, err
+	}
+
+	q.fillKeyValuesFromModel(pkGo, skGo, &pkValue, &pkFound, &skValue, &skFound)
+
+	if err := validatePrimaryKeyValues(operation, pkGo, skGo, pkFound, skFound); err != nil {
+		return nil, err
+	}
+
+	return q.buildPrimaryKeyAttributeValues(pkAttr, pkValue, skAttr, skValue, skGo != "")
+}
+
+func (q *Query) resolvePrimaryKeyNames(operation string) (string, string, string, string, error) {
 	if q == nil {
-		return nil, fmt.Errorf("query cannot be nil")
+		return "", "", "", "", fmt.Errorf("query cannot be nil")
 	}
 	if q.metadata == nil {
-		return nil, fmt.Errorf("model metadata is required for %s operations", operation)
+		return "", "", "", "", fmt.Errorf("model metadata is required for %s operations", operation)
 	}
 
 	schema := q.metadata.PrimaryKey()
 	if schema.PartitionKey == "" {
-		return nil, fmt.Errorf("partition key is required for %s", operation)
+		return "", "", "", "", fmt.Errorf("partition key is required for %s", operation)
 	}
 
 	pkGo := schema.PartitionKey
@@ -1599,6 +1619,10 @@ func (q *Query) buildPrimaryKeyMap(operation string) (map[string]types.Attribute
 		skAttr = q.resolveAttributeName(skGo)
 	}
 
+	return pkGo, pkAttr, skGo, skAttr, nil
+}
+
+func (q *Query) extractPrimaryKeyValuesFromConditions(pkGo, pkAttr, skGo, skAttr string) (any, bool, any, bool, error) {
 	var pkValue any
 	var skValue any
 	pkFound := false
@@ -1609,7 +1633,7 @@ func (q *Query) buildPrimaryKeyMap(operation string) (map[string]types.Attribute
 
 		if strings.EqualFold(goField, pkGo) || strings.EqualFold(attrName, pkAttr) {
 			if strings.TrimSpace(cond.Operator) != "=" {
-				return nil, fmt.Errorf("key condition must use '=' operator")
+				return nil, false, nil, false, fmt.Errorf("key condition must use '=' operator")
 			}
 			pkValue = cond.Value
 			pkFound = true
@@ -1618,65 +1642,27 @@ func (q *Query) buildPrimaryKeyMap(operation string) (map[string]types.Attribute
 
 		if skGo != "" && (strings.EqualFold(goField, skGo) || strings.EqualFold(attrName, skAttr)) {
 			if strings.TrimSpace(cond.Operator) != "=" {
-				return nil, fmt.Errorf("key condition must use '=' operator")
+				return nil, false, nil, false, fmt.Errorf("key condition must use '=' operator")
 			}
 			skValue = cond.Value
 			skFound = true
 		}
 	}
 
-	if (!pkFound || (skGo != "" && !skFound)) && q.model != nil {
-		modelValue := reflect.ValueOf(q.model)
-		if modelValue.IsValid() && modelValue.Kind() == reflect.Ptr {
-			if modelValue.IsNil() {
-				modelValue = reflect.Value{}
-			} else {
-				modelValue = modelValue.Elem()
-			}
-		}
+	return pkValue, pkFound, skValue, skFound, nil
+}
 
-		if modelValue.IsValid() && modelValue.Kind() == reflect.Struct {
-			if q.rawMetadata != nil && q.rawMetadata.PrimaryKey != nil && q.rawMetadata.PrimaryKey.PartitionKey != nil {
-				field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.PartitionKey.IndexPath)
-				if !field.IsZero() && !pkFound {
-					pkValue = field.Interface()
-					pkFound = true
-				}
-
-				if skGo != "" && q.rawMetadata.PrimaryKey.SortKey != nil {
-					field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.SortKey.IndexPath)
-					if !field.IsZero() && !skFound {
-						skValue = field.Interface()
-						skFound = true
-					}
-				}
-			} else {
-				if !pkFound {
-					field := modelValue.FieldByName(pkGo)
-					if field.IsValid() && !field.IsZero() {
-						pkValue = field.Interface()
-						pkFound = true
-					}
-				}
-
-				if skGo != "" && !skFound {
-					field := modelValue.FieldByName(skGo)
-					if field.IsValid() && !field.IsZero() {
-						skValue = field.Interface()
-						skFound = true
-					}
-				}
-			}
-		}
-	}
-
+func validatePrimaryKeyValues(operation, pkGo, skGo string, pkFound, skFound bool) error {
 	if !pkFound {
-		return nil, fmt.Errorf("partition key %s is required for %s", pkGo, operation)
+		return fmt.Errorf("partition key %s is required for %s", pkGo, operation)
 	}
 	if skGo != "" && !skFound {
-		return nil, fmt.Errorf("sort key %s is required for %s", skGo, operation)
+		return fmt.Errorf("sort key %s is required for %s", skGo, operation)
 	}
+	return nil
+}
 
+func (q *Query) buildPrimaryKeyAttributeValues(pkAttr string, pkValue any, skAttr string, skValue any, hasSortKey bool) (map[string]types.AttributeValue, error) {
 	pkAV, err := q.toAttributeValue(pkValue)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert partition key: %w", err)
@@ -1685,13 +1671,15 @@ func (q *Query) buildPrimaryKeyMap(operation string) (map[string]types.Attribute
 	key := map[string]types.AttributeValue{
 		pkAttr: pkAV,
 	}
-	if skGo != "" {
-		skAV, err := q.toAttributeValue(skValue)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert sort key: %w", err)
-		}
-		key[skAttr] = skAV
+	if !hasSortKey {
+		return key, nil
 	}
+
+	skAV, err := q.toAttributeValue(skValue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert sort key: %w", err)
+	}
+	key[skAttr] = skAV
 
 	return key, nil
 }
@@ -1949,94 +1937,17 @@ func (q *Query) compileGetItem() (*core.CompiledQuery, map[string]types.Attribut
 		return nil, nil, false, nil
 	}
 
-	schema := q.metadata.PrimaryKey()
-	if schema.PartitionKey == "" {
-		return nil, nil, false, fmt.Errorf("partition key is required for get item operations")
+	pkGo, pkAttr, skGo, skAttr, err := q.getItemKeyNames()
+	if err != nil {
+		return nil, nil, false, err
 	}
 
-	pkGo := schema.PartitionKey
-	pkAttr := q.resolveAttributeName(pkGo)
-	skGo := schema.SortKey
-	skAttr := ""
-	if skGo != "" {
-		skAttr = q.resolveAttributeName(skGo)
-	}
-
-	var pkValue any
-	var skValue any
-	pkFound := false
-	skFound := false
-
-	for _, cond := range q.conditions {
-		_, goField, attrName := q.normalizeCondition(cond)
-
-		if strings.EqualFold(goField, pkGo) || strings.EqualFold(attrName, pkAttr) {
-			if strings.TrimSpace(cond.Operator) != "=" {
-				return nil, nil, false, nil
-			}
-			pkValue = cond.Value
-			pkFound = true
-			continue
-		}
-
-		if skGo != "" && (strings.EqualFold(goField, skGo) || strings.EqualFold(attrName, skAttr)) {
-			if strings.TrimSpace(cond.Operator) != "=" {
-				return nil, nil, false, nil
-			}
-			skValue = cond.Value
-			skFound = true
-			continue
-		}
-
-		// Non-key WHERE conditions must use Query/Scan semantics.
+	pkValue, pkFound, skValue, skFound, ok := q.extractGetItemKeyValuesFromConditions(pkGo, pkAttr, skGo, skAttr)
+	if !ok {
 		return nil, nil, false, nil
 	}
 
-	// Fall back to extracting key values from the model.
-	if (!pkFound || (skGo != "" && !skFound)) && q.model != nil {
-		modelValue := reflect.ValueOf(q.model)
-		if modelValue.IsValid() && modelValue.Kind() == reflect.Ptr {
-			if modelValue.IsNil() {
-				modelValue = reflect.Value{}
-			} else {
-				modelValue = modelValue.Elem()
-			}
-		}
-
-		if modelValue.IsValid() && modelValue.Kind() == reflect.Struct {
-			if q.rawMetadata != nil && q.rawMetadata.PrimaryKey != nil && q.rawMetadata.PrimaryKey.PartitionKey != nil {
-				field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.PartitionKey.IndexPath)
-				if !field.IsZero() && !pkFound {
-					pkValue = field.Interface()
-					pkFound = true
-				}
-
-				if skGo != "" && q.rawMetadata.PrimaryKey.SortKey != nil {
-					field := modelValue.FieldByIndex(q.rawMetadata.PrimaryKey.SortKey.IndexPath)
-					if !field.IsZero() && !skFound {
-						skValue = field.Interface()
-						skFound = true
-					}
-				}
-			} else {
-				if !pkFound {
-					field := modelValue.FieldByName(pkGo)
-					if field.IsValid() && !field.IsZero() {
-						pkValue = field.Interface()
-						pkFound = true
-					}
-				}
-
-				if skGo != "" && !skFound {
-					field := modelValue.FieldByName(skGo)
-					if field.IsValid() && !field.IsZero() {
-						skValue = field.Interface()
-						skFound = true
-					}
-				}
-			}
-		}
-	}
+	q.fillKeyValuesFromModel(pkGo, skGo, &pkValue, &pkFound, &skValue, &skFound)
 
 	if !pkFound {
 		return nil, nil, false, nil
@@ -2045,20 +1956,9 @@ func (q *Query) compileGetItem() (*core.CompiledQuery, map[string]types.Attribut
 		return nil, nil, false, nil
 	}
 
-	pkAV, err := q.toAttributeValue(pkValue)
+	key, err := q.buildPrimaryKeyAttributeValues(pkAttr, pkValue, skAttr, skValue, skGo != "")
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("failed to convert partition key: %w", err)
-	}
-
-	key := map[string]types.AttributeValue{
-		pkAttr: pkAV,
-	}
-	if skGo != "" {
-		skAV, err := q.toAttributeValue(skValue)
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("failed to convert sort key: %w", err)
-		}
-		key[skAttr] = skAV
+		return nil, nil, false, err
 	}
 
 	compiled := &core.CompiledQuery{
@@ -2079,20 +1979,55 @@ func (q *Query) compileGetItem() (*core.CompiledQuery, map[string]types.Attribut
 	return compiled, key, true, nil
 }
 
-// convertItemToAttributeValue converts an item to DynamoDB AttributeValue map
-func convertItemToAttributeValue(item any) (map[string]types.AttributeValue, error) {
-	// Use our new converter
-	av, err := expr.ConvertToAttributeValue(item)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert item: %w", err)
+func (q *Query) getItemKeyNames() (string, string, string, string, error) {
+	schema := q.metadata.PrimaryKey()
+	if schema.PartitionKey == "" {
+		return "", "", "", "", fmt.Errorf("partition key is required for get item operations")
 	}
 
-	// The converter returns a M type for structs
-	if m, ok := av.(*types.AttributeValueMemberM); ok {
-		return m.Value, nil
+	pkGo := schema.PartitionKey
+	pkAttr := q.resolveAttributeName(pkGo)
+	skGo := schema.SortKey
+	skAttr := ""
+	if skGo != "" {
+		skAttr = q.resolveAttributeName(skGo)
 	}
 
-	return nil, fmt.Errorf("expected map type for struct conversion, got %T", av)
+	return pkGo, pkAttr, skGo, skAttr, nil
+}
+
+func (q *Query) extractGetItemKeyValuesFromConditions(pkGo, pkAttr, skGo, skAttr string) (any, bool, any, bool, bool) {
+	var pkValue any
+	var skValue any
+	pkFound := false
+	skFound := false
+
+	for _, cond := range q.conditions {
+		_, goField, attrName := q.normalizeCondition(cond)
+
+		if strings.EqualFold(goField, pkGo) || strings.EqualFold(attrName, pkAttr) {
+			if strings.TrimSpace(cond.Operator) != "=" {
+				return nil, false, nil, false, false
+			}
+			pkValue = cond.Value
+			pkFound = true
+			continue
+		}
+
+		if skGo != "" && (strings.EqualFold(goField, skGo) || strings.EqualFold(attrName, skAttr)) {
+			if strings.TrimSpace(cond.Operator) != "=" {
+				return nil, false, nil, false, false
+			}
+			skValue = cond.Value
+			skFound = true
+			continue
+		}
+
+		// Non-key WHERE conditions must use Query/Scan semantics.
+		return nil, false, nil, false, false
+	}
+
+	return pkValue, pkFound, skValue, skFound, true
 }
 
 func (q *Query) marshalItem(item any) (map[string]types.AttributeValue, error) {
@@ -2134,52 +2069,80 @@ func (q *Query) marshalItemReflect(item any) (map[string]types.AttributeValue, e
 			continue
 		}
 
-		fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
-		if fieldMeta.OmitEmpty && fieldValue.IsZero() {
-			continue
-		}
-
-		valueToConvert := fieldValue.Interface()
-		switch {
-		case fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt:
-			valueToConvert = now
-		case fieldMeta.IsVersion:
-			if fieldValue.IsZero() {
-				valueToConvert = int64(0)
-			}
-		case fieldMeta.IsTTL:
-			if fieldValue.Type() == reflect.TypeOf(time.Time{}) && !fieldValue.IsZero() {
-				ttlTime, ok := fieldValue.Interface().(time.Time)
-				if !ok {
-					return nil, fmt.Errorf("expected time.Time for TTL field %s, got %T", fieldMeta.DBName, fieldValue.Interface())
-				}
-				valueToConvert = ttlTime.Unix()
-			}
-		}
-
-		var av types.AttributeValue
-		var err error
-		if q.converter != nil {
-			if fieldMeta.IsSet {
-				av, err = q.converter.ConvertToSet(valueToConvert, true)
-			} else {
-				av, err = q.converter.ToAttributeValue(valueToConvert)
-			}
-		} else {
-			av, err = expr.ConvertToAttributeValue(valueToConvert)
-		}
+		av, skip, err := q.marshalFieldValueReflect(modelValue, fieldMeta, now)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert field %s: %w", fieldMeta.DBName, err)
+			return nil, err
 		}
-
-		if _, isNull := av.(*types.AttributeValueMemberNULL); isNull && fieldMeta.OmitEmpty {
+		if skip {
 			continue
 		}
-
 		itemMap[fieldMeta.DBName] = av
 	}
 
 	return itemMap, nil
+}
+
+func (q *Query) marshalFieldValueReflect(modelValue reflect.Value, fieldMeta *model.FieldMetadata, now time.Time) (types.AttributeValue, bool, error) {
+	fieldValue := modelValue.FieldByIndex(fieldMeta.IndexPath)
+	if fieldMeta.OmitEmpty && fieldValue.IsZero() {
+		return nil, true, nil
+	}
+
+	valueToConvert, err := q.marshalFieldSourceValue(fieldMeta, fieldValue, now)
+	if err != nil {
+		return nil, false, err
+	}
+
+	av, err := q.marshalAttributeValue(fieldMeta, valueToConvert)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to convert field %s: %w", fieldMeta.DBName, err)
+	}
+
+	if _, isNull := av.(*types.AttributeValueMemberNULL); isNull && fieldMeta.OmitEmpty {
+		return nil, true, nil
+	}
+
+	return av, false, nil
+}
+
+func (q *Query) marshalFieldSourceValue(fieldMeta *model.FieldMetadata, fieldValue reflect.Value, now time.Time) (any, error) {
+	valueToConvert := fieldValue.Interface()
+
+	switch {
+	case fieldMeta.IsCreatedAt || fieldMeta.IsUpdatedAt:
+		return now, nil
+	case fieldMeta.IsVersion:
+		if fieldValue.IsZero() {
+			return int64(0), nil
+		}
+		return valueToConvert, nil
+	case fieldMeta.IsTTL:
+		return ttlUnixSecondsIfTime(fieldMeta.DBName, fieldValue, valueToConvert)
+	default:
+		return valueToConvert, nil
+	}
+}
+
+func ttlUnixSecondsIfTime(fieldName string, fieldValue reflect.Value, value any) (any, error) {
+	if fieldValue.Type() != reflect.TypeOf(time.Time{}) || fieldValue.IsZero() {
+		return value, nil
+	}
+
+	ttlTime, ok := value.(time.Time)
+	if !ok {
+		return nil, fmt.Errorf("expected time.Time for TTL field %s, got %T", fieldName, value)
+	}
+	return ttlTime.Unix(), nil
+}
+
+func (q *Query) marshalAttributeValue(fieldMeta *model.FieldMetadata, value any) (types.AttributeValue, error) {
+	if q.converter != nil {
+		if fieldMeta.IsSet {
+			return q.converter.ConvertToSet(value, true)
+		}
+		return q.converter.ToAttributeValue(value)
+	}
+	return expr.ConvertToAttributeValue(value)
 }
 
 func (q *Query) marshalItemTagged(item any) (map[string]types.AttributeValue, error) {

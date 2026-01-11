@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -166,36 +167,153 @@ func (qe *queryExecutor) unmarshalItem(item map[string]types.AttributeValue, des
 	if qe == nil || qe.db == nil || qe.db.converter == nil {
 		return fmt.Errorf("converter is required for unmarshal")
 	}
-	if dest == nil {
+
+	destValue, err := derefNonNilPointer(dest)
+	if err != nil {
+		return err
+	}
+
+	switch destValue.Kind() {
+	case reflect.Map:
+		return qe.unmarshalItemToMap(item, destValue)
+	case reflect.Struct:
+		return qe.unmarshalItemToStruct(item, destValue)
+	default:
 		return fmt.Errorf("destination must be a pointer to a struct or map")
+	}
+}
+
+func derefNonNilPointer(dest any) (reflect.Value, error) {
+	if dest == nil {
+		return reflect.Value{}, fmt.Errorf("destination must be a pointer to a struct or map")
 	}
 
 	destValue := reflect.ValueOf(dest)
 	if destValue.Kind() != reflect.Ptr || destValue.IsNil() {
-		return fmt.Errorf("destination must be a pointer")
+		return reflect.Value{}, fmt.Errorf("destination must be a pointer")
 	}
-	destValue = destValue.Elem()
 
-	if destValue.Kind() == reflect.Map {
-		if destValue.IsNil() {
-			destValue.Set(reflect.MakeMap(destValue.Type()))
-		}
+	return destValue.Elem(), nil
+}
 
-		for attrName, attrValue := range item {
-			var val any
-			if err := qe.db.converter.FromAttributeValue(attrValue, &val); err != nil {
+func (qe *queryExecutor) unmarshalItemToMap(item map[string]types.AttributeValue, destValue reflect.Value) error {
+	if destValue.Type().Key().Kind() != reflect.String {
+		return fmt.Errorf("destination map key must be a string")
+	}
+	if destValue.IsNil() {
+		destValue.Set(reflect.MakeMap(destValue.Type()))
+	}
+
+	valueType := destValue.Type().Elem()
+	attributeValueType := reflect.TypeOf((*types.AttributeValue)(nil)).Elem()
+
+	for attrName, attrValue := range item {
+		var value reflect.Value
+		switch {
+		case valueType == attributeValueType:
+			value = reflect.ValueOf(attrValue)
+		case valueType.Kind() == reflect.Interface && valueType.NumMethod() == 0:
+			decoded, err := attributeValueToInterface(attrValue)
+			if err != nil {
 				return fmt.Errorf("failed to unmarshal field %s: %w", attrName, err)
 			}
-			destValue.SetMapIndex(reflect.ValueOf(attrName), reflect.ValueOf(val))
+			if decoded == nil {
+				value = reflect.Zero(valueType)
+			} else {
+				value = reflect.ValueOf(decoded)
+			}
+		default:
+			target := reflect.New(valueType)
+			if err := qe.db.converter.FromAttributeValue(attrValue, target.Interface()); err != nil {
+				return fmt.Errorf("failed to unmarshal field %s: %w", attrName, err)
+			}
+			value = target.Elem()
 		}
 
-		return nil
+		if !value.IsValid() {
+			value = reflect.Zero(valueType)
+		}
+
+		destValue.SetMapIndex(reflect.ValueOf(attrName), value)
 	}
 
-	if destValue.Kind() != reflect.Struct {
-		return fmt.Errorf("destination must be a pointer to a struct or map")
-	}
+	return nil
+}
 
+func attributeValueToInterface(av types.AttributeValue) (interface{}, error) {
+	switch typed := av.(type) {
+	case *types.AttributeValueMemberS:
+		return typed.Value, nil
+	case *types.AttributeValueMemberN:
+		return parseNumberToInterface(typed.Value)
+	case *types.AttributeValueMemberBOOL:
+		return typed.Value, nil
+	case *types.AttributeValueMemberNULL:
+		return nil, nil
+	case *types.AttributeValueMemberL:
+		return attributeValueListToInterface(typed.Value)
+	case *types.AttributeValueMemberM:
+		return attributeValueMapToInterface(typed.Value)
+	case *types.AttributeValueMemberSS:
+		return typed.Value, nil
+	case *types.AttributeValueMemberNS:
+		return attributeValueNumberSetToFloat64(typed.Value)
+	case *types.AttributeValueMemberBS:
+		return typed.Value, nil
+	case *types.AttributeValueMemberB:
+		return typed.Value, nil
+	default:
+		return nil, fmt.Errorf("unsupported attribute value type: %T", av)
+	}
+}
+
+func parseNumberToInterface(value string) (interface{}, error) {
+	if intVal, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return intVal, nil
+	}
+	if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
+		return floatVal, nil
+	}
+	return nil, fmt.Errorf("invalid number format: %s", value)
+}
+
+func attributeValueListToInterface(values []types.AttributeValue) ([]interface{}, error) {
+	out := make([]interface{}, len(values))
+	for i, item := range values {
+		converted, err := attributeValueToInterface(item)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = converted
+	}
+	return out, nil
+}
+
+func attributeValueMapToInterface(values map[string]types.AttributeValue) (map[string]interface{}, error) {
+	out := make(map[string]interface{}, len(values))
+	for key, item := range values {
+		converted, err := attributeValueToInterface(item)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = converted
+	}
+	return out, nil
+}
+
+func attributeValueNumberSetToFloat64(values []string) ([]float64, error) {
+	out := make([]float64, len(values))
+	for i, numStr := range values {
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = f
+	}
+	return out, nil
+}
+
+func (qe *queryExecutor) unmarshalItemToStruct(item map[string]types.AttributeValue, destValue reflect.Value) error {
 	if qe.metadata == nil {
 		return fmt.Errorf("model metadata is required for unmarshal")
 	}
@@ -252,65 +370,7 @@ func (qe *queryExecutor) unmarshalItems(items []map[string]types.AttributeValue,
 	return nil
 }
 
-func (qe *queryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
-	if input == nil {
-		return fmt.Errorf("compiled query cannot be nil")
-	}
-	if err := qe.checkLambdaTimeout(); err != nil {
-		return err
-	}
-	if err := qe.failClosedIfEncrypted(); err != nil {
-		return err
-	}
-
-	client, err := qe.session().Client()
-	if err != nil {
-		return fmt.Errorf("failed to get client for query: %w", err)
-	}
-
-	queryInput := buildDynamoQueryInput(input)
-
-	if isCountSelect(input.Select) {
-		queryInput.Select = types.SelectCount
-		queryInput.Limit = nil
-
-		var totalCount int64
-		var scannedCount int64
-
-		paginator := dynamodb.NewQueryPaginator(client, queryInput)
-		for paginator.HasMorePages() {
-			output, err := paginator.NextPage(qe.ctxOrBackground())
-			if err != nil {
-				return fmt.Errorf("failed to count items: %w", err)
-			}
-			totalCount += int64(output.Count)
-			scannedCount += int64(output.ScannedCount)
-		}
-
-		return writeCountResult(dest, totalCount, scannedCount)
-	}
-
-	paginator := dynamodb.NewQueryPaginator(client, queryInput)
-
-	limit, hasLimit := compiledQueryLimit(input)
-	items, err := collectPaginatedItems(
-		paginator.HasMorePages,
-		func(ctx context.Context) ([]map[string]types.AttributeValue, error) {
-			output, err := paginator.NextPage(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to query items: %w", err)
-			}
-			return output.Items, nil
-		},
-		limit,
-		hasLimit,
-		true,
-		qe.ctxOrBackground(),
-	)
-	if err != nil {
-		return err
-	}
-
+func (qe *queryExecutor) writeItemsToDest(items []map[string]types.AttributeValue, dest any) error {
 	for _, item := range items {
 		if err := qe.decryptItem(item); err != nil {
 			return err
@@ -323,161 +383,331 @@ func (qe *queryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error
 	}
 
 	return qe.unmarshalItems(items, dest)
+}
+
+type countPageFunc func(context.Context) (int32, int32, error)
+type itemPageFunc func(context.Context) ([]map[string]types.AttributeValue, error)
+
+type pagePaginator[Output any] interface {
+	HasMorePages() bool
+	NextPage(context.Context, ...func(*dynamodb.Options)) (*Output, error)
+}
+
+type readPagerSpec struct {
+	buildCountPager func(*dynamodb.Client, *core.CompiledQuery) (func() bool, countPageFunc)
+	buildItemPager  func(*dynamodb.Client, *core.CompiledQuery) (func() bool, itemPageFunc)
+	nilErr          string
+	operation       string
+}
+
+func newReadPagerSpec[Input any, Output any, P pagePaginator[Output]](
+	nilErr string,
+	operation string,
+	buildInput func(*core.CompiledQuery) *Input,
+	configureCountInput func(*Input),
+	newPaginator func(*dynamodb.Client, *Input) P,
+	extractCounts func(*Output) (int32, int32),
+	extractItems func(*Output) []map[string]types.AttributeValue,
+) readPagerSpec {
+	return readPagerSpec{
+		nilErr:    nilErr,
+		operation: operation,
+		buildCountPager: func(client *dynamodb.Client, input *core.CompiledQuery) (func() bool, countPageFunc) {
+			countInput := buildInput(input)
+			configureCountInput(countInput)
+
+			paginator := newPaginator(client, countInput)
+			return paginator.HasMorePages, func(ctx context.Context) (int32, int32, error) {
+				page, pageErr := paginator.NextPage(ctx)
+				if pageErr != nil {
+					return 0, 0, fmt.Errorf("failed to count items: %w", pageErr)
+				}
+
+				count, scannedCount := extractCounts(page)
+				return count, scannedCount, nil
+			}
+		},
+		buildItemPager: func(client *dynamodb.Client, input *core.CompiledQuery) (func() bool, itemPageFunc) {
+			itemInput := buildInput(input)
+
+			paginator := newPaginator(client, itemInput)
+			return paginator.HasMorePages, func(ctx context.Context) ([]map[string]types.AttributeValue, error) {
+				page, pageErr := paginator.NextPage(ctx)
+				if pageErr != nil {
+					return nil, fmt.Errorf("failed to %s items: %w", operation, pageErr)
+				}
+				return extractItems(page), nil
+			}
+		},
+	}
+}
+
+func (qe *queryExecutor) executeReadSpec(input *core.CompiledQuery, dest any, spec readPagerSpec) error {
+	return qe.executeRead(
+		input,
+		dest,
+		spec.nilErr,
+		spec.operation,
+		func(client *dynamodb.Client) (func() bool, countPageFunc) {
+			return spec.buildCountPager(client, input)
+		},
+		func(client *dynamodb.Client) (func() bool, itemPageFunc) {
+			return spec.buildItemPager(client, input)
+		},
+	)
+}
+
+type singlePageResult struct {
+	lastEvaluatedKey map[string]types.AttributeValue
+	items            []map[string]types.AttributeValue
+	count            int32
+	scannedCount     int32
+}
+
+type singlePageSpec struct {
+	execute   func(context.Context, *dynamodb.Client, *core.CompiledQuery) (singlePageResult, error)
+	nilErr    string
+	operation string
+}
+
+func (qe *queryExecutor) executeReadWithPaginationSpec(input *core.CompiledQuery, dest any, spec singlePageSpec) (singlePageResult, error) {
+	return qe.executeReadWithPagination(
+		input,
+		dest,
+		spec.nilErr,
+		spec.operation,
+		func(client *dynamodb.Client, ctx context.Context) (singlePageResult, error) {
+			return spec.execute(ctx, client, input)
+		},
+	)
+}
+
+func executeReadWithPaginationConverted[T any](
+	qe *queryExecutor,
+	input *core.CompiledQuery,
+	dest any,
+	spec singlePageSpec,
+	convert func(singlePageResult) T,
+) (*T, error) {
+	result, err := qe.executeReadWithPaginationSpec(input, dest, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	converted := convert(result)
+	return &converted, nil
+}
+
+func configureQueryCountInput(queryInput *dynamodb.QueryInput) {
+	queryInput.Select = types.SelectCount
+	queryInput.Limit = nil
+}
+
+func configureScanCountInput(scanInput *dynamodb.ScanInput) {
+	scanInput.Select = types.SelectCount
+	scanInput.Limit = nil
+}
+
+func newQueryPaginator(client *dynamodb.Client, queryInput *dynamodb.QueryInput) *dynamodb.QueryPaginator {
+	return dynamodb.NewQueryPaginator(client, queryInput)
+}
+
+func newScanPaginator(client *dynamodb.Client, scanInput *dynamodb.ScanInput) *dynamodb.ScanPaginator {
+	return dynamodb.NewScanPaginator(client, scanInput)
+}
+
+func queryCountsFromOutput(out *dynamodb.QueryOutput) (int32, int32) {
+	return out.Count, out.ScannedCount
+}
+
+func scanCountsFromOutput(out *dynamodb.ScanOutput) (int32, int32) {
+	return out.Count, out.ScannedCount
+}
+
+func queryItemsFromOutput(out *dynamodb.QueryOutput) []map[string]types.AttributeValue {
+	return out.Items
+}
+
+func scanItemsFromOutput(out *dynamodb.ScanOutput) []map[string]types.AttributeValue {
+	return out.Items
+}
+
+func newSinglePageResult(
+	items []map[string]types.AttributeValue,
+	count int32,
+	scannedCount int32,
+	lastEvaluatedKey map[string]types.AttributeValue,
+) singlePageResult {
+	return singlePageResult{
+		items:            items,
+		count:            count,
+		scannedCount:     scannedCount,
+		lastEvaluatedKey: lastEvaluatedKey,
+	}
+}
+
+func executeQuerySinglePage(ctx context.Context, client *dynamodb.Client, input *core.CompiledQuery) (singlePageResult, error) {
+	out, err := client.Query(ctx, buildDynamoQueryInput(input))
+	if err != nil {
+		return singlePageResult{}, fmt.Errorf("failed to execute query: %w", err)
+	}
+	return newSinglePageResult(out.Items, out.Count, out.ScannedCount, out.LastEvaluatedKey), nil
+}
+
+func executeScanSinglePage(ctx context.Context, client *dynamodb.Client, input *core.CompiledQuery) (singlePageResult, error) {
+	out, err := client.Scan(ctx, buildDynamoScanInput(input))
+	if err != nil {
+		return singlePageResult{}, fmt.Errorf("failed to execute scan: %w", err)
+	}
+	return newSinglePageResult(out.Items, out.Count, out.ScannedCount, out.LastEvaluatedKey), nil
+}
+
+var queryReadPagerSpec = newReadPagerSpec(
+	"compiled query cannot be nil",
+	"query",
+	buildDynamoQueryInput,
+	configureQueryCountInput,
+	newQueryPaginator,
+	queryCountsFromOutput,
+	queryItemsFromOutput,
+)
+
+var scanReadPagerSpec = newReadPagerSpec(
+	"compiled scan cannot be nil",
+	"scan",
+	buildDynamoScanInput,
+	configureScanCountInput,
+	newScanPaginator,
+	scanCountsFromOutput,
+	scanItemsFromOutput,
+)
+
+var querySinglePageSpec = singlePageSpec{
+	nilErr:    "compiled query cannot be nil",
+	operation: "query",
+	execute:   executeQuerySinglePage,
+}
+
+var scanSinglePageSpec = singlePageSpec{
+	nilErr:    "compiled scan cannot be nil",
+	operation: "scan",
+	execute:   executeScanSinglePage,
+}
+
+func (qe *queryExecutor) readClient(input *core.CompiledQuery, nilErr string, operation string) (*dynamodb.Client, error) {
+	if input == nil {
+		return nil, errors.New(nilErr)
+	}
+	if err := qe.checkLambdaTimeout(); err != nil {
+		return nil, err
+	}
+	if err := qe.failClosedIfEncrypted(); err != nil {
+		return nil, err
+	}
+
+	client, err := qe.session().Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for %s: %w", operation, err)
+	}
+	return client, nil
+}
+
+func (qe *queryExecutor) executeRead(
+	input *core.CompiledQuery,
+	dest any,
+	nilErr string,
+	operation string,
+	buildCountPager func(*dynamodb.Client) (func() bool, countPageFunc),
+	buildItemPager func(*dynamodb.Client) (func() bool, itemPageFunc),
+) error {
+	client, err := qe.readClient(input, nilErr, operation)
+	if err != nil {
+		return err
+	}
+
+	if isCountSelect(input.Select) {
+		hasMorePages, nextPage := buildCountPager(client)
+		totalCount, scannedCount, countErr := collectPaginatedCounts(qe.ctxOrBackground(), hasMorePages, nextPage)
+		if countErr != nil {
+			return countErr
+		}
+		return writeCountResult(dest, totalCount, scannedCount)
+	}
+
+	hasMorePages, nextPage := buildItemPager(client)
+	limit, hasLimit := compiledQueryLimit(input)
+	items, itemsErr := collectPaginatedItems(qe.ctxOrBackground(), hasMorePages, nextPage, limit, hasLimit, true)
+	if itemsErr != nil {
+		return itemsErr
+	}
+
+	return qe.writeItemsToDest(items, dest)
+}
+
+func (qe *queryExecutor) executeReadWithPagination(
+	input *core.CompiledQuery,
+	dest any,
+	nilErr string,
+	operation string,
+	execute func(*dynamodb.Client, context.Context) (singlePageResult, error),
+) (singlePageResult, error) {
+	client, err := qe.readClient(input, nilErr, operation)
+	if err != nil {
+		return singlePageResult{}, err
+	}
+
+	result, execErr := execute(client, qe.ctxOrBackground())
+	if execErr != nil {
+		return singlePageResult{}, execErr
+	}
+
+	if err := qe.writeItemsToDest(result.items, dest); err != nil {
+		return singlePageResult{}, err
+	}
+
+	return result, nil
+}
+
+func (qe *queryExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
+	return qe.executeReadSpec(input, dest, queryReadPagerSpec)
 }
 
 func (qe *queryExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
-	if input == nil {
-		return fmt.Errorf("compiled scan cannot be nil")
-	}
-	if err := qe.checkLambdaTimeout(); err != nil {
-		return err
-	}
-	if err := qe.failClosedIfEncrypted(); err != nil {
-		return err
-	}
-
-	client, err := qe.session().Client()
-	if err != nil {
-		return fmt.Errorf("failed to get client for scan: %w", err)
-	}
-
-	scanInput := buildDynamoScanInput(input)
-
-	if isCountSelect(input.Select) {
-		scanInput.Select = types.SelectCount
-		scanInput.Limit = nil
-
-		var totalCount int64
-		var scannedCount int64
-
-		paginator := dynamodb.NewScanPaginator(client, scanInput)
-		for paginator.HasMorePages() {
-			output, err := paginator.NextPage(qe.ctxOrBackground())
-			if err != nil {
-				return fmt.Errorf("failed to count items: %w", err)
-			}
-			totalCount += int64(output.Count)
-			scannedCount += int64(output.ScannedCount)
-		}
-
-		return writeCountResult(dest, totalCount, scannedCount)
-	}
-
-	paginator := dynamodb.NewScanPaginator(client, scanInput)
-
-	limit, hasLimit := compiledQueryLimit(input)
-	items, err := collectPaginatedItems(
-		paginator.HasMorePages,
-		func(ctx context.Context) ([]map[string]types.AttributeValue, error) {
-			output, err := paginator.NextPage(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to scan items: %w", err)
-			}
-			return output.Items, nil
-		},
-		limit,
-		hasLimit,
-		true,
-		qe.ctxOrBackground(),
-	)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range items {
-		if err := qe.decryptItem(item); err != nil {
-			return err
-		}
-	}
-
-	if rawDest, ok := dest.(*[]map[string]types.AttributeValue); ok && rawDest != nil {
-		*rawDest = append((*rawDest)[:0], items...)
-		return nil
-	}
-
-	return qe.unmarshalItems(items, dest)
+	return qe.executeReadSpec(input, dest, scanReadPagerSpec)
 }
 
 func (qe *queryExecutor) ExecuteQueryWithPagination(input *core.CompiledQuery, dest any) (*query.QueryResult, error) {
-	if input == nil {
-		return nil, fmt.Errorf("compiled query cannot be nil")
-	}
-	if err := qe.checkLambdaTimeout(); err != nil {
-		return nil, err
-	}
-	if err := qe.failClosedIfEncrypted(); err != nil {
-		return nil, err
-	}
-
-	client, err := qe.session().Client()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for query: %w", err)
-	}
-
-	out, err := client.Query(qe.ctxOrBackground(), buildDynamoQueryInput(input))
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute query: %w", err)
-	}
-
-	for _, item := range out.Items {
-		if err := qe.decryptItem(item); err != nil {
-			return nil, err
-		}
-	}
-
-	if rawDest, ok := dest.(*[]map[string]types.AttributeValue); ok && rawDest != nil {
-		*rawDest = append((*rawDest)[:0], out.Items...)
-	} else if err := qe.unmarshalItems(out.Items, dest); err != nil {
-		return nil, err
-	}
-
-	return &query.QueryResult{
-		Items:            out.Items,
-		Count:            int64(out.Count),
-		ScannedCount:     int64(out.ScannedCount),
-		LastEvaluatedKey: out.LastEvaluatedKey,
-	}, nil
+	return executeReadWithPaginationConverted(
+		qe,
+		input,
+		dest,
+		querySinglePageSpec,
+		func(result singlePageResult) query.QueryResult {
+			return query.QueryResult{
+				Items:            result.items,
+				Count:            int64(result.count),
+				ScannedCount:     int64(result.scannedCount),
+				LastEvaluatedKey: result.lastEvaluatedKey,
+			}
+		},
+	)
 }
 
 func (qe *queryExecutor) ExecuteScanWithPagination(input *core.CompiledQuery, dest any) (*query.ScanResult, error) {
-	if input == nil {
-		return nil, fmt.Errorf("compiled scan cannot be nil")
-	}
-	if err := qe.checkLambdaTimeout(); err != nil {
-		return nil, err
-	}
-	if err := qe.failClosedIfEncrypted(); err != nil {
-		return nil, err
-	}
-
-	client, err := qe.session().Client()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get client for scan: %w", err)
-	}
-
-	out, err := client.Scan(qe.ctxOrBackground(), buildDynamoScanInput(input))
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute scan: %w", err)
-	}
-
-	for _, item := range out.Items {
-		if err := qe.decryptItem(item); err != nil {
-			return nil, err
-		}
-	}
-
-	if rawDest, ok := dest.(*[]map[string]types.AttributeValue); ok && rawDest != nil {
-		*rawDest = append((*rawDest)[:0], out.Items...)
-	} else if err := qe.unmarshalItems(out.Items, dest); err != nil {
-		return nil, err
-	}
-
-	return &query.ScanResult{
-		Items:            out.Items,
-		Count:            int64(out.Count),
-		ScannedCount:     int64(out.ScannedCount),
-		LastEvaluatedKey: out.LastEvaluatedKey,
-	}, nil
+	return executeReadWithPaginationConverted(
+		qe,
+		input,
+		dest,
+		scanSinglePageSpec,
+		func(result singlePageResult) query.ScanResult {
+			return query.ScanResult{
+				Items:            result.items,
+				Count:            int64(result.count),
+				ScannedCount:     int64(result.scannedCount),
+				LastEvaluatedKey: result.lastEvaluatedKey,
+			}
+		},
+	)
 }
 
 func (qe *queryExecutor) ExecuteGetItem(input *core.CompiledQuery, key map[string]types.AttributeValue, dest any) error {
@@ -583,6 +813,48 @@ func (qe *queryExecutor) ExecutePutItem(input *core.CompiledQuery, item map[stri
 	return nil
 }
 
+func (qe *queryExecutor) buildUpdateItemInput(input *core.CompiledQuery, key map[string]types.AttributeValue) (*dynamodb.UpdateItemInput, error) {
+	exprAttrValues := input.ExpressionAttributeValues
+
+	if qe.metadata != nil && encryption.MetadataHasEncryptedFields(qe.metadata) {
+		svc, err := qe.encryptionService()
+		if err != nil {
+			return nil, err
+		}
+		if err := encryption.EncryptUpdateExpressionValues(
+			qe.ctxOrBackground(),
+			svc,
+			qe.metadata,
+			input.UpdateExpression,
+			input.ExpressionAttributeNames,
+			exprAttrValues,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	updateInput := &dynamodb.UpdateItemInput{
+		TableName:        aws.String(input.TableName),
+		Key:              key,
+		UpdateExpression: aws.String(input.UpdateExpression),
+	}
+
+	if input.ConditionExpression != "" {
+		updateInput.ConditionExpression = aws.String(input.ConditionExpression)
+	}
+	if input.ReturnValues != "" {
+		updateInput.ReturnValues = types.ReturnValue(input.ReturnValues)
+	}
+	if len(input.ExpressionAttributeNames) > 0 {
+		updateInput.ExpressionAttributeNames = input.ExpressionAttributeNames
+	}
+	if len(exprAttrValues) > 0 {
+		updateInput.ExpressionAttributeValues = exprAttrValues
+	}
+
+	return updateInput, nil
+}
+
 func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[string]types.AttributeValue) error {
 	if input == nil {
 		return fmt.Errorf("compiled query cannot be nil")
@@ -597,39 +869,14 @@ func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[st
 		return err
 	}
 
-	exprAttrValues := input.ExpressionAttributeValues
-	if exprAttrValues == nil {
-		exprAttrValues = make(map[string]types.AttributeValue)
-	}
-
-	if qe.metadata != nil && encryption.MetadataHasEncryptedFields(qe.metadata) {
-		svc, err := qe.encryptionService()
-		if err != nil {
-			return err
-		}
-		if err := encryption.EncryptUpdateExpressionValues(qe.ctxOrBackground(), svc, qe.metadata, input.UpdateExpression, input.ExpressionAttributeNames, exprAttrValues); err != nil {
-			return err
-		}
-	}
-
 	client, err := qe.session().Client()
 	if err != nil {
 		return fmt.Errorf("failed to get client for update item: %w", err)
 	}
 
-	updateInput := &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(input.TableName),
-		Key:                       key,
-		UpdateExpression:          aws.String(input.UpdateExpression),
-		ExpressionAttributeNames:  input.ExpressionAttributeNames,
-		ExpressionAttributeValues: exprAttrValues,
-	}
-
-	if input.ConditionExpression != "" {
-		updateInput.ConditionExpression = aws.String(input.ConditionExpression)
-	}
-	if input.ReturnValues != "" {
-		updateInput.ReturnValues = types.ReturnValue(input.ReturnValues)
+	updateInput, err := qe.buildUpdateItemInput(input, key)
+	if err != nil {
+		return err
 	}
 
 	_, err = client.UpdateItem(qe.ctxOrBackground(), updateInput)
@@ -657,39 +904,14 @@ func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, 
 		return nil, err
 	}
 
-	exprAttrValues := input.ExpressionAttributeValues
-	if exprAttrValues == nil {
-		exprAttrValues = make(map[string]types.AttributeValue)
-	}
-
-	if qe.metadata != nil && encryption.MetadataHasEncryptedFields(qe.metadata) {
-		svc, err := qe.encryptionService()
-		if err != nil {
-			return nil, err
-		}
-		if err := encryption.EncryptUpdateExpressionValues(qe.ctxOrBackground(), svc, qe.metadata, input.UpdateExpression, input.ExpressionAttributeNames, exprAttrValues); err != nil {
-			return nil, err
-		}
-	}
-
 	client, err := qe.session().Client()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client for update item: %w", err)
 	}
 
-	updateInput := &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(input.TableName),
-		Key:                       key,
-		UpdateExpression:          aws.String(input.UpdateExpression),
-		ExpressionAttributeNames:  input.ExpressionAttributeNames,
-		ExpressionAttributeValues: exprAttrValues,
-	}
-
-	if input.ConditionExpression != "" {
-		updateInput.ConditionExpression = aws.String(input.ConditionExpression)
-	}
-	if input.ReturnValues != "" {
-		updateInput.ReturnValues = types.ReturnValue(input.ReturnValues)
+	updateInput, err := qe.buildUpdateItemInput(input, key)
+	if err != nil {
+		return nil, err
 	}
 
 	output, err := client.UpdateItem(qe.ctxOrBackground(), updateInput)
@@ -700,28 +922,8 @@ func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, 
 		return nil, fmt.Errorf("failed to update item: %w", err)
 	}
 
-	if qe.metadata != nil && encryption.MetadataHasEncryptedFields(qe.metadata) && len(output.Attributes) > 0 {
-		svc, err := qe.encryptionService()
-		if err != nil {
-			return nil, err
-		}
-
-		for attrName, attrValue := range output.Attributes {
-			fieldMeta, ok := qe.metadata.FieldsByDBName[attrName]
-			if !ok || fieldMeta == nil || !fieldMeta.IsEncrypted {
-				continue
-			}
-
-			decrypted, err := svc.DecryptAttributeValue(qe.ctxOrBackground(), fieldMeta.DBName, attrValue)
-			if err != nil {
-				return nil, &customerrors.EncryptedFieldError{
-					Operation: "decrypt",
-					Field:     fieldMeta.Name,
-					Err:       err,
-				}
-			}
-			output.Attributes[attrName] = decrypted
-		}
+	if err := qe.decryptItem(output.Attributes); err != nil {
+		return nil, err
 	}
 
 	return &core.UpdateResult{
@@ -793,16 +995,28 @@ func (qe *queryExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *co
 		return nil, fmt.Errorf("failed to get client for batch get: %w", err)
 	}
 
-	if opts == nil {
-		opts = core.DefaultBatchGetOptions()
-	} else {
-		opts = opts.Clone()
-	}
+	normalizedOpts := normalizeBatchGetOptions(opts)
 
 	requestItems := map[string]types.KeysAndAttributes{
 		input.TableName: buildKeysAndAttributes(input),
 	}
 
+	return qe.executeBatchGetWithRetry(client, requestItems, input.TableName, normalizedOpts)
+}
+
+func normalizeBatchGetOptions(opts *core.BatchGetOptions) *core.BatchGetOptions {
+	if opts == nil {
+		return core.DefaultBatchGetOptions()
+	}
+	return opts.Clone()
+}
+
+func (qe *queryExecutor) executeBatchGetWithRetry(
+	client *dynamodb.Client,
+	requestItems map[string]types.KeysAndAttributes,
+	tableName string,
+	opts *core.BatchGetOptions,
+) ([]map[string]types.AttributeValue, error) {
 	var collected []map[string]types.AttributeValue
 	retryAttempt := 0
 
@@ -814,21 +1028,15 @@ func (qe *queryExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *co
 			return collected, fmt.Errorf("failed to batch get items: %w", err)
 		}
 
-		if items, exists := output.Responses[input.TableName]; exists {
-			for _, item := range items {
-				if err := qe.decryptItem(item); err != nil {
-					return collected, err
-				}
-				collected = append(collected, item)
+		for _, item := range output.Responses[tableName] {
+			if err := qe.decryptItem(item); err != nil {
+				return collected, err
 			}
+			collected = append(collected, item)
 		}
 
-		unprocessed := output.UnprocessedKeys
-		if len(unprocessed) == 0 {
-			break
-		}
-
-		remaining := countUnprocessedKeys(unprocessed)
+		requestItems = output.UnprocessedKeys
+		remaining := countUnprocessedKeys(requestItems)
 		if remaining == 0 {
 			break
 		}
@@ -840,8 +1048,6 @@ func (qe *queryExecutor) ExecuteBatchGet(input *query.CompiledBatchGet, opts *co
 		delay := calculateBatchRetryDelay(opts.RetryPolicy, retryAttempt)
 		retryAttempt++
 		time.Sleep(delay)
-
-		requestItems = unprocessed
 	}
 
 	return collected, nil
@@ -1031,13 +1237,31 @@ func compiledQueryLimit(input *core.CompiledQuery) (int, bool) {
 	return int(*input.Limit), true
 }
 
+func collectPaginatedCounts(
+	ctx context.Context,
+	hasMorePages func() bool,
+	nextPage func(context.Context) (int32, int32, error),
+) (int64, int64, error) {
+	var totalCount int64
+	var scannedCount int64
+	for hasMorePages() {
+		count, scanned, err := nextPage(ctx)
+		if err != nil {
+			return 0, 0, err
+		}
+		totalCount += int64(count)
+		scannedCount += int64(scanned)
+	}
+	return totalCount, scannedCount, nil
+}
+
 func collectPaginatedItems(
+	ctx context.Context,
 	hasMorePages func() bool,
 	nextPage func(context.Context) ([]map[string]types.AttributeValue, error),
 	limit int,
 	hasLimit bool,
 	trim bool,
-	ctx context.Context,
 ) ([]map[string]types.AttributeValue, error) {
 	var items []map[string]types.AttributeValue
 	for hasMorePages() {

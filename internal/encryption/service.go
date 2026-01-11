@@ -33,9 +33,10 @@ type kmsAPI interface {
 
 // Service implements envelope encryption for DynamoDB attribute values using AWS KMS.
 type Service struct {
+	kms  kmsAPI
+	rand io.Reader
+
 	keyARN string
-	kms    kmsAPI
-	rand   io.Reader
 }
 
 func NewService(keyARN string, kmsClient kmsAPI) *Service {
@@ -111,66 +112,27 @@ func (s *Service) EncryptAttributeValue(ctx context.Context, attributeName strin
 }
 
 func (s *Service) DecryptAttributeValue(ctx context.Context, attributeName string, envelope types.AttributeValue) (types.AttributeValue, error) {
-	if s == nil {
-		return nil, fmt.Errorf("encryption service is nil")
-	}
-	if s.kms == nil {
-		return nil, fmt.Errorf("kms client is nil")
-	}
-	if s.keyARN == "" {
-		return nil, fmt.Errorf("kms key ARN is empty")
-	}
-	if attributeName == "" {
-		return nil, fmt.Errorf("attribute name is empty")
+	if err := s.validateDecryptInputs(attributeName); err != nil {
+		return nil, err
 	}
 
-	env, ok := envelope.(*types.AttributeValueMemberM)
-	if !ok || env == nil {
-		return nil, fmt.Errorf("%w: expected encrypted envelope map, got %T", customerrors.ErrInvalidEncryptedEnvelope, envelope)
-	}
-
-	versionAV, ok := env.Value[envelopeKeyVersion].(*types.AttributeValueMemberN)
-	if !ok || versionAV == nil || versionAV.Value != envelopeVersionV1 {
-		return nil, fmt.Errorf("%w: unsupported encrypted envelope version", customerrors.ErrInvalidEncryptedEnvelope)
-	}
-
-	edkAV, ok := env.Value[envelopeKeyEDK].(*types.AttributeValueMemberB)
-	if !ok || edkAV == nil || len(edkAV.Value) == 0 {
-		return nil, fmt.Errorf("%w: missing encrypted data key", customerrors.ErrInvalidEncryptedEnvelope)
-	}
-
-	nonceAV, ok := env.Value[envelopeKeyNonce].(*types.AttributeValueMemberB)
-	if !ok || nonceAV == nil || len(nonceAV.Value) == 0 {
-		return nil, fmt.Errorf("%w: missing nonce", customerrors.ErrInvalidEncryptedEnvelope)
-	}
-
-	ctAV, ok := env.Value[envelopeKeyCiphertext].(*types.AttributeValueMemberB)
-	if !ok || ctAV == nil {
-		return nil, fmt.Errorf("%w: missing ciphertext", customerrors.ErrInvalidEncryptedEnvelope)
-	}
-
-	dec, err := s.kms.Decrypt(ctx, &kms.DecryptInput{
-		CiphertextBlob: edkAV.Value,
-		KeyId:          aws.String(s.keyARN),
-	})
+	parts, err := parseEncryptedEnvelope(envelope)
 	if err != nil {
-		return nil, fmt.Errorf("kms Decrypt failed: %w", err)
-	}
-	if len(dec.Plaintext) != 32 {
-		return nil, fmt.Errorf("unexpected data key plaintext length: %d", len(dec.Plaintext))
+		return nil, err
 	}
 
-	block, err := aes.NewCipher(dec.Plaintext)
+	dataKey, err := s.decryptDataKey(ctx, parts.edk)
 	if err != nil {
-		return nil, fmt.Errorf("aes cipher init failed: %w", err)
+		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
+
+	gcm, err := newGCM(dataKey)
 	if err != nil {
-		return nil, fmt.Errorf("aes-gcm init failed: %w", err)
+		return nil, err
 	}
 
 	aad := aadForAttribute(attributeName)
-	plaintext, err := gcm.Open(nil, nonceAV.Value, ctAV.Value, aad)
+	plaintext, err := gcm.Open(nil, parts.nonce, parts.ciphertext, aad)
 	if err != nil {
 		return nil, fmt.Errorf("aes-gcm decrypt failed: %w", err)
 	}
@@ -182,18 +144,106 @@ func aadForAttribute(attributeName string) []byte {
 	return []byte(fmt.Sprintf("dynamorm:encrypted:v1|attr=%s", attributeName))
 }
 
+type encryptedEnvelopeParts struct {
+	edk        []byte
+	nonce      []byte
+	ciphertext []byte
+}
+
+func (s *Service) validateDecryptInputs(attributeName string) error {
+	if s == nil {
+		return fmt.Errorf("encryption service is nil")
+	}
+	if s.kms == nil {
+		return fmt.Errorf("kms client is nil")
+	}
+	if s.keyARN == "" {
+		return fmt.Errorf("kms key ARN is empty")
+	}
+	if attributeName == "" {
+		return fmt.Errorf("attribute name is empty")
+	}
+	return nil
+}
+
+func parseEncryptedEnvelope(envelope types.AttributeValue) (encryptedEnvelopeParts, error) {
+	env, ok := envelope.(*types.AttributeValueMemberM)
+	if !ok || env == nil {
+		return encryptedEnvelopeParts{}, fmt.Errorf("%w: expected encrypted envelope map, got %T", customerrors.ErrInvalidEncryptedEnvelope, envelope)
+	}
+
+	if err := validateEncryptedEnvelopeVersion(env.Value); err != nil {
+		return encryptedEnvelopeParts{}, err
+	}
+
+	edkAV, ok := env.Value[envelopeKeyEDK].(*types.AttributeValueMemberB)
+	if !ok || edkAV == nil || len(edkAV.Value) == 0 {
+		return encryptedEnvelopeParts{}, fmt.Errorf("%w: missing encrypted data key", customerrors.ErrInvalidEncryptedEnvelope)
+	}
+
+	nonceAV, ok := env.Value[envelopeKeyNonce].(*types.AttributeValueMemberB)
+	if !ok || nonceAV == nil || len(nonceAV.Value) == 0 {
+		return encryptedEnvelopeParts{}, fmt.Errorf("%w: missing nonce", customerrors.ErrInvalidEncryptedEnvelope)
+	}
+
+	ctAV, ok := env.Value[envelopeKeyCiphertext].(*types.AttributeValueMemberB)
+	if !ok || ctAV == nil {
+		return encryptedEnvelopeParts{}, fmt.Errorf("%w: missing ciphertext", customerrors.ErrInvalidEncryptedEnvelope)
+	}
+
+	return encryptedEnvelopeParts{
+		edk:        edkAV.Value,
+		nonce:      nonceAV.Value,
+		ciphertext: ctAV.Value,
+	}, nil
+}
+
+func validateEncryptedEnvelopeVersion(values map[string]types.AttributeValue) error {
+	versionAV, ok := values[envelopeKeyVersion].(*types.AttributeValueMemberN)
+	if !ok || versionAV == nil || versionAV.Value != envelopeVersionV1 {
+		return fmt.Errorf("%w: unsupported encrypted envelope version", customerrors.ErrInvalidEncryptedEnvelope)
+	}
+	return nil
+}
+
+func (s *Service) decryptDataKey(ctx context.Context, edk []byte) ([]byte, error) {
+	dec, err := s.kms.Decrypt(ctx, &kms.DecryptInput{
+		CiphertextBlob: edk,
+		KeyId:          aws.String(s.keyARN),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("kms Decrypt failed: %w", err)
+	}
+	if len(dec.Plaintext) != 32 {
+		return nil, fmt.Errorf("unexpected data key plaintext length: %d", len(dec.Plaintext))
+	}
+	return dec.Plaintext, nil
+}
+
+func newGCM(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("aes cipher init failed: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("aes-gcm init failed: %w", err)
+	}
+	return gcm, nil
+}
+
 type avJSON struct {
 	Type string            `json:"t"`
 	S    *string           `json:"s,omitempty"`
 	N    *string           `json:"n,omitempty"`
 	B    *string           `json:"b,omitempty"`
 	BOOL *bool             `json:"bool,omitempty"`
-	NULL bool              `json:"null,omitempty"`
 	L    []avJSON          `json:"l,omitempty"`
 	M    map[string]avJSON `json:"m,omitempty"`
 	SS   []string          `json:"ss,omitempty"`
 	NS   []string          `json:"ns,omitempty"`
 	BS   []string          `json:"bs,omitempty"`
+	NULL bool              `json:"null,omitempty"`
 }
 
 func encodeAttributeValue(av types.AttributeValue) ([]byte, error) {

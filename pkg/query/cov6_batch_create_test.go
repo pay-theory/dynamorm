@@ -24,10 +24,10 @@ type cov6BatchWriteExecutor struct {
 	err    error
 	result *core.BatchWriteResult
 
-	calls int
-
 	gotTableName string
 	gotRequests  []types.WriteRequest
+
+	calls int
 }
 
 func (e *cov6BatchWriteExecutor) ExecuteBatchWriteItem(tableName string, writeRequests []types.WriteRequest) (*core.BatchWriteResult, error) {
