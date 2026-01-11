@@ -153,7 +153,7 @@ docker-clean:
 # Install development dependencies
 install-tools:
 	@echo "Installing development tools..."
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
 	@go install github.com/golang/mock/mockgen@latest
 
 # Generate mocks
