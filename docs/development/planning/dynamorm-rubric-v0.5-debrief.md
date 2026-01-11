@@ -99,6 +99,13 @@ This repo uses `.golangci-v2.yml`, which requires **golangci-lint v2**. Installi
 
 **Commit:** `d9b270f`
 
+### CodeQL: unpinned third-party GitHub Action tags
+
+CodeQL flagged `actions/unpinned-tag` for `googleapis/release-please-action@v4` because major-version tags are mutable and therefore not supply-chain safe.
+
+**Fix (PR):** pin `googleapis/release-please-action` to an immutable commit SHA in both `.github/workflows/release.yml` and `.github/workflows/prerelease.yml`, and update `scripts/verify-branch-release-supply-chain.sh` to require SHA pinning.  
+**PR:** `#25`
+
 ## Release evidence (what happened after merge)
 
 - PR `#22` merged into `premain` and all checks passed.
