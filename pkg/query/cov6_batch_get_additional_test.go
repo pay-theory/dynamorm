@@ -10,7 +10,8 @@ import (
 )
 
 type cov6BatchGetItem struct {
-	PK string `dynamorm:"pk"`
+	_  struct{} `dynamorm:"naming:snake_case"`
+	PK string   `dynamorm:"pk"`
 }
 
 func TestBatchGetBuilder_SelectEmptyAndParallelDisable_COV6(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/naming"
 )
 
 // DynamoDBAPI defines the interface for all DynamoDB operations
@@ -856,12 +857,16 @@ func UnmarshalItems(items []map[string]types.AttributeValue, dest any) error {
 // This function respects both "dynamodb" and "dynamorm" struct tags.
 func UnmarshalItem(item map[string]types.AttributeValue, dest any) error {
 	destValue := reflect.ValueOf(dest)
-	if destValue.Kind() != reflect.Ptr {
+	if destValue.Kind() != reflect.Ptr || destValue.IsNil() {
 		return fmt.Errorf("destination must be a pointer")
 	}
 
 	destElem := destValue.Elem()
+	if destElem.Kind() != reflect.Struct {
+		return fmt.Errorf("destination must be a pointer to a struct")
+	}
 	destType := destElem.Type()
+	convention := detectNamingConvention(destType)
 
 	// For each field in the struct
 	for i := 0; i < destType.NumField(); i++ {
@@ -873,23 +878,35 @@ func UnmarshalItem(item map[string]types.AttributeValue, dest any) error {
 			continue
 		}
 
-		// Get the dynamodb tag
-		tag := field.Tag.Get("dynamodb")
-		if tag == "" {
-			tag = field.Tag.Get("dynamorm")
-		}
-		if tag == "" || tag == "-" {
+		// Determine the DynamoDB attribute name for this field.
+		dynamodbTag := field.Tag.Get("dynamodb")
+		if dynamodbTag == "-" {
 			continue
 		}
 
-		// Parse the tag to extract the attribute name (ignore modifiers like omitempty)
-		attrName := parseAttributeName(tag)
-		if attrName == "" {
-			attrName = field.Name
+		attrName := ""
+		if dynamodbTag != "" {
+			attrName = parseAttributeName(dynamodbTag)
+			if attrName == "" {
+				attrName = field.Name
+			}
+		} else {
+			var skip bool
+			attrName, skip = naming.ResolveAttrNameWithConvention(field, convention)
+			if skip || attrName == "" {
+				continue
+			}
 		}
 
 		// Get the attribute value
 		if av, exists := item[attrName]; exists {
+			if fieldHasEncryptedTag(field) && looksLikeEncryptedEnvelope(av) {
+				return &customerrors.EncryptedFieldError{
+					Operation: "decrypt",
+					Field:     field.Name,
+					Err:       customerrors.ErrEncryptionNotConfigured,
+				}
+			}
 			if err := unmarshalAttributeValue(av, fieldValue); err != nil {
 				return fmt.Errorf("failed to unmarshal field %s: %w", field.Name, err)
 			}
@@ -1174,6 +1191,80 @@ func parseAttributeName(tag string) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[0])
+}
+
+func detectNamingConvention(modelType reflect.Type) naming.Convention {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		tag := field.Tag.Get("dynamorm")
+		if tag == "" {
+			continue
+		}
+
+		parts := strings.Split(tag, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if !strings.HasPrefix(part, "naming:") {
+				continue
+			}
+
+			convention := strings.TrimPrefix(part, "naming:")
+			switch convention {
+			case "snake_case":
+				return naming.SnakeCase
+			case "camel_case", "camelCase":
+				return naming.CamelCase
+			}
+		}
+	}
+
+	return naming.CamelCase
+}
+
+func fieldHasEncryptedTag(field reflect.StructField) bool {
+	tag := field.Tag.Get("dynamorm")
+	if tag == "" || tag == "-" {
+		return false
+	}
+
+	parts := strings.Split(tag, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if part == "encrypted" || strings.HasPrefix(part, "encrypted:") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func looksLikeEncryptedEnvelope(av types.AttributeValue) bool {
+	env, ok := av.(*types.AttributeValueMemberM)
+	if !ok || env == nil || len(env.Value) == 0 {
+		return false
+	}
+
+	v, ok := env.Value["v"].(*types.AttributeValueMemberN)
+	if !ok || v == nil || v.Value == "" {
+		return false
+	}
+	edk, ok := env.Value["edk"].(*types.AttributeValueMemberB)
+	if !ok || edk == nil || len(edk.Value) == 0 {
+		return false
+	}
+	nonce, ok := env.Value["nonce"].(*types.AttributeValueMemberB)
+	if !ok || nonce == nil || len(nonce.Value) == 0 {
+		return false
+	}
+	ct, ok := env.Value["ct"].(*types.AttributeValueMemberB)
+	if !ok || ct == nil {
+		return false
+	}
+
+	return true
 }
 
 // attributeValueToInterface converts a DynamoDB AttributeValue to a Go interface{} value.

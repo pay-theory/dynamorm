@@ -134,22 +134,22 @@ func TestUnmarshalStreamImage_JSONString(t *testing.T) {
 // TestUnmarshalStreamImage_TimeFields tests unmarshaling time fields
 func TestUnmarshalStreamImage_TimeFields(t *testing.T) {
 	type Event struct {
-		CreatedAt time.Time `dynamorm:"created_at"`
-		UpdatedAt time.Time `dynamorm:"updated_at"`
-		ExpiresAt time.Time `dynamorm:"expires_at"`
-		PK        string    `dynamorm:"PK"`
-		SK        string    `dynamorm:"SK"`
+		CreatedAt time.Time
+		UpdatedAt time.Time
+		ExpiresAt time.Time
+		PK        string `dynamorm:"pk"`
+		SK        string `dynamorm:"sk"`
 	}
 
 	now := time.Now().UTC().Truncate(time.Second) // Truncate to match RFC3339 precision
 
 	// Test various time formats
 	streamImage := map[string]events.DynamoDBAttributeValue{
-		"PK":         events.NewStringAttribute("EVENT#123"),
-		"SK":         events.NewStringAttribute("METADATA"),
-		"created_at": events.NewStringAttribute(now.Format(time.RFC3339)),
-		"updated_at": events.NewStringAttribute(now.Add(time.Hour).Format(time.RFC3339Nano)),
-		"expires_at": events.NewStringAttribute(fmt.Sprintf("%d", now.Add(24*time.Hour).Unix())),
+		"PK":        events.NewStringAttribute("EVENT#123"),
+		"SK":        events.NewStringAttribute("METADATA"),
+		"createdAt": events.NewStringAttribute(now.Format(time.RFC3339)),
+		"updatedAt": events.NewStringAttribute(now.Add(time.Hour).Format(time.RFC3339Nano)),
+		"expiresAt": events.NewStringAttribute(fmt.Sprintf("%d", now.Add(24*time.Hour).Unix())),
 	}
 
 	var event Event

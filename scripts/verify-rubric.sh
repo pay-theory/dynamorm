@@ -7,6 +7,7 @@ bash scripts/verify-doc-integrity.sh
 bash scripts/fmt-check.sh
 golangci-lint config verify -c .golangci-v2.yml
 make lint
+bash scripts/verify-public-api-contracts.sh
 
 make test-unit
 make integration
