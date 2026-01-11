@@ -141,6 +141,7 @@ type FieldMetadata struct {
 	IndexPath   []int
 	Index       int
 	IsPK        bool
+	IsEncrypted bool
 	IsVersion   bool
 	IsTTL       bool
 	IsCreatedAt bool
@@ -266,6 +267,12 @@ func parseField(field reflect.StructField, indexPath []int, metadata *Metadata, 
 	}
 	if fieldMeta == nil {
 		return nil
+	}
+
+	if fieldMeta.IsEncrypted {
+		if fieldMeta.IsPK || fieldMeta.IsSK || len(fieldMeta.IndexInfo) > 0 {
+			return fmt.Errorf("%w: encrypted fields cannot be used as primary or index keys", errors.ErrInvalidTag)
+		}
 	}
 
 	registerField(metadata, fieldMeta)
@@ -459,6 +466,10 @@ func applyKeyValueTag(meta *FieldMetadata, key, value string) error {
 	case "project":
 		meta.Tags["project"] = value
 		return nil
+	case "encrypted":
+		meta.Tags["encrypted"] = value
+		meta.IsEncrypted = true
+		return nil
 	default:
 		meta.Tags[key] = value
 		return nil
@@ -493,6 +504,9 @@ func applySimpleTag(meta *FieldMetadata, tag string) error {
 		return nil
 	case "binary", "json", "encrypted":
 		meta.Tags[tag] = tagValueTrue
+		if tag == "encrypted" {
+			meta.IsEncrypted = true
+		}
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown tag '%s'", errors.ErrInvalidTag, tag)

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
+	"github.com/pay-theory/dynamorm/internal/encryption"
 	"github.com/pay-theory/dynamorm/internal/reflectutil"
 	"github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/model"
@@ -87,6 +88,10 @@ func (tx *Transaction) Update(model any) error {
 		return fmt.Errorf("failed to get model metadata: %w", err)
 	}
 
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(tx.session, metadata); err != nil {
+		return err
+	}
+
 	key, err := tx.extractPrimaryKey(model, metadata)
 	if err != nil {
 		return fmt.Errorf("failed to extract primary key: %w", err)
@@ -111,6 +116,13 @@ func (tx *Transaction) Update(model any) error {
 	// Handle updated_at field
 	if err := tx.applyUpdatedAtUpdate(modelValue, metadata, &updateExpression, expressionAttributeNames, expressionAttributeValues); err != nil {
 		return err
+	}
+
+	if encryption.MetadataHasEncryptedFields(metadata) && len(expressionAttributeValues) > 0 {
+		svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+		if err := encryption.EncryptUpdateExpressionValues(tx.ctx, svc, metadata, updateExpression, expressionAttributeNames, expressionAttributeValues); err != nil {
+			return err
+		}
 	}
 
 	updateItem := &types.Update{
@@ -401,6 +413,10 @@ func (tx *Transaction) handleTransactionError(err error) error {
 
 // marshalItem converts a model to DynamoDB attribute values
 func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(tx.session, metadata); err != nil {
+		return nil, err
+	}
+
 	item := make(map[string]types.AttributeValue)
 
 	modelValue := reflect.ValueOf(model)
@@ -428,6 +444,30 @@ func (tx *Transaction) marshalItem(model any, metadata *model.Metadata) (map[str
 		}
 
 		item[fieldMeta.DBName] = av
+	}
+
+	if encryption.MetadataHasEncryptedFields(metadata) && len(item) > 0 {
+		svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+		ctx := tx.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		for _, fieldMeta := range metadata.Fields {
+			if fieldMeta == nil || !fieldMeta.IsEncrypted {
+				continue
+			}
+			av, ok := item[fieldMeta.DBName]
+			if !ok {
+				continue
+			}
+
+			encryptedAV, err := svc.EncryptAttributeValue(ctx, fieldMeta.DBName, av)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encrypt field %s: %w", fieldMeta.DBName, err)
+			}
+			item[fieldMeta.DBName] = encryptedAV
+		}
 	}
 
 	return item, nil

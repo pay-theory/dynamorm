@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
 
+	"github.com/pay-theory/dynamorm/internal/encryption"
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
@@ -275,6 +276,7 @@ func (b *Builder) buildWriteItem(index int, op transactOperation) (types.Transac
 
 func (b *Builder) buildPut(op transactOperation) (*types.Put, error) {
 	tx := &Transaction{
+		session:   b.session,
 		registry:  b.registry,
 		converter: b.converter,
 	}
@@ -317,6 +319,7 @@ func (b *Builder) buildPut(op transactOperation) (*types.Put, error) {
 
 func (b *Builder) buildFieldUpdate(op transactOperation) (*types.Update, error) {
 	tx := &Transaction{
+		session:   b.session,
 		registry:  b.registry,
 		converter: b.converter,
 	}
@@ -359,6 +362,20 @@ func (b *Builder) buildFieldUpdate(op transactOperation) (*types.Update, error) 
 	conditionExpr, names, values, err := b.mergeRawConditions(components.ConditionExpression, components.ExpressionAttributeNames, components.ExpressionAttributeValues, rawConds)
 	if err != nil {
 		return nil, err
+	}
+
+	if encryption.MetadataHasEncryptedFields(op.metadata) {
+		if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(b.session, op.metadata); err != nil {
+			return nil, err
+		}
+		svc := encryption.NewServiceFromAWSConfig(b.session.Config().KMSKeyARN, b.session.AWSConfig())
+		ctx := b.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := encryption.EncryptUpdateExpressionValues(ctx, svc, op.metadata, components.UpdateExpression, names, values); err != nil {
+			return nil, err
+		}
 	}
 
 	update := &types.Update{
@@ -464,11 +481,26 @@ func (b *Builder) buildBuilderUpdate(op transactOperation, index int) (*types.Up
 		}
 	}
 
+	if encryption.MetadataHasEncryptedFields(op.metadata) && update.UpdateExpression != nil && len(update.ExpressionAttributeValues) > 0 {
+		if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(b.session, op.metadata); err != nil {
+			return nil, err
+		}
+		svc := encryption.NewServiceFromAWSConfig(b.session.Config().KMSKeyARN, b.session.AWSConfig())
+		ctx := b.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := encryption.EncryptUpdateExpressionValues(ctx, svc, op.metadata, aws.ToString(update.UpdateExpression), update.ExpressionAttributeNames, update.ExpressionAttributeValues); err != nil {
+			return nil, err
+		}
+	}
+
 	return update, nil
 }
 
 func (b *Builder) buildDelete(op transactOperation) (*types.Delete, error) {
 	tx := &Transaction{
+		session:   b.session,
 		registry:  b.registry,
 		converter: b.converter,
 	}
@@ -510,6 +542,7 @@ func (b *Builder) buildDelete(op transactOperation) (*types.Delete, error) {
 
 func (b *Builder) buildConditionCheck(op transactOperation) (*types.ConditionCheck, error) {
 	tx := &Transaction{
+		session:   b.session,
 		registry:  b.registry,
 		converter: b.converter,
 	}

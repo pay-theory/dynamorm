@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
+	"github.com/pay-theory/dynamorm/internal/encryption"
 	"github.com/pay-theory/dynamorm/internal/expr"
 	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/internal/reflectutil"
@@ -2006,21 +2007,67 @@ func (q *query) updateTimestampsInModel(metadata *model.Metadata) {
 
 // marshalItem converts a Go struct to DynamoDB item
 func (q *query) marshalItem(model any, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
-	if err := failClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
 		return nil, err
 	}
 
+	var item map[string]types.AttributeValue
+
 	// Use optimized marshaler if available
 	if q.db.marshaler != nil {
-		return q.db.marshaler.MarshalItem(model, metadata)
+		var err error
+		item, err = q.db.marshaler.MarshalItem(model, metadata)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		modelValue := reflect.ValueOf(model)
+		if modelValue.Kind() == reflect.Ptr {
+			modelValue = modelValue.Elem()
+		}
+
+		var err error
+		item, err = q.marshalItemReflect(modelValue, metadata)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	modelValue := reflect.ValueOf(model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
+	if err := q.encryptItemAttributes(metadata, item); err != nil {
+		return nil, err
 	}
 
-	return q.marshalItemReflect(modelValue, metadata)
+	return item, nil
+}
+
+func (q *query) encryptItemAttributes(metadata *model.Metadata, item map[string]types.AttributeValue) error {
+	if len(item) == 0 || !encryption.MetadataHasEncryptedFields(metadata) {
+		return nil
+	}
+
+	svc, err := newEncryptionService(q.db.session)
+	if err != nil {
+		return err
+	}
+
+	for _, fieldMeta := range metadata.Fields {
+		if fieldMeta == nil || !fieldMeta.IsEncrypted {
+			continue
+		}
+
+		av, ok := item[fieldMeta.DBName]
+		if !ok {
+			continue
+		}
+
+		encryptedAV, err := svc.EncryptAttributeValue(contextOrBackground(q.ctx), fieldMeta.DBName, av)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt field %s: %w", fieldMeta.DBName, err)
+		}
+		item[fieldMeta.DBName] = encryptedAV
+	}
+
+	return nil
 }
 
 func (q *query) marshalItemReflect(modelValue reflect.Value, metadata *model.Metadata) (map[string]types.AttributeValue, error) {
@@ -2100,35 +2147,24 @@ func (q *query) convertFieldValue(fieldMeta *model.FieldMetadata, value any) (ty
 	return q.db.converter.ToAttributeValue(value)
 }
 
-func failClosedIfEncryptedWithoutKMSKeyARN(sess *session.Session, metadata *model.Metadata) error {
-	if metadata == nil || !metadataHasEncryptedFields(metadata) {
-		return nil
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
 	}
-
-	keyARN := ""
-	if sess != nil && sess.Config() != nil {
-		keyARN = sess.Config().KMSKeyARN
-	}
-	if keyARN != "" {
-		return nil
-	}
-
-	return fmt.Errorf("%w: model %s contains dynamorm:\"encrypted\" fields but session.Config.KMSKeyARN is empty", customerrors.ErrEncryptionNotConfigured, metadata.Type.Name())
+	return context.Background()
 }
 
-func metadataHasEncryptedFields(metadata *model.Metadata) bool {
-	if metadata == nil {
-		return false
+func newEncryptionService(sess *session.Session) (*encryption.Service, error) {
+	if sess == nil || sess.Config() == nil {
+		return nil, fmt.Errorf("%w: session is nil", customerrors.ErrEncryptionNotConfigured)
 	}
-	for _, fieldMeta := range metadata.Fields {
-		if fieldMeta == nil {
-			continue
-		}
-		if _, ok := fieldMeta.Tags["encrypted"]; ok {
-			return true
-		}
+
+	keyARN := sess.Config().KMSKeyARN
+	if keyARN == "" {
+		return nil, fmt.Errorf("%w: session.Config.KMSKeyARN is empty", customerrors.ErrEncryptionNotConfigured)
 	}
-	return false
+
+	return encryption.NewServiceFromAWSConfig(keyARN, sess.AWSConfig()), nil
 }
 
 // isConditionalCheckFailedException checks if the error is a conditional check failure
@@ -2595,7 +2631,7 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 		return fmt.Errorf("update requires primary key")
 	}
 
-	if err := failClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(q.db.session, metadata); err != nil {
 		return err
 	}
 
@@ -2628,6 +2664,16 @@ func (q *query) updateItem(metadata *model.Metadata, fields []string) error {
 	conditionExpr, exprAttrNames, exprAttrValues, err := q.mergeQueryConditions(metadata, components.ConditionExpression, components.ExpressionAttributeNames, components.ExpressionAttributeValues)
 	if err != nil {
 		return err
+	}
+
+	if encryption.MetadataHasEncryptedFields(metadata) {
+		svc, err := newEncryptionService(q.db.session)
+		if err != nil {
+			return err
+		}
+		if err := encryption.EncryptUpdateExpressionValues(contextOrBackground(q.ctx), svc, metadata, components.UpdateExpression, exprAttrNames, exprAttrValues); err != nil {
+			return err
+		}
 	}
 
 	// Build UpdateItem input
@@ -3624,8 +3670,22 @@ func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[st
 	if err != nil {
 		return fmt.Errorf("failed to resolve model metadata for table %s: %w", input.TableName, err)
 	}
-	if err := failClosedIfEncryptedWithoutKMSKeyARN(qe.db.session, metadata); err != nil {
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(qe.db.session, metadata); err != nil {
 		return err
+	}
+
+	exprAttrValues := input.ExpressionAttributeValues
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
+	}
+	if encryption.MetadataHasEncryptedFields(metadata) {
+		svc, err := newEncryptionService(qe.db.session)
+		if err != nil {
+			return err
+		}
+		if err := encryption.EncryptUpdateExpressionValues(contextOrBackground(qe.db.ctx), svc, metadata, input.UpdateExpression, input.ExpressionAttributeNames, exprAttrValues); err != nil {
+			return err
+		}
 	}
 
 	client, err := qe.db.session.Client()
@@ -3638,7 +3698,7 @@ func (qe *queryExecutor) ExecuteUpdateItem(input *core.CompiledQuery, key map[st
 		Key:                       key,
 		UpdateExpression:          aws.String(input.UpdateExpression),
 		ExpressionAttributeNames:  input.ExpressionAttributeNames,
-		ExpressionAttributeValues: input.ExpressionAttributeValues,
+		ExpressionAttributeValues: exprAttrValues,
 	}
 
 	if input.ConditionExpression != "" {
@@ -3666,8 +3726,22 @@ func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve model metadata for table %s: %w", input.TableName, err)
 	}
-	if err := failClosedIfEncryptedWithoutKMSKeyARN(qe.db.session, metadata); err != nil {
+	if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(qe.db.session, metadata); err != nil {
 		return nil, err
+	}
+
+	exprAttrValues := input.ExpressionAttributeValues
+	if exprAttrValues == nil {
+		exprAttrValues = make(map[string]types.AttributeValue)
+	}
+	if encryption.MetadataHasEncryptedFields(metadata) {
+		svc, err := newEncryptionService(qe.db.session)
+		if err != nil {
+			return nil, err
+		}
+		if err := encryption.EncryptUpdateExpressionValues(contextOrBackground(qe.db.ctx), svc, metadata, input.UpdateExpression, input.ExpressionAttributeNames, exprAttrValues); err != nil {
+			return nil, err
+		}
 	}
 
 	client, err := qe.db.session.Client()
@@ -3680,7 +3754,7 @@ func (qe *queryExecutor) ExecuteUpdateItemWithResult(input *core.CompiledQuery, 
 		Key:                       key,
 		UpdateExpression:          aws.String(input.UpdateExpression),
 		ExpressionAttributeNames:  input.ExpressionAttributeNames,
-		ExpressionAttributeValues: input.ExpressionAttributeValues,
+		ExpressionAttributeValues: exprAttrValues,
 	}
 
 	if input.ConditionExpression != "" {

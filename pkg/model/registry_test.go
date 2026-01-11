@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
 	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
@@ -292,6 +293,29 @@ func TestRegisterModelWithIndexModifiers(t *testing.T) {
 	require.NotNil(t, roleIndex)
 	assert.Equal(t, "GSI2PK", roleIndex.PartitionKey.Name)
 	assert.Equal(t, "GSI2SK", roleIndex.SortKey.Name)
+}
+
+func TestRegisterRejectsEncryptedOnKeyFields(t *testing.T) {
+	t.Run("PrimaryKey", func(t *testing.T) {
+		type EncryptedPKModel struct {
+			PK string `dynamorm:"pk,encrypted"`
+		}
+
+		registry := model.NewRegistry()
+		err := registry.Register(&EncryptedPKModel{})
+		require.ErrorIs(t, err, dynamormErrors.ErrInvalidTag)
+	})
+
+	t.Run("IndexKey", func(t *testing.T) {
+		type EncryptedIndexKeyModel struct {
+			ID    string `dynamorm:"pk"`
+			Email string `dynamorm:"index:gsi-email,pk,encrypted"`
+		}
+
+		registry := model.NewRegistry()
+		err := registry.Register(&EncryptedIndexKeyModel{})
+		require.ErrorIs(t, err, dynamormErrors.ErrInvalidTag)
+	})
 }
 
 func TestRegisterInvalidTagTypes(t *testing.T) {
