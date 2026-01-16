@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 import re
 from importlib.resources import files
+from typing import TYPE_CHECKING, Any
 
+from .errors import (
+    AwsError,
+    ConditionFailedError,
+    DynamormPyError,
+    EncryptionNotConfiguredError,
+    NotFoundError,
+    ValidationError,
+)
 from .model import (
     IndexDefinition,
     IndexSpec,
@@ -14,6 +23,9 @@ from .model import (
     gsi,
     lsi,
 )
+
+if TYPE_CHECKING:
+    from .table import Table as Table
 
 
 def _read_repo_version() -> str:
@@ -36,12 +48,28 @@ def _normalize_repo_version(repo_version: str) -> str:
 __repo_version__ = _read_repo_version()
 __version__ = _normalize_repo_version(__repo_version__)
 
+
+def __getattr__(name: str) -> Any:
+    if name == "Table":
+        from .table import Table
+
+        return Table
+    raise AttributeError(name)
+
+
 __all__ = [
+    "AwsError",
+    "ConditionFailedError",
+    "DynamormPyError",
+    "EncryptionNotConfiguredError",
     "IndexDefinition",
     "IndexSpec",
     "ModelDefinition",
     "ModelDefinitionError",
+    "NotFoundError",
     "Projection",
+    "Table",
+    "ValidationError",
     "__repo_version__",
     "__version__",
     "dynamorm_field",
