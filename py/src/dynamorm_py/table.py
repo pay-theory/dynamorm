@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, fields, is_dataclass
 from decimal import Decimal
 from typing import Any, cast, get_args, get_origin
@@ -12,13 +13,22 @@ from botocore.exceptions import ClientError
 
 from .errors import (
     AwsError,
+    BatchRetryExceededError,
     ConditionFailedError,
     EncryptionNotConfiguredError,
     NotFoundError,
+    TransactionCanceledError,
     ValidationError,
 )
 from .model import AttributeDefinition, ModelDefinition
 from .query import Page, SortKeyCondition, decode_cursor, encode_cursor
+from .transaction import (
+    TransactConditionCheck,
+    TransactDelete,
+    TransactPut,
+    TransactUpdate,
+    TransactWriteAction,
+)
 
 
 def _is_empty(value: Any) -> bool:
@@ -66,6 +76,42 @@ def _map_client_error(err: ClientError) -> Exception:
     return AwsError(code=code or "UnknownError", message=message or str(err))
 
 
+def _map_transaction_error(err: ClientError) -> Exception:
+    code = str(err.response.get("Error", {}).get("Code", ""))
+    message = str(err.response.get("Error", {}).get("Message", ""))
+
+    if code == "TransactionCanceledException":
+        reasons_raw = err.response.get("CancellationReasons") or []
+        reason_codes = tuple(
+            str(reason.get("Code", "Unknown"))
+            for reason in reasons_raw
+            if isinstance(reason, dict) and reason.get("Code")
+        )
+
+        if any(rc == "ConditionalCheckFailed" for rc in reason_codes) or "ConditionalCheckFailed" in message:
+            return ConditionFailedError(message or "transaction canceled: ConditionalCheckFailed")
+
+        return TransactionCanceledError(
+            message=message or "transaction canceled",
+            reason_codes=reason_codes,
+        )
+
+    return _map_client_error(err)
+
+
+def _backoff_seconds(attempt: int) -> float:
+    seconds = 0.05 * (2.0 ** (attempt - 1))
+    if seconds > 1.0:
+        return 1.0
+    return seconds
+
+
+def _chunked[T](items: Sequence[T], size: int) -> Sequence[Sequence[T]]:
+    if size <= 0:
+        raise ValueError("size must be > 0")
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
 class Table[T]:
     def __init__(
         self, model: ModelDefinition[T], *, client: Any | None = None, table_name: str | None = None
@@ -77,7 +123,7 @@ class Table[T]:
 
         self._model = model
         self._table_name = table_name
-        self._client = client or boto3.client("dynamodb")
+        self._client: Any = client or boto3.client("dynamodb")
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
 
@@ -185,6 +231,195 @@ class Table[T]:
         last = resp.get("LastEvaluatedKey")
         return Page(items=items, next_cursor=encode_cursor(last) if last else None)
 
+    def batch_get(
+        self,
+        keys: Sequence[Any],
+        *,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+        max_retries: int = 5,
+        sleep: Callable[[float], None] | None = time.sleep,
+    ) -> list[T]:
+        if max_retries < 0:
+            raise ValidationError("max_retries must be >= 0")
+
+        if not keys:
+            return []
+
+        normalized: list[tuple[Any, Any | None]] = []
+        for key in keys:
+            if self._model.sk is None:
+                if isinstance(key, tuple):
+                    if len(key) != 2:
+                        raise ValidationError("expected key tuple (pk, None) for pk-only models")
+                    pk, sk = key
+                    if sk is not None:
+                        raise ValidationError("sk must be None for pk-only models")
+                    normalized.append((pk, None))
+                else:
+                    normalized.append((key, None))
+                continue
+
+            if not isinstance(key, tuple) or len(key) != 2:
+                raise ValidationError("expected key tuple (pk, sk)")
+            pk, sk = key
+            normalized.append((pk, sk))
+
+        out: list[T] = []
+        base_req: dict[str, Any] = {"ConsistentRead": consistent_read}
+        if projection is not None:
+            names: dict[str, str] = {}
+            base_req["ExpressionAttributeNames"] = names
+            base_req["ProjectionExpression"] = self._projection_expression(projection, names)
+
+        for chunk in _chunked(normalized, 100):
+            pending_keys = [self._to_key(pk, sk) for pk, sk in chunk]
+            attempts = 0
+
+            while pending_keys:
+                req = {self._table_name: dict(base_req, Keys=pending_keys)}
+                try:
+                    resp = self._client.batch_get_item(RequestItems=req)
+                except ClientError as err:  # pragma: no cover
+                    raise _map_client_error(err) from err
+
+                for item in resp.get("Responses", {}).get(self._table_name, []):
+                    out.append(self._from_item(item))
+
+                pending_keys = resp.get("UnprocessedKeys", {}).get(self._table_name, {}).get("Keys") or []
+                if pending_keys:
+                    if attempts >= max_retries:
+                        raise BatchRetryExceededError(
+                            operation="batch_get", unprocessed_count=len(pending_keys)
+                        )
+                    attempts += 1
+                    if sleep is not None:
+                        sleep(_backoff_seconds(attempts))
+
+        return out
+
+    def batch_write(
+        self,
+        *,
+        puts: Sequence[T] = (),
+        deletes: Sequence[Any] = (),
+        max_retries: int = 5,
+        sleep: Callable[[float], None] | None = time.sleep,
+    ) -> None:
+        if max_retries < 0:
+            raise ValidationError("max_retries must be >= 0")
+
+        requests: list[dict[str, Any]] = []
+        for item in puts:
+            requests.append({"PutRequest": {"Item": self._to_item(item)}})
+
+        for key in deletes:
+            if self._model.sk is None:
+                if isinstance(key, tuple):
+                    if len(key) != 2:
+                        raise ValidationError("expected key tuple (pk, None) for pk-only models")
+                    pk, sk = key
+                    if sk is not None:
+                        raise ValidationError("sk must be None for pk-only models")
+                    requests.append({"DeleteRequest": {"Key": self._to_key(pk, None)}})
+                else:
+                    requests.append({"DeleteRequest": {"Key": self._to_key(key, None)}})
+                continue
+
+            if not isinstance(key, tuple) or len(key) != 2:
+                raise ValidationError("expected key tuple (pk, sk)")
+            pk, sk = key
+            requests.append({"DeleteRequest": {"Key": self._to_key(pk, sk)}})
+
+        for chunk in _chunked(requests, 25):
+            pending = list(chunk)
+            attempts = 0
+
+            while pending:
+                try:
+                    resp = self._client.batch_write_item(RequestItems={self._table_name: pending})
+                except ClientError as err:  # pragma: no cover
+                    raise _map_client_error(err) from err
+
+                pending = resp.get("UnprocessedItems", {}).get(self._table_name, []) or []
+                if pending:
+                    if attempts >= max_retries:
+                        raise BatchRetryExceededError(operation="batch_write", unprocessed_count=len(pending))
+                    attempts += 1
+                    if sleep is not None:
+                        sleep(_backoff_seconds(attempts))
+
+    def transact_write(self, actions: Sequence[TransactWriteAction[T]]) -> None:
+        if not actions:
+            raise ValidationError("actions is required")
+        if len(actions) > 100:
+            raise ValidationError("a transaction supports at most 100 actions")
+
+        transact_items: list[dict[str, Any]] = []
+        for action in actions:
+            if isinstance(action, TransactPut):
+                req: dict[str, Any] = {"TableName": self._table_name, "Item": self._to_item(action.item)}
+                if action.condition_expression:
+                    req["ConditionExpression"] = action.condition_expression
+                if action.expression_attribute_names:
+                    req["ExpressionAttributeNames"] = dict(action.expression_attribute_names)
+                if action.expression_attribute_values:
+                    req["ExpressionAttributeValues"] = self._serialize_values(
+                        action.expression_attribute_values
+                    )
+                transact_items.append({"Put": req})
+                continue
+
+            if isinstance(action, TransactDelete):
+                req = {"TableName": self._table_name, "Key": self._to_key(action.pk, action.sk)}
+                if action.condition_expression:
+                    req["ConditionExpression"] = action.condition_expression
+                if action.expression_attribute_names:
+                    req["ExpressionAttributeNames"] = dict(action.expression_attribute_names)
+                if action.expression_attribute_values:
+                    req["ExpressionAttributeValues"] = self._serialize_values(
+                        action.expression_attribute_values
+                    )
+                transact_items.append({"Delete": req})
+                continue
+
+            if isinstance(action, TransactUpdate):
+                transact_items.append(
+                    {
+                        "Update": self._build_update_request(
+                            action.pk,
+                            action.sk,
+                            action.updates,
+                            condition_expression=action.condition_expression,
+                            expression_attribute_names=action.expression_attribute_names,
+                            expression_attribute_values=action.expression_attribute_values,
+                        )
+                    }
+                )
+                continue
+
+            if isinstance(action, TransactConditionCheck):
+                req = {
+                    "TableName": self._table_name,
+                    "Key": self._to_key(action.pk, action.sk),
+                    "ConditionExpression": action.condition_expression,
+                }
+                if action.expression_attribute_names:
+                    req["ExpressionAttributeNames"] = dict(action.expression_attribute_names)
+                if action.expression_attribute_values:
+                    req["ExpressionAttributeValues"] = self._serialize_values(
+                        action.expression_attribute_values
+                    )
+                transact_items.append({"ConditionCheck": req})
+                continue
+
+            raise ValidationError(f"unsupported transaction action: {type(action).__name__}")
+
+        try:
+            self._client.transact_write_items(TransactItems=transact_items)
+        except ClientError as err:  # pragma: no cover
+            raise _map_transaction_error(err) from err
+
     def put(
         self,
         item: T,
@@ -251,6 +486,37 @@ class Table[T]:
         expression_attribute_names: Mapping[str, str] | None = None,
         expression_attribute_values: Mapping[str, Any] | None = None,
     ) -> T:
+        req = self._build_update_request(
+            pk,
+            sk,
+            updates,
+            condition_expression=condition_expression,
+            expression_attribute_names=expression_attribute_names,
+            expression_attribute_values=expression_attribute_values,
+            return_values="ALL_NEW",
+        )
+
+        try:
+            resp = self._client.update_item(**req)
+        except ClientError as err:  # pragma: no cover
+            raise _map_client_error(err) from err
+
+        attrs = resp.get("Attributes")
+        if not attrs:
+            raise ValidationError("update did not return Attributes")
+        return self._from_item(attrs)
+
+    def _build_update_request(
+        self,
+        pk: Any,
+        sk: Any | None,
+        updates: Mapping[str, Any],
+        *,
+        condition_expression: str | None = None,
+        expression_attribute_names: Mapping[str, str] | None = None,
+        expression_attribute_values: Mapping[str, Any] | None = None,
+        return_values: str | None = None,
+    ) -> dict[str, Any]:
         key = self._to_key(pk, sk)
 
         update_names: dict[str, str] = {}
@@ -291,11 +557,11 @@ class Table[T]:
             "Key": key,
             "UpdateExpression": " ".join(expr_parts),
             "ExpressionAttributeNames": update_names,
-            "ReturnValues": "ALL_NEW",
         }
         if update_values:
             req["ExpressionAttributeValues"] = update_values
-
+        if return_values is not None:
+            req["ReturnValues"] = return_values
         if condition_expression:
             req["ConditionExpression"] = condition_expression
 
@@ -313,15 +579,7 @@ class Table[T]:
                     raise ValidationError(f"expression attribute value collision: {k}")
                 req["ExpressionAttributeValues"][k] = v
 
-        try:
-            resp = self._client.update_item(**req)
-        except ClientError as err:  # pragma: no cover
-            raise _map_client_error(err) from err
-
-        attrs = resp.get("Attributes")
-        if not attrs:
-            raise ValidationError("update did not return Attributes")
-        return self._from_item(attrs)
+        return req
 
     def _serialize_values(self, values: Mapping[str, Any]) -> dict[str, Any]:
         out: dict[str, Any] = {}

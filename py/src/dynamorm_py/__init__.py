@@ -7,10 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from .errors import (
     AwsError,
+    BatchRetryExceededError,
     ConditionFailedError,
     DynamormPyError,
     EncryptionNotConfiguredError,
     NotFoundError,
+    TransactionCanceledError,
     ValidationError,
 )
 from .model import (
@@ -24,6 +26,13 @@ from .model import (
     lsi,
 )
 from .query import Page, SortKeyCondition
+from .transaction import (
+    TransactConditionCheck,
+    TransactDelete,
+    TransactPut,
+    TransactUpdate,
+    TransactWriteAction,
+)
 
 if TYPE_CHECKING:
     from .table import Table as Table
@@ -60,6 +69,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "AwsError",
+    "BatchRetryExceededError",
     "ConditionFailedError",
     "DynamormPyError",
     "EncryptionNotConfiguredError",
@@ -71,6 +81,12 @@ __all__ = [
     "Projection",
     "Page",
     "SortKeyCondition",
+    "TransactConditionCheck",
+    "TransactDelete",
+    "TransactPut",
+    "TransactUpdate",
+    "TransactWriteAction",
+    "TransactionCanceledError",
     "Table",
     "ValidationError",
     "__repo_version__",
