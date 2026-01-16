@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/pay-theory/dynamorm/compare/v1.0.37...v1.1.0) (2026-01-16)
+
+
+### Features
+
+* decrypt encrypted tag fields on read ([af82905](https://github.com/pay-theory/dynamorm/commit/af82905cce303088cc0a2481cfad9c11d5e5e42c))
+* fail closed on encrypted fields without KMSKeyARN ([6b88a8d](https://github.com/pay-theory/dynamorm/commit/6b88a8d74cb463ee9c4ae1ed9a96bb883cd28be2))
+* implement encrypted tag write-time encryption ([301c0e0](https://github.com/pay-theory/dynamorm/commit/301c0e01a17b45e8246466fb1bd2393d21ef091d))
+* make marshaling safe by default ([24cf465](https://github.com/pay-theory/dynamorm/commit/24cf465021cacac366edd75446b95a0f519dfbff))
+* **rubric:** enforce TypeScript quality gates ([808c275](https://github.com/pay-theory/dynamorm/commit/808c275f189f669a42778e41203ed718723341ee))
+* **ts:** TS-0 tooling and package skeleton ([6614aa9](https://github.com/pay-theory/dynamorm/commit/6614aa93b37d56ffd6f57bcd1699203faf09f7b5))
+* **ts:** TS-1 model schema and validation ([d7932f9](https://github.com/pay-theory/dynamorm/commit/d7932f9678b1889a550ce9dd900c8e3b6b6f9c46))
+* **ts:** TS-2 CRUD operations (P0) ([da0f25b](https://github.com/pay-theory/dynamorm/commit/da0f25bb1e4d646b31fde18089a7d10fc3b357ac))
+* **ts:** TS-3 query, scan, and cursor ([dafa93c](https://github.com/pay-theory/dynamorm/commit/dafa93cf42b64143ec6398f4eecfd21ee7220bea))
+* **ts:** TS-4 batch and transactions (P2) ([dc3df67](https://github.com/pay-theory/dynamorm/commit/dc3df67ba23141f80241bf71cad27c41288b27fe))
+* **ts:** TS-5 streams unmarshalling ([46fead1](https://github.com/pay-theory/dynamorm/commit/46fead1e673d3b0113b38acf04bd8db7aced46d5))
+* **ts:** TS-6 encrypted field semantics ([b16e03c](https://github.com/pay-theory/dynamorm/commit/b16e03c63f4376388e80cd3204af9560047f8e34))
+* **ts:** TS-7 docs and examples ([1fa4ecd](https://github.com/pay-theory/dynamorm/commit/1fa4ecd44621ec3f4370e69ee70cf6f00c25155f))
+* TypeScript DynamORM (Phase 1) + DMS v0.1 draft ([62513d4](https://github.com/pay-theory/dynamorm/commit/62513d41e0fd1fdd2fc98ce068a5d40978faa263))
+
+
+### Bug Fixes
+
+* **ci:** install golangci-lint v2.5.0 ([d9b270f](https://github.com/pay-theory/dynamorm/commit/d9b270fa1d66dc34dd2a7b1e9346043becdaebd8))
+* **ci:** install ripgrep for rubric scripts ([807df03](https://github.com/pay-theory/dynamorm/commit/807df0392d6a60b38861d40bd7e1b8f3898a7e81))
+* **ci:** pin golangci-lint to v1.64.8 ([e5cecd5](https://github.com/pay-theory/dynamorm/commit/e5cecd56c8563e1bd45e47560547a5375cafcd58))
+* **ci:** pin release-please action by SHA ([2d6a7dc](https://github.com/pay-theory/dynamorm/commit/2d6a7dcdd4cd77c178526915ce2d32d339ff6629))
+* **ci:** pin release-please action SHA ([719d667](https://github.com/pay-theory/dynamorm/commit/719d66793575bbf331895c82d01f0bc547a9737b))
+* consistent omitempty behavior for Update() ([aa86849](https://github.com/pay-theory/dynamorm/commit/aa868496c39bdd8610b99dd6a6f4d62b16b9de49))
+* **encryption:** harden encrypted tag semantics ([2d591a0](https://github.com/pay-theory/dynamorm/commit/2d591a0ad5a4dc08778e62e62352745c7f849553))
+* enforce network hygiene defaults ([a2dcb8b](https://github.com/pay-theory/dynamorm/commit/a2dcb8bb35ec981df869ab2b5202b4e1776b28f0))
+* ensure BatchGetBuilder uses model metadata ([4171c33](https://github.com/pay-theory/dynamorm/commit/4171c3304524a66102e093b820d88b0a9e59683e))
+* **expr:** harden list index update expressions ([95d22b7](https://github.com/pay-theory/dynamorm/commit/95d22b7235807da81b26c0212467c6f5b2d99ae8))
+* handle version fields across numeric types ([aacb69d](https://github.com/pay-theory/dynamorm/commit/aacb69d0d7a9fa0ba749a3bb7e11da223f72d4df))
+* only skip zero values in nested struct marshaling when omitempty is set ([f0d31ac](https://github.com/pay-theory/dynamorm/commit/f0d31acf1cddb066d67c7713470d652bb260d194))
+* only skip zero values in nested struct marshaling when omitempty… ([86a3b43](https://github.com/pay-theory/dynamorm/commit/86a3b430190dc6852a4d2c9f9d2e73087c441ed1))
+* **query:** align UnmarshalItem with DynamORM tags ([b2d580b](https://github.com/pay-theory/dynamorm/commit/b2d580b9b0a94961c0fde67a9d5b4d1a90a82f71))
+* **query:** correct ScanAllSegments destination type ([685ddc3](https://github.com/pay-theory/dynamorm/commit/685ddc3f1d4eda52c7d78cd3c77efaa80fc2684e))
+* **release:** include TypeScript in release-please versioning ([7367964](https://github.com/pay-theory/dynamorm/commit/7367964aebeb88f87d02c5e21c68792a7d86bb66))
+* **release:** include TypeScript in release-please versioning ([19791d8](https://github.com/pay-theory/dynamorm/commit/19791d89e7728741908b6c31a4b66f0f3a3209a2))
+* remove panics from expression builder ([dfd5445](https://github.com/pay-theory/dynamorm/commit/dfd5445ba537190d82e86b1dfa5eea439f773db5))
+* respect omitempty for empty collections in Update ([9fb7f1f](https://github.com/pay-theory/dynamorm/commit/9fb7f1f8ce8cbd9999271b7c2183628a8dbd6fff))
+* **rubric:** make rubric green ([ef074bc](https://github.com/pay-theory/dynamorm/commit/ef074bca8cbca23498dcf4a3dcf8127785ff28a4))
+* **testing:** correct getTypeString for AnythingOfType ([7104519](https://github.com/pay-theory/dynamorm/commit/710451944e823d09e02c9b441f892acd71999fcc))
+
 ## [1.1.0-rc.3](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc.2...v1.1.0-rc.3) (2026-01-16)
 
 
