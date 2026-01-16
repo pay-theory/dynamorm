@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Construct } from 'constructs';
@@ -22,6 +23,11 @@ export class MultilangDemoStack extends Stack {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
+    const key = new kms.Key(this, 'DemoKey', {
+      enableKeyRotation: true,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
@@ -64,6 +70,7 @@ export class MultilangDemoStack extends Stack {
       }),
       environment: {
         TABLE_NAME: table.tableName,
+        KMS_KEY_ARN: key.keyArn,
       },
     });
 
@@ -80,6 +87,7 @@ export class MultilangDemoStack extends Stack {
       },
       environment: {
         TABLE_NAME: table.tableName,
+        KMS_KEY_ARN: key.keyArn,
       },
     });
 
@@ -93,7 +101,7 @@ export class MultilangDemoStack extends Stack {
       timeout: Duration.seconds(10),
       code: lambda.Code.fromAsset(pyHandlerDir, {
         bundling: {
-          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          image: lambda.Runtime.PYTHON_3_14.bundlingImage,
           command: [
             'bash',
             '-c',
@@ -101,6 +109,7 @@ export class MultilangDemoStack extends Stack {
               'set -euo pipefail',
               'cp -R /asset-input/* /asset-output/',
               'cp -R /dynamorm_py /asset-output/dynamorm_py',
+              'python -m pip install -r /asset-input/requirements.txt -t /asset-output',
             ].join('\n'),
           ],
           local: {
@@ -109,6 +118,16 @@ export class MultilangDemoStack extends Stack {
               fs.cpSync(dynamormPySrc, path.join(outputDir, 'dynamorm_py'), {
                 recursive: true,
               });
+              execSync(
+                [
+                  'python3.14',
+                  '-m pip',
+                  'install',
+                  `-r ${path.join(pyHandlerDir, 'requirements.txt')}`,
+                  `-t ${outputDir}`,
+                ].join(' '),
+                { stdio: 'inherit' },
+              );
               return true;
             },
           },
@@ -117,18 +136,23 @@ export class MultilangDemoStack extends Stack {
       }),
       environment: {
         TABLE_NAME: table.tableName,
+        KMS_KEY_ARN: key.keyArn,
       },
     });
 
     table.grantReadWriteData(goFn);
     table.grantReadWriteData(nodeFn);
     table.grantReadWriteData(pyFn);
+    key.grantEncryptDecrypt(goFn);
+    key.grantEncryptDecrypt(nodeFn);
+    key.grantEncryptDecrypt(pyFn);
 
     const goUrl = goFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
     const nodeUrl = nodeFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
     const pyUrl = pyFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.NONE });
 
     new CfnOutput(this, 'TableName', { value: table.tableName });
+    new CfnOutput(this, 'KmsKeyArn', { value: key.keyArn });
     new CfnOutput(this, 'GoFunctionUrl', { value: goUrl.url });
     new CfnOutput(this, 'NodeFunctionUrl', { value: nodeUrl.url });
     new CfnOutput(this, 'PythonFunctionUrl', { value: pyUrl.url });

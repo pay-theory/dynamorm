@@ -101,6 +101,7 @@ examples/*/*/main
 node_modules/
 ts/coverage/
 cdk.out/
+examples/cdk-multilang/cdk.outputs.json
 .npm
 .nyc_output
 .grunt
