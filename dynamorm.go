@@ -137,6 +137,9 @@ func New(config session.Config) (core.ExtendedDB, error) {
 
 	converter := pkgTypes.NewConverter()
 	marshalerFactory := marshal.NewMarshalerFactory(marshal.DefaultConfig()).WithConverter(converter)
+	if config.Now != nil {
+		marshalerFactory = marshalerFactory.WithNowFunc(config.Now)
+	}
 	marshalerInstance, err := marshalerFactory.NewMarshaler()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create marshaler: %w", err)

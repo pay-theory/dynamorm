@@ -90,4 +90,3 @@ func TestEncoding_EmptySetEncodesNULL(t *testing.T) {
 	require.True(t, ok, "expected tags NULL, got %T", raw.Item["tags"])
 	require.True(t, tags.Value)
 }
-

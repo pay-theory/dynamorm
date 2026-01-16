@@ -300,6 +300,39 @@ func TestMarshalItem_ComplexTypes(t *testing.T) {
 	assert.ElementsMatch(t, []string{"set1", "set2"}, stringSet)
 }
 
+func TestMarshalerFactory_WithNowFuncOverridesLifecycleTimestamps(t *testing.T) {
+	fixed := time.Date(2026, 1, 16, 0, 0, 0, 0, time.UTC)
+
+	factory := NewMarshalerFactory(DefaultConfig()).WithNowFunc(func() time.Time { return fixed })
+	marshaler, err := factory.NewMarshaler()
+	require.NoError(t, err)
+
+	input := ComplexStruct{
+		ID:         "complex-id",
+		Tags:       []string{"tag1"},
+		Attributes: map[string]string{"key1": "value1"},
+	}
+
+	metadata := createMetadata(
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Tags", "tags", reflect.TypeOf([]string{})),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Attributes", "attributes", reflect.TypeOf(map[string]string{})),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "CreatedAt", "created_at", reflect.TypeOf(time.Time{}), withCreatedAt()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "UpdatedAt", "updated_at", reflect.TypeOf(time.Time{}), withUpdatedAt()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Version", "version", reflect.TypeOf(int64(0)), withVersion()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "TTL", "ttl", reflect.TypeOf(time.Time{}), withTTL()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "OptionalField", "optional", reflect.TypeOf((*string)(nil)), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "StringSet", "string_set", reflect.TypeOf([]string{}), withSet()),
+	)
+
+	result, err := marshaler.MarshalItem(input, metadata)
+	require.NoError(t, err)
+
+	want := fixed.Format(time.RFC3339Nano)
+	require.Equal(t, want, requireAVS(t, result["created_at"]).Value)
+	require.Equal(t, want, requireAVS(t, result["updated_at"]).Value)
+}
+
 func TestMarshalItem_PointerTypes(t *testing.T) {
 	marshaler := New(nil)
 

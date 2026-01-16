@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import MISSING, fields, is_dataclass
@@ -121,6 +122,7 @@ class Table[T]:
         table_name: str | None = None,
         kms_key_arn: str | None = None,
         kms_client: Any | None = None,
+        rand_bytes: Callable[[int], bytes] | None = None,
     ) -> None:
         if table_name is None:
             table_name = model.table_name
@@ -132,6 +134,7 @@ class Table[T]:
         self._client: Any = client or boto3.client("dynamodb")
         self._kms_key_arn = (kms_key_arn or "").strip() or None
         self._kms_client: Any | None = kms_client
+        self._rand_bytes = rand_bytes or os.urandom
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
 
@@ -639,6 +642,7 @@ class Table[T]:
                 attr_name=attr_def.attribute_name,
                 kms_key_arn=self._kms_key_arn,
                 kms_client=self._kms_client,
+                rand_bytes=self._rand_bytes,
             )
             return self._serializer.serialize(envelope)
 

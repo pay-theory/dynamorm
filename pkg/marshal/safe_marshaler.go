@@ -18,6 +18,7 @@ import (
 // This is the default marshaler and should be used in production environments
 type SafeMarshaler struct {
 	converter *pkgTypes.Converter
+	now       func() time.Time
 
 	// Cache for reflection metadata to optimize performance
 	cache sync.Map // map[reflect.Type]*safeStructMarshaler
@@ -44,13 +45,13 @@ type safeFieldMarshaler struct {
 
 // NewSafeMarshaler creates a new safe marshaler (recommended for production)
 func NewSafeMarshaler() *SafeMarshaler {
-	return &SafeMarshaler{}
+	return &SafeMarshaler{now: time.Now}
 }
 
 // NewSafeMarshalerWithConverter creates a safe marshaler that consults the provided converter
 // for registered custom type conversions.
 func NewSafeMarshalerWithConverter(converter *pkgTypes.Converter) *SafeMarshaler {
-	return &SafeMarshaler{converter: converter}
+	return &SafeMarshaler{converter: converter, now: time.Now}
 }
 
 // MarshalItem safely marshals a model to DynamoDB AttributeValues using only reflection
@@ -62,7 +63,11 @@ func (m *SafeMarshaler) MarshalItem(model any, metadata *model.Metadata) (map[st
 	}
 
 	sm := m.getOrBuildSafeStructMarshaler(v.Type(), metadata)
-	nowStr := nowTimestampIfSafeNeeded(sm.fields)
+	nowFn := m.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	nowStr := nowTimestampIfSafeNeeded(sm.fields, nowFn)
 
 	return m.marshalSafeStructFields(v, sm.fields, sm.minFields, nowStr)
 }
@@ -85,10 +90,10 @@ func (m *SafeMarshaler) getOrBuildSafeStructMarshaler(typ reflect.Type, metadata
 	return sm
 }
 
-func nowTimestampIfSafeNeeded(fields []safeFieldMarshaler) string {
+func nowTimestampIfSafeNeeded(fields []safeFieldMarshaler, now func() time.Time) string {
 	for _, fm := range fields {
 		if fm.isCreatedAt || fm.isUpdatedAt {
-			return time.Now().Format(time.RFC3339Nano)
+			return now().Format(time.RFC3339Nano)
 		}
 	}
 	return ""

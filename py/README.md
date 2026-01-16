@@ -120,6 +120,32 @@ model = ModelDefinition.from_dataclass(SecretNote, table_name="notes")
 table = Table(model, client=client, kms_key_arn=os.environ["KMS_KEY_ARN"])
 ```
 
+## Testing with mocks
+
+The `dynamorm_py.mocks` module provides strict fakes for unit tests (no AWS calls):
+
+```python
+from dynamorm_py.mocks import ANY, FakeDynamoDBClient, FakeKmsClient
+
+fake_ddb = FakeDynamoDBClient()
+fake_kms = FakeKmsClient(
+    plaintext_key=b"\x00" * 32,
+    ciphertext_blob=b"edk",
+)
+
+fake_ddb.expect("put_item", {"TableName": "notes", "Item": {"PK": ANY, "SK": ANY, "secret": ANY}})
+
+table = Table(
+    model,
+    client=fake_ddb,
+    kms_key_arn="arn:aws:kms:us-east-1:111111111111:key/test",
+    kms_client=fake_kms,
+    rand_bytes=lambda n: b"\x01" * n,
+)
+table.put(SecretNote(pk="A", sk="1", secret="shh"))
+fake_ddb.assert_no_pending()
+```
+
 ## Examples
 
 - Local DynamoDB: `py/examples/local_crud.py`

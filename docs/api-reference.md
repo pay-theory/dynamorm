@@ -75,6 +75,9 @@ The configuration struct used in `New()`.
 | `Region` | `string` | AWS Region (e.g., "us-east-1") | "us-east-1" |
 | `Endpoint` | `string` | Custom endpoint URL (for DynamoDB Local) | "" |
 | `KMSKeyARN` | `string` | AWS KMS key ARN used for `dynamorm:"encrypted"` fields (required if any encrypted fields exist) | "" |
+| `KMSClient` | `session.KMSClient` | Optional injected KMS client (testing hook; avoids real AWS KMS calls) | `nil` |
+| `EncryptionRand` | `io.Reader` | Optional injected randomness source for encryption nonces (testing hook; default is crypto/rand.Reader) | `nil` |
+| `Now` | `func() time.Time` | Optional injected clock for lifecycle timestamps (createdAt/updatedAt) | `nil` |
 | `MaxRetries` | `int` | Max SDK retries for failed requests | 3 |
 | `DefaultRCU` | `int64` | Read Capacity Units for new tables | 5 |
 | `DefaultWCU` | `int64` | Write Capacity Units for new tables | 5 |

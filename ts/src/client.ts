@@ -47,12 +47,14 @@ import {
 export class DynamormClient {
   private readonly models = new Map<string, Model>();
   private encryption: EncryptionProvider | undefined;
+  private readonly now: () => string;
 
   constructor(
     private readonly ddb: DynamoDBClient,
-    opts: { encryption?: EncryptionProvider } = {},
+    opts: { encryption?: EncryptionProvider; now?: () => string } = {},
   ) {
     this.encryption = opts.encryption;
+    this.now = opts.now ?? (() => nowRfc3339Nano());
   }
 
   withEncryption(provider: EncryptionProvider): this {
@@ -92,7 +94,7 @@ export class DynamormClient {
   ): Promise<void> {
     const model = this.requireModel(modelName);
 
-    const now = nowRfc3339Nano();
+    const now = this.now();
     const putItem = modelHasEncryptedAttributes(model)
       ? await marshalPutItemEncrypted(
           model,
@@ -178,7 +180,7 @@ export class DynamormClient {
       );
     }
 
-    const now = nowRfc3339Nano();
+    const now = this.now();
     const names: Record<string, string> = {
       '#ver': versionAttr,
     };
@@ -364,7 +366,7 @@ export class DynamormClient {
     const maxAttempts = opts.maxAttempts ?? 5;
     const baseDelayMs = opts.baseDelayMs ?? 25;
 
-    const now = nowRfc3339Nano();
+    const now = this.now();
     const writeRequests: WriteRequest[] = [];
 
     for (const item of req.puts ?? []) {

@@ -47,4 +47,3 @@ func mustReadFile(t *testing.T, path string) string {
 	require.NoError(t, err)
 	return string(data)
 }
-

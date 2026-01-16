@@ -93,4 +93,3 @@ func TestReservedWords_UpdateEscapesAttributeNames(t *testing.T) {
 	require.Equal(t, "v1", got.Name)
 	require.Equal(t, int64(1), got.Version)
 }
-

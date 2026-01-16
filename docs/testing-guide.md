@@ -56,6 +56,72 @@ func TestCreateUser(t *testing.T) {
 }
 ```
 
+### 3. Encryption + lifecycle determinism (Go)
+
+If you use `dynamorm:"encrypted"` fields or lifecycle tags, inject test doubles via `session.Config`:
+
+```go
+import (
+    "bytes"
+    "testing"
+    "time"
+
+    "github.com/aws/aws-sdk-go-v2/service/kms"
+    "github.com/pay-theory/dynamorm"
+    "github.com/pay-theory/dynamorm/pkg/mocks"
+    "github.com/pay-theory/dynamorm/pkg/session"
+    "github.com/stretchr/testify/mock"
+)
+
+func TestEncryptedWrites(t *testing.T) {
+    kmsMock := new(mocks.MockKMSClient)
+    kmsMock.On("GenerateDataKey", mock.Anything, mock.Anything, mock.Anything).
+        Return(&kms.GenerateDataKeyOutput{
+            Plaintext:      bytes.Repeat([]byte{0x00}, 32),
+            CiphertextBlob: []byte("edk"),
+        }, nil)
+
+    db, _ := dynamorm.New(session.Config{
+        Region:         "us-east-1",
+        KMSKeyARN:      "arn:aws:kms:us-east-1:111111111111:key/test",
+        KMSClient:      kmsMock,
+        EncryptionRand: bytes.NewReader(bytes.Repeat([]byte{0x01}, 64)),
+        Now:            func() time.Time { return time.Unix(0, 0).UTC() },
+    })
+
+    _ = db
+}
+```
+
+## TypeScript unit testing
+
+Use `@pay-theory/dynamorm-ts/testkit` for a strict AWS SDK v3 `send()` mock and deterministic helpers:
+
+```ts
+import { PutItemCommand } from '@aws-sdk/client-dynamodb';
+import { DynamormClient } from '@pay-theory/dynamorm-ts';
+import { createMockDynamoDBClient, fixedNow } from '@pay-theory/dynamorm-ts/testkit';
+
+const mock = createMockDynamoDBClient();
+mock.when(PutItemCommand, async () => ({}));
+
+const db = new DynamormClient(mock.client, { now: fixedNow('2026-01-16T00:00:00.000000000Z') });
+```
+
+## Python unit testing
+
+Use `dynamorm_py.mocks` for strict fakes and deterministic encryption nonces:
+
+```python
+from dynamorm_py import Table
+from dynamorm_py.mocks import FakeDynamoDBClient, FakeKmsClient
+
+fake_ddb = FakeDynamoDBClient()
+fake_kms = FakeKmsClient(plaintext_key=b"\x00" * 32, ciphertext_blob=b"edk")
+
+table = Table(model, client=fake_ddb, kms_key_arn="arn:aws:kms:...", kms_client=fake_kms, rand_bytes=lambda n: b"\x01" * n)
+```
+
 ## Integration Testing
 
 For integration tests, connect to a real DynamoDB instance or DynamoDB Local.

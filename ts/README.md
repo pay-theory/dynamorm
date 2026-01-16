@@ -148,6 +148,34 @@ const provider: EncryptionProvider = {
 const db = new DynamormClient(ddb, { encryption: provider }).register(User);
 ```
 
+## Testing (Testkit)
+
+The package exposes a public testkit at `@pay-theory/dynamorm-ts/testkit`:
+
+```ts
+import assert from 'node:assert/strict';
+import { PutItemCommand } from '@aws-sdk/client-dynamodb';
+
+import { DynamormClient } from '@pay-theory/dynamorm-ts';
+import {
+  createMockDynamoDBClient,
+  fixedNow,
+} from '@pay-theory/dynamorm-ts/testkit';
+
+const mock = createMockDynamoDBClient();
+mock.when(PutItemCommand, async () => ({}));
+
+const db = new DynamormClient(mock.client, {
+  now: fixedNow('2026-01-16T00:00:00.000000000Z'),
+}).register(User);
+await db.create('User', { PK: 'U#1', SK: 'PROFILE' });
+
+assert.equal(mock.calls.length, 1);
+```
+
+For unit tests involving encryption, use `createDeterministicEncryptionProvider(seed)` to avoid randomness and bind AAD
+to the attribute name.
+
 ## Parity Statement
 
 - Implemented parity tiers: `P0` (CRUD/lifecycle/omitempty/version/ttl), `P1` (query + cursor), `P2` (batch + tx)

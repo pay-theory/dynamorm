@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from boto3.dynamodb.types import Binary
@@ -149,6 +149,7 @@ def encrypt_attribute_value(
     attr_name: str,
     kms_key_arn: str,
     kms_client: Any,
+    rand_bytes: Callable[[int], bytes] = os.urandom,
 ) -> dict[str, Any]:
     try:
         data_key = kms_client.generate_data_key(KeyId=kms_key_arn, KeySpec="AES_256")
@@ -163,7 +164,7 @@ def encrypt_attribute_value(
         raise ValidationError("kms GenerateDataKey returned invalid key types")
 
     plaintext = json.dumps(marshal_attribute_value_json(av), separators=(",", ":"), sort_keys=True).encode()
-    nonce = os.urandom(12)
+    nonce = rand_bytes(12)
     ct = AESGCM(bytes(dek)).encrypt(nonce, plaintext, _aad(attr_name))
 
     return {"v": 1, "edk": bytes(edk), "nonce": nonce, "ct": ct}

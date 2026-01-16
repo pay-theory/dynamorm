@@ -4,6 +4,7 @@ package transaction
 import (
 	"context"
 	"fmt"
+	"io"
 	"reflect"
 	"time"
 
@@ -119,7 +120,19 @@ func (tx *Transaction) Update(model any) error {
 	}
 
 	if encryption.MetadataHasEncryptedFields(metadata) && len(expressionAttributeValues) > 0 {
-		svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+		cfg := tx.session.Config()
+		keyARN := ""
+		var rng io.Reader
+		if cfg != nil {
+			keyARN = cfg.KMSKeyARN
+			rng = cfg.EncryptionRand
+		}
+		var svc *encryption.Service
+		if cfg != nil && cfg.KMSClient != nil {
+			svc = encryption.NewServiceWithRand(keyARN, cfg.KMSClient, rng)
+		} else {
+			svc = encryption.NewServiceFromAWSConfigWithRand(keyARN, tx.session.AWSConfig(), rng)
+		}
 		if err := encryption.EncryptUpdateExpressionValues(tx.ctx, svc, metadata, updateExpression, expressionAttributeNames, expressionAttributeValues); err != nil {
 			return err
 		}
@@ -467,7 +480,19 @@ func (tx *Transaction) encryptItemIfNeeded(metadata *model.Metadata, item map[st
 		return nil
 	}
 
-	svc := encryption.NewServiceFromAWSConfig(tx.session.Config().KMSKeyARN, tx.session.AWSConfig())
+	cfg := tx.session.Config()
+	keyARN := ""
+	var rng io.Reader
+	if cfg != nil {
+		keyARN = cfg.KMSKeyARN
+		rng = cfg.EncryptionRand
+	}
+	var svc *encryption.Service
+	if cfg != nil && cfg.KMSClient != nil {
+		svc = encryption.NewServiceWithRand(keyARN, cfg.KMSClient, rng)
+	} else {
+		svc = encryption.NewServiceFromAWSConfigWithRand(keyARN, tx.session.AWSConfig(), rng)
+	}
 	ctx := tx.ctx
 	if ctx == nil {
 		ctx = context.Background()
