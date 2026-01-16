@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from boto3.dynamodb.types import Binary
 from botocore.exceptions import ClientError
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from dynamorm_py.encryption import decrypt_attribute_value, encrypt_attribute_value
 from dynamorm_py.errors import AwsError, ValidationError
@@ -33,6 +36,15 @@ def test_encrypt_and_decrypt_round_trip_with_aad_binding() -> None:
         kms_client=kms,
     )
     assert set(envelope.keys()) == {"v", "edk", "nonce", "ct"}
+
+    plaintext = AESGCM(kms._dek).decrypt(
+        envelope["nonce"],
+        envelope["ct"],
+        b"dynamorm:encrypted:v1|attr=secret",
+    )
+    decoded = json.loads(plaintext.decode("utf-8"))
+    assert decoded.get("t") == "S"
+    assert decoded.get("s") == "top-secret"
 
     decrypted = decrypt_attribute_value(
         envelope,

@@ -30,69 +30,72 @@ def marshal_attribute_value_json(av: Any) -> dict[str, Any]:
     if kind == "S":
         if not isinstance(value, str):
             raise ValidationError("marshal: S must be a string")
-        return {"Type": "S", "S": value}
+        return {"t": "S", "s": value}
     if kind == "N":
         if not isinstance(value, str):
             raise ValidationError("marshal: N must be a string")
-        return {"Type": "N", "N": value}
+        return {"t": "N", "n": value}
     if kind == "B":
         if not isinstance(value, (bytes, bytearray)):
             raise ValidationError("marshal: B must be bytes")
-        return {"Type": "B", "B": base64.b64encode(bytes(value)).decode("ascii")}
+        return {"t": "B", "b": base64.b64encode(bytes(value)).decode("ascii")}
     if kind == "BOOL":
         if not isinstance(value, bool):
             raise ValidationError("marshal: BOOL must be bool")
-        return {"Type": "BOOL", "BOOL": value}
+        return {"t": "BOOL", "bool": value}
     if kind == "NULL":
         if value is not True:
             raise ValidationError("marshal: NULL must be true")
-        return {"Type": "NULL", "NULL": True}
+        return {"t": "NULL", "null": True}
 
     if kind == "SS":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValidationError("marshal: SS must be list[str]")
-        return {"Type": "SS", "SS": value}
+        return {"t": "SS", "ss": value}
     if kind == "NS":
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValidationError("marshal: NS must be list[str]")
-        return {"Type": "NS", "NS": value}
+        return {"t": "NS", "ns": value}
     if kind == "BS":
         if not isinstance(value, list) or not all(isinstance(v, (bytes, bytearray)) for v in value):
             raise ValidationError("marshal: BS must be list[bytes]")
         return {
-            "Type": "BS",
-            "BS": [base64.b64encode(bytes(v)).decode("ascii") for v in value],
+            "t": "BS",
+            "bs": [base64.b64encode(bytes(v)).decode("ascii") for v in value],
         }
 
     if kind == "L":
         if not isinstance(value, list):
             raise ValidationError("marshal: L must be list")
-        return {"Type": "L", "L": [marshal_attribute_value_json(v) for v in value]}
+        return {"t": "L", "l": [marshal_attribute_value_json(v) for v in value]}
     if kind == "M":
         if not isinstance(value, dict):
             raise ValidationError("marshal: M must be map")
-        return {"Type": "M", "M": {k: marshal_attribute_value_json(v) for k, v in value.items()}}
+        return {
+            "t": "M",
+            "m": {k: marshal_attribute_value_json(value[k]) for k in sorted(value.keys())},
+        }
 
     raise ValidationError(f"marshal: unsupported attribute value type: {kind}")
 
 
 def unmarshal_attribute_value_json(enc: Any) -> dict[str, Any]:
-    if not isinstance(enc, dict) or "Type" not in enc:
-        raise ValidationError("unmarshal: encoded attribute value must be a map with Type")
+    if not isinstance(enc, dict) or "t" not in enc:
+        raise ValidationError("unmarshal: encoded attribute value must be a map with t")
 
-    kind = enc.get("Type")
+    kind = enc.get("t")
     if kind == "S":
-        value = enc.get("S")
+        value = enc.get("s")
         if not isinstance(value, str):
             raise ValidationError("unmarshal: S must be a string")
         return {"S": value}
     if kind == "N":
-        value = enc.get("N")
+        value = enc.get("n")
         if not isinstance(value, str):
             raise ValidationError("unmarshal: N must be a string")
         return {"N": value}
     if kind == "B":
-        value = enc.get("B")
+        value = enc.get("b")
         if not isinstance(value, str):
             raise ValidationError("unmarshal: B must be base64 string")
         try:
@@ -100,28 +103,28 @@ def unmarshal_attribute_value_json(enc: Any) -> dict[str, Any]:
         except Exception as err:
             raise ValidationError("unmarshal: invalid base64 in B") from err
     if kind == "BOOL":
-        value = enc.get("BOOL")
+        value = enc.get("bool")
         if not isinstance(value, bool):
             raise ValidationError("unmarshal: BOOL must be bool")
         return {"BOOL": value}
     if kind == "NULL":
-        value = enc.get("NULL")
+        value = enc.get("null")
         if value is not True:
             raise ValidationError("unmarshal: NULL must be true")
         return {"NULL": True}
 
     if kind == "SS":
-        value = enc.get("SS")
+        value = enc.get("ss")
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValidationError("unmarshal: SS must be list[str]")
         return {"SS": value}
     if kind == "NS":
-        value = enc.get("NS")
+        value = enc.get("ns")
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValidationError("unmarshal: NS must be list[str]")
         return {"NS": value}
     if kind == "BS":
-        value = enc.get("BS")
+        value = enc.get("bs")
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValidationError("unmarshal: BS must be list[str]")
         try:
@@ -130,15 +133,15 @@ def unmarshal_attribute_value_json(enc: Any) -> dict[str, Any]:
             raise ValidationError("unmarshal: invalid base64 in BS") from err
 
     if kind == "L":
-        value = enc.get("L")
+        value = enc.get("l")
         if not isinstance(value, list):
             raise ValidationError("unmarshal: L must be list")
         return {"L": [unmarshal_attribute_value_json(v) for v in value]}
     if kind == "M":
-        value = enc.get("M")
+        value = enc.get("m")
         if not isinstance(value, dict):
             raise ValidationError("unmarshal: M must be map")
-        return {"M": {k: unmarshal_attribute_value_json(v) for k, v in value.items()}}
+        return {"M": {k: unmarshal_attribute_value_json(value[k]) for k in sorted(value.keys())}}
 
     raise ValidationError(f"unmarshal: unsupported encoded attribute value type: {kind}")
 
@@ -163,7 +166,11 @@ def encrypt_attribute_value(
     if not isinstance(dek, (bytes, bytearray)) or not isinstance(edk, (bytes, bytearray)):
         raise ValidationError("kms GenerateDataKey returned invalid key types")
 
-    plaintext = json.dumps(marshal_attribute_value_json(av), separators=(",", ":"), sort_keys=True).encode()
+    plaintext = json.dumps(
+        marshal_attribute_value_json(av),
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
     nonce = rand_bytes(12)
     ct = AESGCM(bytes(dek)).encrypt(nonce, plaintext, _aad(attr_name))
 

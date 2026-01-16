@@ -9,29 +9,29 @@ from dynamorm_py.errors import ValidationError
 
 
 def test_marshal_attribute_value_json_supported_types() -> None:
-    assert marshal_attribute_value_json({"S": "x"}) == {"Type": "S", "S": "x"}
-    assert marshal_attribute_value_json({"N": "1"}) == {"Type": "N", "N": "1"}
-    assert marshal_attribute_value_json({"BOOL": True}) == {"Type": "BOOL", "BOOL": True}
-    assert marshal_attribute_value_json({"NULL": True}) == {"Type": "NULL", "NULL": True}
-    assert marshal_attribute_value_json({"SS": ["a", "b"]}) == {"Type": "SS", "SS": ["a", "b"]}
-    assert marshal_attribute_value_json({"NS": ["1", "2"]}) == {"Type": "NS", "NS": ["1", "2"]}
+    assert marshal_attribute_value_json({"S": "x"}) == {"t": "S", "s": "x"}
+    assert marshal_attribute_value_json({"N": "1"}) == {"t": "N", "n": "1"}
+    assert marshal_attribute_value_json({"BOOL": True}) == {"t": "BOOL", "bool": True}
+    assert marshal_attribute_value_json({"NULL": True}) == {"t": "NULL", "null": True}
+    assert marshal_attribute_value_json({"SS": ["a", "b"]}) == {"t": "SS", "ss": ["a", "b"]}
+    assert marshal_attribute_value_json({"NS": ["1", "2"]}) == {"t": "NS", "ns": ["1", "2"]}
 
     assert marshal_attribute_value_json({"B": b"hi"}) == {
-        "Type": "B",
-        "B": base64.b64encode(b"hi").decode("ascii"),
+        "t": "B",
+        "b": base64.b64encode(b"hi").decode("ascii"),
     }
     assert marshal_attribute_value_json({"BS": [b"a", b"b"]}) == {
-        "Type": "BS",
-        "BS": [base64.b64encode(b"a").decode("ascii"), base64.b64encode(b"b").decode("ascii")],
+        "t": "BS",
+        "bs": [base64.b64encode(b"a").decode("ascii"), base64.b64encode(b"b").decode("ascii")],
     }
 
     assert marshal_attribute_value_json({"L": [{"S": "x"}, {"N": "1"}]}) == {
-        "Type": "L",
-        "L": [{"Type": "S", "S": "x"}, {"Type": "N", "N": "1"}],
+        "t": "L",
+        "l": [{"t": "S", "s": "x"}, {"t": "N", "n": "1"}],
     }
     assert marshal_attribute_value_json({"M": {"a": {"S": "x"}}}) == {
-        "Type": "M",
-        "M": {"a": {"Type": "S", "S": "x"}},
+        "t": "M",
+        "m": {"a": {"t": "S", "s": "x"}},
     }
 
 
@@ -66,21 +66,19 @@ def test_marshal_attribute_value_json_validation_errors() -> None:
 
 
 def test_unmarshal_attribute_value_json_supported_types() -> None:
-    assert unmarshal_attribute_value_json({"Type": "S", "S": "x"}) == {"S": "x"}
-    assert unmarshal_attribute_value_json({"Type": "N", "N": "1"}) == {"N": "1"}
-    assert unmarshal_attribute_value_json({"Type": "BOOL", "BOOL": False}) == {"BOOL": False}
-    assert unmarshal_attribute_value_json({"Type": "NULL", "NULL": True}) == {"NULL": True}
-    assert unmarshal_attribute_value_json({"Type": "SS", "SS": ["a"]}) == {"SS": ["a"]}
-    assert unmarshal_attribute_value_json({"Type": "NS", "NS": ["1"]}) == {"NS": ["1"]}
+    assert unmarshal_attribute_value_json({"t": "S", "s": "x"}) == {"S": "x"}
+    assert unmarshal_attribute_value_json({"t": "N", "n": "1"}) == {"N": "1"}
+    assert unmarshal_attribute_value_json({"t": "BOOL", "bool": False}) == {"BOOL": False}
+    assert unmarshal_attribute_value_json({"t": "NULL", "null": True}) == {"NULL": True}
+    assert unmarshal_attribute_value_json({"t": "SS", "ss": ["a"]}) == {"SS": ["a"]}
+    assert unmarshal_attribute_value_json({"t": "NS", "ns": ["1"]}) == {"NS": ["1"]}
 
     b64 = base64.b64encode(b"hi").decode("ascii")
-    assert unmarshal_attribute_value_json({"Type": "B", "B": b64}) == {"B": b"hi"}
-    assert unmarshal_attribute_value_json({"Type": "BS", "BS": [b64]}) == {"BS": [b"hi"]}
+    assert unmarshal_attribute_value_json({"t": "B", "b": b64}) == {"B": b"hi"}
+    assert unmarshal_attribute_value_json({"t": "BS", "bs": [b64]}) == {"BS": [b"hi"]}
 
-    assert unmarshal_attribute_value_json({"Type": "L", "L": [{"Type": "S", "S": "x"}]}) == {
-        "L": [{"S": "x"}]
-    }
-    assert unmarshal_attribute_value_json({"Type": "M", "M": {"a": {"Type": "N", "N": "1"}}}) == {
+    assert unmarshal_attribute_value_json({"t": "L", "l": [{"t": "S", "s": "x"}]}) == {"L": [{"S": "x"}]}
+    assert unmarshal_attribute_value_json({"t": "M", "m": {"a": {"t": "N", "n": "1"}}}) == {
         "M": {"a": {"N": "1"}}
     }
 
@@ -92,24 +90,24 @@ def test_unmarshal_attribute_value_json_validation_errors() -> None:
         unmarshal_attribute_value_json({"S": "x"})
 
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "S", "S": 1})
+        unmarshal_attribute_value_json({"t": "S", "s": 1})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "N", "N": 1})
+        unmarshal_attribute_value_json({"t": "N", "n": 1})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "BOOL", "BOOL": "true"})
+        unmarshal_attribute_value_json({"t": "BOOL", "bool": "true"})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "NULL", "NULL": False})
+        unmarshal_attribute_value_json({"t": "NULL", "null": False})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "SS", "SS": ["a", 1]})
+        unmarshal_attribute_value_json({"t": "SS", "ss": ["a", 1]})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "NS", "NS": [1]})
+        unmarshal_attribute_value_json({"t": "NS", "ns": [1]})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "B", "B": "not-base64"})
+        unmarshal_attribute_value_json({"t": "B", "b": "not-base64"})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "BS", "BS": ["not-base64"]})
+        unmarshal_attribute_value_json({"t": "BS", "bs": ["not-base64"]})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "L", "L": "not-a-list"})
+        unmarshal_attribute_value_json({"t": "L", "l": "not-a-list"})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "M", "M": "not-a-map"})
+        unmarshal_attribute_value_json({"t": "M", "m": "not-a-map"})
     with pytest.raises(ValidationError):
-        unmarshal_attribute_value_json({"Type": "X"})
+        unmarshal_attribute_value_json({"t": "X"})
