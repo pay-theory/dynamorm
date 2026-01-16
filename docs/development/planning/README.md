@@ -17,6 +17,7 @@ Start here:
 - `docs/development/planning/dynamorm-go-ts-parity-matrix.md` (feature parity tiers for TypeScript)
 - `docs/development/planning/dynamorm-multilang-feature-parity-matrix.md` (feature parity across Go/TS/Py)
 - `docs/development/planning/dynamorm-multilang-verification-parity-roadmap.md` (rubric/CI parity across Go/TS/Py)
+- `docs/development/planning/dynamorm-multilang-verification-parity-matrix.md` (what we measure + rubric gate mapping)
 - `docs/development/planning/dynamorm-contract-tests-suite-outline.md` (runnable shared contract test suite outline)
 - `contract-tests/README.md` (seed contract-tests repo skeleton + fixtures)
 - `docs/development/planning/dynamorm-lint-green-roadmap.md` (execution plan to get `make lint` green)

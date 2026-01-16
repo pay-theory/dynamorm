@@ -32,6 +32,9 @@ Verification parity means each language has the same classes of checks:
 - **File-size / maintainability budgets**
 - **Release/version alignment checks** (single repo version; no registry publishing)
 
+See also:
+- `docs/development/planning/dynamorm-multilang-verification-parity-matrix.md` (definitions + rubric gate mapping)
+
 ## Milestones
 
 ### VP-0 — Codify what we measure (spec the gates)
@@ -46,6 +49,7 @@ Verification parity means each language has the same classes of checks:
 - A single “verification parity matrix” exists mapping each rubric gate to each language.
 
 **Evidence**
+- `docs/development/planning/dynamorm-multilang-verification-parity-matrix.md`
 - This roadmap + updated rubric references.
 
 ---
@@ -142,4 +146,3 @@ Verification parity is “done” when:
 - Shared contract tests exist for drift-prone behavior and run in CI.
 - Each language ships public mocks/testkit utilities so downstream services can test cheaply.
 - CDK example proves real-world cross-language operation on a single table.
-
