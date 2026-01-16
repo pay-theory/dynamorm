@@ -6,6 +6,23 @@ while preventing **semantic drift** and **inconsistency** across services writte
 This is a roadmap, not an API promise. The key constraint is that multi-language DynamORM only works if we treat behavior as
 a **versioned contract** and verify it continuously.
 
+## Monorepo direction (decision)
+
+The goal is a **multi-language monorepo** so the spec, fixtures, and implementations evolve together and drift is caught early.
+
+Initial layout (no Go move yet):
+
+- `/` — Go implementation (this repo today)
+- `contract-tests/` — shared DMS fixtures + cross-language runners
+- `ts/` — TypeScript implementation (Phase 1 focus)
+- `py/` — Python implementation (Phase 2)
+- `docs/` — spec + planning + developer docs
+
+Versioning in a monorepo:
+
+- Each language implementation is versioned/released independently.
+- DMS is versioned and implementations pin a DMS version.
+
 ## Principles (non-negotiable)
 
 - **Single source of truth:** a model’s keys/indexes/attribute names should be defined once, not re-invented per service.
@@ -68,8 +85,8 @@ Runnable outline (starting point):
 
 **Decisions to make (pick and document)**
 - Repo strategy:
-  - **Option A (recommended):** separate repos: `dynamorm-go` (this), `dynamorm-ts`, `dynamorm-py`, plus `dynamorm-spec`
-  - Option B: monorepo with `/go`, `/ts`, `/py` packages
+  - **Option B (chosen):** multi-language monorepo (Go at repo root, plus `ts/` and `py/`)
+  - Option A (rejected for now): separate repos per language + separate spec repo
 - “Reference implementation” policy:
   - start with Go as reference, then move “truth” to DMS
 - Release + versioning policy:
@@ -78,6 +95,7 @@ Runnable outline (starting point):
 
 **Acceptance criteria**
 - A short decision doc exists (can live alongside DMS) covering repo strategy, reference policy, and versioning.
+- Monorepo layout is documented (at least `contract-tests/`, `ts/`, `py/` conventions).
 
 ---
 

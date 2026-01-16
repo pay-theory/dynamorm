@@ -1,11 +1,11 @@
-# DynamORM: 10/10 Roadmap (Rubric v0.5)
+# DynamORM: 10/10 Roadmap (Rubric v0.6)
 
 This roadmap is the execution plan for achieving and maintaining **10/10** across **Quality**, **Consistency**,
 **Completeness**, **Security**, **Maintainability**, and **Docs** as defined by:
 
 - `docs/development/planning/dynamorm-10of10-rubric.md` (source of truth; versioned)
 
-## Current scorecard (Rubric v0.5)
+## Current scorecard (Rubric v0.6)
 
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned toolchain, stable commands, and no “green by exclusion” shortcuts).
@@ -13,40 +13,40 @@ Scoring note: a check is only treated as “passing” if it is both green **and
 | Category | Grade | Blocking rubric items |
 | --- | ---: | --- |
 | Quality | 10/10 | — |
-| Consistency | 8/10 | CON-3 |
-| Completeness | 7/10 | COM-7, COM-8 |
-| Security | 9/10 | SEC-6 |
+| Consistency | 10/10 | — |
+| Completeness | 10/10 | — |
+| Security | 10/10 | — |
 | Maintainability | 10/10 | — |
 | Docs | 10/10 | — |
 
 Evidence (refresh whenever behavior changes):
 
-- `make test-unit`
-- `make integration`
+- `bash scripts/verify-unit-tests.sh`
+- `bash scripts/verify-integration-tests.sh`
 - `bash scripts/verify-coverage.sh` (current: **90.1%** vs threshold **90%**)
 - `bash scripts/verify-coverage-threshold.sh` (default threshold **90%**)
-- `bash scripts/fmt-check.sh`
+- `bash scripts/verify-formatting.sh`
 - `golangci-lint config verify -c .golangci-v2.yml`
-- `make lint`
-- `bash scripts/verify-public-api-contracts.sh` (Rubric v0.5; expected to be added)
-- `bash scripts/verify-go-modules.sh`
+- `bash scripts/verify-lint.sh`
+- `bash scripts/verify-public-api-contracts.sh`
+- `bash scripts/verify-builds.sh`
 - `bash scripts/verify-ci-toolchain.sh`
 - `bash scripts/verify-ci-rubric-enforced.sh`
-- `bash scripts/verify-dynamodb-local-pin.sh` (currently failing; pin `amazon/dynamodb-local` in examples too)
+- `bash scripts/verify-dynamodb-local-pin.sh`
 - `bash scripts/verify-threat-controls-parity.sh`
 - `bash scripts/verify-doc-integrity.sh`
 - `bash scripts/verify-no-panics.sh`
 - `bash scripts/verify-safe-defaults.sh`
 - `bash scripts/verify-network-hygiene.sh`
-- `bash scripts/verify-expression-hardening.sh` (Rubric v0.5; expected to be added)
+- `bash scripts/verify-expression-hardening.sh`
 - `bash scripts/verify-encrypted-tag-implemented.sh`
-- `bash scripts/verify-go-file-size.sh`
+- `bash scripts/verify-file-size.sh`
 - `bash scripts/verify-maintainability-roadmap.sh`
 - `bash scripts/verify-query-singleton.sh`
 - `bash scripts/verify-validation-parity.sh`
 - `bash scripts/fuzz-smoke.sh`
 - `bash scripts/sec-gosec.sh`
-- `bash scripts/sec-govulncheck.sh`
+- `bash scripts/sec-dependency-scans.sh`
 - `go mod verify`
 
 ## Rubric-to-milestone mapping
@@ -60,21 +60,21 @@ Evidence (refresh whenever behavior changes):
 | QUA-5 | ✅ | M3.5 |
 | CON-1 | ✅ | M1 |
 | CON-2 | ✅ | M1 |
-| CON-3 | ⬜ | M3.7 |
+| CON-3 | ✅ | M3.7 |
 | COM-1 | ✅ | M2 |
 | COM-2 | ✅ | M2 |
 | COM-3 | ✅ | M0 |
 | COM-4 | ✅ | M1 |
 | COM-5 | ✅ | M1.5 |
 | COM-6 | ✅ | M2 |
-| COM-7 | ⬜ | M2.5 |
-| COM-8 | ⬜ | M6 |
+| COM-7 | ✅ | M2.5 |
+| COM-8 | ✅ | M6 |
 | SEC-1 | ✅ | M2 |
 | SEC-2 | ✅ | M2 |
 | SEC-3 | ✅ | M2 |
 | SEC-4 | ✅ | M3 |
 | SEC-5 | ✅ | M3 |
-| SEC-6 | ⬜ | M3.6 |
+| SEC-6 | ✅ | M3.6 |
 | SEC-7 | ✅ | M3 |
 | SEC-8 | ✅ | M3.75 |
 | MAI-1 | ✅ | M5 |
