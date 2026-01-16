@@ -102,26 +102,25 @@ func NewSession(cfg *Config) (*Session, error) {
 	}
 
 	// Create DynamoDB client options
-	clientOptions := []func(*dynamodb.Options){
-		func(o *dynamodb.Options) {
-			o.Region = awsConfig.Region
+	clientOptions := make([]func(*dynamodb.Options), 0, 1+len(cfg.DynamoDBOptions))
+	clientOptions = append(clientOptions, func(o *dynamodb.Options) {
+		o.Region = awsConfig.Region
 
-			// Apply endpoint override if specified
-			if cfg.Endpoint != "" {
-				o.BaseEndpoint = aws.String(cfg.Endpoint)
-			}
+		// Apply endpoint override if specified
+		if cfg.Endpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.Endpoint)
+		}
 
-			// Ensure retryer is set
-			if o.Retryer == nil {
-				o.Retryer = awsConfig.Retryer()
-			}
+		// Ensure retryer is set
+		if o.Retryer == nil {
+			o.Retryer = awsConfig.Retryer()
+		}
 
-			// Ensure HTTP client is set
-			if o.HTTPClient == nil {
-				o.HTTPClient = httpClient
-			}
-		},
-	}
+		// Ensure HTTP client is set
+		if o.HTTPClient == nil {
+			o.HTTPClient = httpClient
+		}
+	})
 
 	// Add custom DynamoDB options
 	clientOptions = append(clientOptions, cfg.DynamoDBOptions...)
