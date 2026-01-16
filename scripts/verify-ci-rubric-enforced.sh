@@ -30,8 +30,8 @@ grep -Eq 'push:' "${wf}" || {
 }
 
 # Ensure the workflow uses the repo toolchain pin.
-if grep -q 'actions/setup-go' "${wf}"; then
-  grep -q 'go-version-file: go.mod' "${wf}" || {
+if grep -Eq '^[[:space:]]*uses:[[:space:]]*actions/setup-go@' "${wf}"; then
+  grep -Ev '^[[:space:]]*#' "${wf}" | grep -q 'go-version-file: go.mod' || {
     echo "ci-rubric: ${wf}: setup-go must use go-version-file: go.mod"
     failures=$((failures + 1))
   }
@@ -45,6 +45,17 @@ grep -Eq 'run:\s*make rubric' "${wf}" || {
   echo "ci-rubric: ${wf}: must run 'make rubric'"
   failures=$((failures + 1))
 }
+
+# Rubric includes TypeScript checks; require Node setup (pinned).
+if grep -Eq '^[[:space:]]*uses:[[:space:]]*actions/setup-node@' "${wf}"; then
+  grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq 'node-version:[[:space:]]*["'"'"']?24(\\.x)?["'"'"']?' || {
+    echo "ci-rubric: ${wf}: setup-node must pin node-version: 24"
+    failures=$((failures + 1))
+  }
+else
+  echo "ci-rubric: ${wf}: missing actions/setup-node step"
+  failures=$((failures + 1))
+fi
 
 # Ensure pinned tooling installs (no @latest; additional pinning is checked by scripts/verify-ci-toolchain.sh).
 if grep -Eq 'go install .*@latest' "${wf}"; then
@@ -68,4 +79,3 @@ if [[ "${failures}" -ne 0 ]]; then
 fi
 
 echo "ci-rubric: enforced"
-

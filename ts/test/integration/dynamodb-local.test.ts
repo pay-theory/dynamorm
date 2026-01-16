@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT ?? 'http://localhost:8000';
+const skipIntegration =
+  process.env.SKIP_INTEGRATION === 'true' ||
+  process.env.SKIP_INTEGRATION === '1';
 
 const client = new DynamoDBClient({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -16,10 +19,9 @@ try {
   const resp = await client.send(new ListTablesCommand({ Limit: 1 }));
   assert.ok(resp.TableNames !== undefined);
 } catch (err) {
-  if (!process.env.CI) {
-    // Local dev convenience: allow running unit tests without DynamoDB Local.
+  if (skipIntegration) {
     console.warn(
-      `Skipping DynamoDB Local integration test (endpoint unreachable: ${endpoint})`,
+      `Skipping DynamoDB Local integration test (SKIP_INTEGRATION set; endpoint: ${endpoint})`,
     );
     process.exit(0);
   }

@@ -15,6 +15,9 @@ import { DynamormError } from '../../src/errors.js';
 import { defineModel } from '../../src/model.js';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT ?? 'http://localhost:8000';
+const skipIntegration =
+  process.env.SKIP_INTEGRATION === 'true' ||
+  process.env.SKIP_INTEGRATION === '1';
 
 const ddb = new DynamoDBClient({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -29,9 +32,9 @@ try {
   try {
     await ddb.send(new ListTablesCommand({ Limit: 1 }));
   } catch (err) {
-    if (!process.env.CI) {
+    if (skipIntegration) {
       console.warn(
-        `Skipping TS P0 integration tests (endpoint unreachable: ${endpoint})`,
+        `Skipping TS P0 integration tests (SKIP_INTEGRATION set; endpoint: ${endpoint})`,
       );
       process.exit(0);
     }

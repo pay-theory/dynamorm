@@ -13,6 +13,9 @@ import { DynamormError } from '../../src/errors.js';
 import { defineModel } from '../../src/model.js';
 
 const endpoint = process.env.DYNAMODB_ENDPOINT ?? 'http://localhost:8000';
+const skipIntegration =
+  process.env.SKIP_INTEGRATION === 'true' ||
+  process.env.SKIP_INTEGRATION === '1';
 
 const ddb = new DynamoDBClient({
   region: process.env.AWS_REGION ?? 'us-east-1',
@@ -24,7 +27,17 @@ const ddb = new DynamoDBClient({
 });
 
 try {
-  await ddb.send(new ListTablesCommand({ Limit: 1 }));
+  try {
+    await ddb.send(new ListTablesCommand({ Limit: 1 }));
+  } catch (err) {
+    if (skipIntegration) {
+      console.warn(
+        `Skipping query integration tests (SKIP_INTEGRATION set; endpoint: ${endpoint})`,
+      );
+      process.exit(0);
+    }
+    throw err;
+  }
   await ensureUsersTable(ddb);
 
   const user = defineModel({
@@ -135,14 +148,6 @@ try {
       dynamorm.query('User').partitionKey(pk).cursor(byEmail.cursor!).page(),
     (err) => err instanceof DynamormError && err.code === 'ErrInvalidOperator',
   );
-} catch (err) {
-  if (!process.env.CI) {
-    console.warn(
-      `Skipping query integration tests (endpoint unreachable: ${endpoint})`,
-    );
-    process.exit(0);
-  }
-  throw err;
 } finally {
   ddb.destroy();
 }

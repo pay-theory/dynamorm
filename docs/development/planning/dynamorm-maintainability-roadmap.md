@@ -24,6 +24,18 @@ Snapshot (2026-01-11):
   - `pkg/transaction/builder.go`: **1153**
 - Query logic is canonical in `pkg/query` (root `type query struct` removed; root package delegates via a thin executor layer).
 
+Snapshot (2026-01-16):
+
+- TypeScript implementation added (`ts/`).
+- Largest production TypeScript files (line count):
+  - `ts/src/client.ts`: **523**
+  - `ts/src/query.ts`: **416**
+  - `ts/src/model.ts`: **266**
+  - `ts/src/encryption.ts`: **230**
+- File-size budgets are enforced for both languages:
+  - Go: `bash scripts/verify-go-file-size.sh` (max **2500**)
+  - TypeScript: `bash scripts/verify-ts-file-size.sh` (max **1500**)
+
 ## Guardrails (keep refactors safe)
 
 - Keep `make test-unit` and `make lint` green between milestones.
@@ -68,7 +80,7 @@ Target: move “core” behavior behind stable interfaces and add focused tests 
 **Goal:** eliminate “god files” (starting with `dynamorm.go`) so changes are reviewable.
 
 **Acceptance criteria**
-- `bash scripts/verify-go-file-size.sh` is green at the rubric budget.
+- `bash scripts/verify-file-size.sh` is green at the rubric budgets (Go + TypeScript).
 - `dynamorm.go` is split into cohesive files/packages (DB/session wiring vs query vs adapters vs executors).
 
 ---
@@ -98,7 +110,7 @@ Target: move “core” behavior behind stable interfaces and add focused tests 
 
 ```bash
 # Should be green after MAI-1/MAI-3
-bash scripts/verify-go-file-size.sh
+bash scripts/verify-file-size.sh
 bash scripts/verify-query-singleton.sh
 
 # Should become green early and stay green

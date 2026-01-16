@@ -21,15 +21,26 @@ fi
 failures=0
 
 while IFS= read -r wf; do
-  if grep -q 'actions/setup-go' "${wf}"; then
-    grep -q 'go-version-file: go.mod' "${wf}" || {
+  if grep -Eq '^[[:space:]]*uses:[[:space:]]*actions/setup-go@' "${wf}"; then
+    grep -Ev '^[[:space:]]*#' "${wf}" | grep -q 'go-version-file: go.mod' || {
       echo "${wf}: setup-go must use go-version-file: go.mod"
       failures=$((failures + 1))
     }
   fi
 
+  if grep -Eq '^[[:space:]]*uses:[[:space:]]*actions/setup-node@' "${wf}"; then
+    grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq 'node-version:[[:space:]]*["'"'"']?24(\\.x)?["'"'"']?' || {
+      echo "${wf}: setup-node must pin node-version: 24"
+      failures=$((failures + 1))
+    }
+    if grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq 'node-version:[[:space:]]*latest'; then
+      echo "${wf}: setup-node node-version must not be 'latest'"
+      failures=$((failures + 1))
+    fi
+  fi
+
   # Reject @latest in workflows to avoid silent behavior drift.
-  if grep -Eq '@latest' "${wf}"; then
+  if grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq '@latest'; then
     echo "${wf}: contains @latest; pin versions"
     failures=$((failures + 1))
   fi
