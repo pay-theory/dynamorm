@@ -20,8 +20,9 @@ Initial layout (no Go move yet):
 
 Versioning in a monorepo:
 
-- Each language implementation is versioned/released independently.
-- DMS is versioned and implementations pin a DMS version.
+- **Single shared version:** Go and TypeScript move together under the same GitHub tag/release (`vX.Y.Z` and `vX.Y.Z-rc.N`).
+- **No registry publishing (for now):** TypeScript is not published to npm; GitHub releases are the source of truth.
+- **DMS is separately versioned:** implementations pin a DMS version (it may or may not match the repo version).
 
 ## Principles (non-negotiable)
 
@@ -133,7 +134,7 @@ Runnable outline (starting point):
 **Goal:** a stable foundation that can ship and be maintained.
 
 **Recommended defaults**
-- Node 20+ (Lambda-compatible), TypeScript 5+
+- Node 24 (Lambda runtime), TypeScript 5+
 - AWS SDK v3
 - strict lint + formatting + typecheck in CI
 - integration tests run against DynamoDB Local (endpoint via `DYNAMODB_ENDPOINT`)

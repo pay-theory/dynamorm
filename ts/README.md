@@ -4,6 +4,8 @@ This folder contains the TypeScript implementation of DynamORM in the multi-lang
 
 Status: **Phase 1 complete (TS-0 → TS-7)**.
 
+Runtime: **Node.js 24** (AWS Lambda runtime).
+
 ## Goals
 
 - Provide a typed, testable DynamoDB access layer aligned with the Go implementation.
