@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
@@ -101,13 +102,27 @@ func (m *Manager) CreateTable(model any, opts ...TableOption) error {
 
 	// Create table
 	ctx := context.Background()
-	_, err = m.session.Client().CreateTable(ctx, input)
+	client, err := m.session.Client()
 	if err != nil {
+		return fmt.Errorf("failed to get client for table creation: %w", err)
+	}
+
+	_, err = client.CreateTable(ctx, input)
+	if err != nil {
+		// Check if table already exists
+		var existsErr *types.ResourceInUseException
+		if errors.As(err, &existsErr) {
+			// Table already exists, which is fine
+			return nil
+		}
 		return fmt.Errorf("failed to create table %s: %w", metadata.TableName, err)
 	}
 
 	// Wait for table to be active
-	return m.waitForTableActive(metadata.TableName)
+	waiter := dynamodb.NewTableExistsWaiter(client)
+	return waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+		TableName: aws.String(metadata.TableName),
+	}, 5*time.Minute)
 }
 
 // buildKeySchema builds the primary key schema
@@ -168,7 +183,8 @@ func (m *Manager) getAttributeType(kind reflect.Kind) types.ScalarAttributeType 
 	case reflect.String:
 		return types.ScalarAttributeTypeS
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
 		return types.ScalarAttributeTypeN
 	case reflect.Slice:
 		return types.ScalarAttributeTypeB
@@ -183,7 +199,8 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 	var lsiList []types.LocalSecondaryIndex
 
 	for _, index := range metadata.Indexes {
-		if index.Type == model.GlobalSecondaryIndex {
+		switch index.Type {
+		case model.GlobalSecondaryIndex:
 			gsi := types.GlobalSecondaryIndex{
 				IndexName: aws.String(index.Name),
 				KeySchema: []types.KeySchemaElement{
@@ -192,9 +209,7 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 						KeyType:       types.KeyTypeHash,
 					},
 				},
-				Projection: &types.Projection{
-					ProjectionType: types.ProjectionTypeAll, // Default to ALL
-				},
+				Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
 			}
 
 			if index.SortKey != nil {
@@ -204,18 +219,16 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 				})
 			}
 
-			// Set projection type based on metadata
 			if index.ProjectionType != "" {
 				gsi.Projection.ProjectionType = types.ProjectionType(index.ProjectionType)
-
-				// If INCLUDE projection, add non-key attributes
 				if index.ProjectionType == "INCLUDE" && len(index.ProjectedFields) > 0 {
 					gsi.Projection.NonKeyAttributes = index.ProjectedFields
 				}
 			}
 
 			gsiList = append(gsiList, gsi)
-		} else if index.Type == model.LocalSecondaryIndex {
+
+		case model.LocalSecondaryIndex:
 			lsi := types.LocalSecondaryIndex{
 				IndexName: aws.String(index.Name),
 				KeySchema: []types.KeySchemaElement{
@@ -224,9 +237,7 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 						KeyType:       types.KeyTypeHash,
 					},
 				},
-				Projection: &types.Projection{
-					ProjectionType: types.ProjectionTypeAll, // Default to ALL
-				},
+				Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
 			}
 
 			if index.SortKey != nil {
@@ -236,11 +247,8 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 				})
 			}
 
-			// Set projection type based on metadata
 			if index.ProjectionType != "" {
 				lsi.Projection.ProjectionType = types.ProjectionType(index.ProjectionType)
-
-				// If INCLUDE projection, add non-key attributes
 				if index.ProjectionType == "INCLUDE" && len(index.ProjectedFields) > 0 {
 					lsi.Projection.NonKeyAttributes = index.ProjectedFields
 				}
@@ -256,10 +264,15 @@ func (m *Manager) buildIndexes(metadata *model.Metadata) ([]types.GlobalSecondar
 // waitForTableActive waits for a table to become active
 func (m *Manager) waitForTableActive(tableName string) error {
 	ctx := context.Background()
-	waiter := dynamodb.NewTableExistsWaiter(m.session.Client())
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table waiter: %w", err)
+	}
+
+	waiter := dynamodb.NewTableExistsWaiter(client)
 
 	// Wait up to 5 minutes for table to be active
-	err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+	err = waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	}, 5*time.Minute)
 
@@ -273,7 +286,12 @@ func (m *Manager) waitForTableActive(tableName string) error {
 // TableExists checks if a table exists
 func (m *Manager) TableExists(tableName string) (bool, error) {
 	ctx := context.Background()
-	_, err := m.session.Client().DescribeTable(ctx, &dynamodb.DescribeTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return false, fmt.Errorf("failed to get client for table exists check: %w", err)
+	}
+
+	_, err = client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	})
 
@@ -291,7 +309,12 @@ func (m *Manager) TableExists(tableName string) (bool, error) {
 // DeleteTable deletes a DynamoDB table
 func (m *Manager) DeleteTable(tableName string) error {
 	ctx := context.Background()
-	_, err := m.session.Client().DeleteTable(ctx, &dynamodb.DeleteTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table deletion: %w", err)
+	}
+
+	_, err = client.DeleteTable(ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(tableName),
 	})
 
@@ -300,7 +323,7 @@ func (m *Manager) DeleteTable(tableName string) error {
 	}
 
 	// Wait for table to be deleted
-	waiter := dynamodb.NewTableNotExistsWaiter(m.session.Client())
+	waiter := dynamodb.NewTableNotExistsWaiter(client)
 	return waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(tableName),
 	}, 5*time.Minute)
@@ -314,7 +337,12 @@ func (m *Manager) DescribeTable(model any) (*types.TableDescription, error) {
 	}
 
 	ctx := context.Background()
-	output, err := m.session.Client().DescribeTable(ctx, &dynamodb.DescribeTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get client for table description: %w", err)
+	}
+
+	output, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(metadata.TableName),
 	})
 
@@ -332,93 +360,119 @@ func (m *Manager) UpdateTable(model any, opts ...TableOption) error {
 		return fmt.Errorf("failed to get model metadata: %w", err)
 	}
 
-	// Get current table description
 	current, err := m.DescribeTable(model)
 	if err != nil {
 		return err
 	}
 
-	// Build update input
 	input := &dynamodb.UpdateTableInput{
 		TableName: aws.String(metadata.TableName),
 	}
 
-	// Apply options to determine what to update
-	createInput := &dynamodb.CreateTableInput{}
-	for _, opt := range opts {
-		opt(createInput)
-	}
+	createInput := buildCreateTableInput(opts)
 
-	// Update billing mode if changed
-	if createInput.BillingMode != "" && createInput.BillingMode != current.BillingModeSummary.BillingMode {
-		input.BillingMode = createInput.BillingMode
+	applyBillingModeUpdate(input, createInput, current)
+	applyStreamUpdate(input, createInput)
+	applySSEUpdate(input, createInput)
 
-		// If switching to provisioned, set throughput
-		if createInput.BillingMode == types.BillingModeProvisioned && createInput.ProvisionedThroughput != nil {
-			input.ProvisionedThroughput = createInput.ProvisionedThroughput
-		}
-	}
-
-	// Update streams if changed
-	if createInput.StreamSpecification != nil {
-		input.StreamSpecification = createInput.StreamSpecification
-	}
-
-	// Update SSE if changed
-	if createInput.SSESpecification != nil {
-		input.SSESpecification = createInput.SSESpecification
-	}
-
-	// Handle GSI updates
-	gsiUpdates, err := m.calculateGSIUpdates(metadata, current)
-	if err != nil {
-		return fmt.Errorf("failed to calculate GSI updates: %w", err)
-	}
-
-	// Apply GSI updates (DynamoDB allows only one GSI operation per UpdateTable call)
-	if len(gsiUpdates.ToCreate) > 0 || len(gsiUpdates.ToDelete) > 0 {
-		// If there are multiple GSI changes, we'll need to make multiple UpdateTable calls
-		// For now, we'll return an error with instructions
-		totalChanges := len(gsiUpdates.ToCreate) + len(gsiUpdates.ToDelete)
-		if totalChanges > 1 {
-			return fmt.Errorf("multiple GSI changes detected (%d creates, %d deletes). DynamoDB allows only one GSI operation per UpdateTable call. Please use AutoMigrate for complex schema changes",
-				len(gsiUpdates.ToCreate), len(gsiUpdates.ToDelete))
-		}
-
-		// Apply single GSI create
-		if len(gsiUpdates.ToCreate) == 1 {
-			input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
-				{
-					Create: &types.CreateGlobalSecondaryIndexAction{
-						IndexName:             gsiUpdates.ToCreate[0].IndexName,
-						KeySchema:             gsiUpdates.ToCreate[0].KeySchema,
-						Projection:            gsiUpdates.ToCreate[0].Projection,
-						ProvisionedThroughput: gsiUpdates.ToCreate[0].ProvisionedThroughput,
-					},
-				},
-			}
-		}
-
-		// Apply single GSI delete
-		if len(gsiUpdates.ToDelete) == 1 {
-			input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
-				{
-					Delete: &types.DeleteGlobalSecondaryIndexAction{
-						IndexName: aws.String(gsiUpdates.ToDelete[0]),
-					},
-				},
-			}
-		}
+	if err = m.applyGSIUpdates(input, metadata, current); err != nil {
+		return err
 	}
 
 	ctx := context.Background()
-	_, err = m.session.Client().UpdateTable(ctx, input)
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table update: %w", err)
+	}
+
+	_, err = client.UpdateTable(ctx, input)
 	if err != nil {
 		return fmt.Errorf("failed to update table %s: %w", metadata.TableName, err)
 	}
 
 	// Wait for update to complete
 	return m.waitForTableActive(metadata.TableName)
+}
+
+func buildCreateTableInput(opts []TableOption) *dynamodb.CreateTableInput {
+	createInput := &dynamodb.CreateTableInput{}
+	for _, opt := range opts {
+		opt(createInput)
+	}
+	return createInput
+}
+
+func applyBillingModeUpdate(input *dynamodb.UpdateTableInput, createInput *dynamodb.CreateTableInput, current *types.TableDescription) {
+	if createInput.BillingMode == "" || current.BillingModeSummary == nil {
+		return
+	}
+
+	if createInput.BillingMode == current.BillingModeSummary.BillingMode {
+		return
+	}
+
+	input.BillingMode = createInput.BillingMode
+	if createInput.BillingMode == types.BillingModeProvisioned && createInput.ProvisionedThroughput != nil {
+		input.ProvisionedThroughput = createInput.ProvisionedThroughput
+	}
+}
+
+func applyStreamUpdate(input *dynamodb.UpdateTableInput, createInput *dynamodb.CreateTableInput) {
+	if createInput.StreamSpecification != nil {
+		input.StreamSpecification = createInput.StreamSpecification
+	}
+}
+
+func applySSEUpdate(input *dynamodb.UpdateTableInput, createInput *dynamodb.CreateTableInput) {
+	if createInput.SSESpecification != nil {
+		input.SSESpecification = createInput.SSESpecification
+	}
+}
+
+func (m *Manager) applyGSIUpdates(input *dynamodb.UpdateTableInput, metadata *model.Metadata, current *types.TableDescription) error {
+	gsiUpdates, err := m.calculateGSIUpdates(metadata, current)
+	if err != nil {
+		return fmt.Errorf("failed to calculate GSI updates: %w", err)
+	}
+
+	totalChanges := len(gsiUpdates.ToCreate) + len(gsiUpdates.ToDelete)
+	if totalChanges == 0 {
+		return nil
+	}
+
+	if totalChanges > 1 {
+		return fmt.Errorf(
+			"multiple GSI changes detected (%d creates, %d deletes). DynamoDB allows only one GSI operation per UpdateTable call. Please use AutoMigrate for complex schema changes",
+			len(gsiUpdates.ToCreate),
+			len(gsiUpdates.ToDelete),
+		)
+	}
+
+	if len(gsiUpdates.ToCreate) == 1 {
+		input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
+			{
+				Create: &types.CreateGlobalSecondaryIndexAction{
+					IndexName:             gsiUpdates.ToCreate[0].IndexName,
+					KeySchema:             gsiUpdates.ToCreate[0].KeySchema,
+					Projection:            gsiUpdates.ToCreate[0].Projection,
+					ProvisionedThroughput: gsiUpdates.ToCreate[0].ProvisionedThroughput,
+				},
+			},
+		}
+		return nil
+	}
+
+	if len(gsiUpdates.ToDelete) == 1 {
+		input.GlobalSecondaryIndexUpdates = []types.GlobalSecondaryIndexUpdate{
+			{
+				Delete: &types.DeleteGlobalSecondaryIndexAction{
+					IndexName: aws.String(gsiUpdates.ToDelete[0]),
+				},
+			},
+		}
+	}
+
+	return nil
 }
 
 // GSIUpdatePlan contains GSIs to create and delete
@@ -488,6 +542,12 @@ func (m *Manager) calculateGSIUpdates(metadata *model.Metadata, current *types.T
 // WithGSICreate creates a TableOption for adding a new GSI
 func WithGSICreate(indexName string, partitionKey string, sortKey string, projectionType types.ProjectionType) TableOption {
 	return func(input *dynamodb.CreateTableInput) {
+		_ = indexName
+		_ = partitionKey
+		_ = sortKey
+		_ = projectionType
+		_ = input
+
 		// This is a marker option - actual GSI creation is handled in UpdateTable
 		// by comparing model metadata with current table state
 	}
@@ -496,6 +556,9 @@ func WithGSICreate(indexName string, partitionKey string, sortKey string, projec
 // WithGSIDelete creates a TableOption for deleting a GSI
 func WithGSIDelete(indexName string) TableOption {
 	return func(input *dynamodb.CreateTableInput) {
+		_ = indexName
+		_ = input
+
 		// This is a marker option - actual GSI deletion is handled in UpdateTable
 		// by comparing model metadata with current table state
 	}

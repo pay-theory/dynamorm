@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/google/uuid"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/pay-theory/dynamorm/pkg/errors"
@@ -232,7 +233,8 @@ func (app *TodoApp) runCLI() {
 	scanner := bufio.NewScanner(os.Stdin)
 
 	fmt.Println("🚀 Welcome to DynamORM Todo App!")
-	fmt.Println("This example demonstrates basic CRUD operations.\n")
+	fmt.Println("This example demonstrates basic CRUD operations.")
+	fmt.Println()
 
 	// Show initial todos
 	app.printTodos()
@@ -242,7 +244,8 @@ func (app *TodoApp) runCLI() {
 	fmt.Println("  list           - Show all todos")
 	fmt.Println("  complete <num> - Mark todo as complete")
 	fmt.Println("  delete <num>   - Delete a todo")
-	fmt.Println("  quit           - Exit\n")
+	fmt.Println("  quit           - Exit")
+	fmt.Println()
 
 	for {
 		fmt.Print("> ")

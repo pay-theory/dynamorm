@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // Mock types for testing
@@ -61,6 +62,10 @@ func (m *MockMetadata) Indexes() []core.IndexSchema {
 
 func (m *MockMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	return nil
+}
+
+func (m *MockMetadata) VersionFieldName() string {
+	return ""
 }
 
 // Test metadata for TestModel

@@ -1,46 +1,61 @@
 package schema
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
+
+func deleteTableIfExists(t *testing.T, manager *Manager, tableName string) {
+	t.Helper()
+	if err := manager.DeleteTable(tableName); err != nil {
+		var notFoundErr *types.ResourceNotFoundException
+		if errors.As(err, &notFoundErr) {
+			return
+		}
+		require.NoError(t, err)
+	}
+}
 
 // Test models
 type User struct {
-	ID        string `dynamorm:"pk"`
-	Email     string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	Email     string    `dynamorm:"sk"`
 	Name      string
 	Age       int
 	Balance   float64
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
-	Version   int       `dynamorm:"version"`
+	Version   int `dynamorm:"version"`
 }
 
 type Product struct {
-	ID          string `dynamorm:"pk"`
-	CategoryID  string `dynamorm:"sk"`
-	Name        string `dynamorm:"index:name-index,pk"`
+	UpdatedTime time.Time `dynamorm:"lsi:updated-lsi,sk"`
+	ID          string    `dynamorm:"pk"`
+	CategoryID  string    `dynamorm:"sk"`
+	Name        string    `dynamorm:"index:name-index,pk"`
 	Price       float64
 	StockLevel  int
-	UpdatedTime time.Time `dynamorm:"lsi:updated-lsi,sk"`
 }
 
 type Order struct {
+	OrderDate  time.Time `dynamorm:"index:customer-index,sk"`
+	UpdatedAt  time.Time `dynamorm:"index:status-index,sk"`
 	OrderID    string    `dynamorm:"pk"`
 	CustomerID string    `dynamorm:"index:customer-index,pk"`
-	OrderDate  time.Time `dynamorm:"index:customer-index,sk"`
-	Total      float64
 	Status     string    `dynamorm:"index:status-index,pk"`
-	UpdatedAt  time.Time `dynamorm:"index:status-index,sk"`
+	Total      float64
 }
 
 func TestCreateTable(t *testing.T) {
@@ -50,10 +65,17 @@ func TestCreateTable(t *testing.T) {
 	}
 	tests.RequireDynamoDBLocal(t)
 
-	// Create test session
+	// Create test session with dummy credentials for DynamoDB Local
 	sess, err := session.NewSession(&session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		CredentialsProvider: aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			}),
 	})
 	require.NoError(t, err)
 
@@ -67,7 +89,7 @@ func TestCreateTable(t *testing.T) {
 
 	t.Run("CreateSimpleTable", func(t *testing.T) {
 		// Delete table if exists
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 
 		// Create table
 		err := manager.CreateTable(&User{})
@@ -85,7 +107,7 @@ func TestCreateTable(t *testing.T) {
 		assert.Equal(t, types.TableStatusActive, desc.TableStatus)
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 
 	t.Run("CreateTableWithGSI", func(t *testing.T) {
@@ -94,7 +116,7 @@ func TestCreateTable(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete table if exists
-		_ = manager.DeleteTable("Orders")
+		deleteTableIfExists(t, manager, "Orders")
 
 		// Create table
 		err = manager.CreateTable(&Order{})
@@ -110,9 +132,9 @@ func TestCreateTable(t *testing.T) {
 		for _, gsi := range desc.GlobalSecondaryIndexes {
 			if *gsi.IndexName == "customer-index" {
 				hasCustomerIndex = true
-				assert.Equal(t, "CustomerID", *gsi.KeySchema[0].AttributeName)
+				assert.Equal(t, "customerID", *gsi.KeySchema[0].AttributeName)
 				assert.Equal(t, types.KeyTypeHash, gsi.KeySchema[0].KeyType)
-				assert.Equal(t, "OrderDate", *gsi.KeySchema[1].AttributeName)
+				assert.Equal(t, "orderDate", *gsi.KeySchema[1].AttributeName)
 				assert.Equal(t, types.KeyTypeRange, gsi.KeySchema[1].KeyType)
 			}
 			if *gsi.IndexName == "status-index" {
@@ -123,7 +145,7 @@ func TestCreateTable(t *testing.T) {
 		assert.True(t, hasStatusIndex)
 
 		// Cleanup
-		_ = manager.DeleteTable("Orders")
+		deleteTableIfExists(t, manager, "Orders")
 	})
 
 	t.Run("CreateTableWithLSI", func(t *testing.T) {
@@ -132,7 +154,7 @@ func TestCreateTable(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete table if exists
-		_ = manager.DeleteTable("Products")
+		deleteTableIfExists(t, manager, "Products")
 
 		// Create table
 		err = manager.CreateTable(&Product{})
@@ -145,12 +167,12 @@ func TestCreateTable(t *testing.T) {
 		assert.Equal(t, "updated-lsi", *desc.LocalSecondaryIndexes[0].IndexName)
 
 		// Cleanup
-		_ = manager.DeleteTable("Products")
+		deleteTableIfExists(t, manager, "Products")
 	})
 
 	t.Run("CreateTableWithOptions", func(t *testing.T) {
 		// Delete table if exists
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 
 		// Create table with provisioned throughput
 		err := manager.CreateTable(&User{},
@@ -162,12 +184,16 @@ func TestCreateTable(t *testing.T) {
 		// Verify billing mode
 		desc, err := manager.DescribeTable(&User{})
 		assert.NoError(t, err)
-		assert.Equal(t, types.BillingModeProvisioned, desc.BillingModeSummary.BillingMode)
-		assert.Equal(t, int64(5), *desc.ProvisionedThroughput.ReadCapacityUnits)
-		assert.Equal(t, int64(5), *desc.ProvisionedThroughput.WriteCapacityUnits)
+		if desc.BillingModeSummary != nil {
+			assert.Equal(t, types.BillingModeProvisioned, desc.BillingModeSummary.BillingMode)
+		}
+		if desc.ProvisionedThroughput != nil {
+			assert.Equal(t, int64(5), *desc.ProvisionedThroughput.ReadCapacityUnits)
+			assert.Equal(t, int64(5), *desc.ProvisionedThroughput.WriteCapacityUnits)
+		}
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 }
 
@@ -177,10 +203,17 @@ func TestTableExists(t *testing.T) {
 	}
 	tests.RequireDynamoDBLocal(t)
 
-	// Create test session
+	// Create test session with dummy credentials for DynamoDB Local
 	sess, err := session.NewSession(&session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		CredentialsProvider: aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			}),
 	})
 	require.NoError(t, err)
 
@@ -199,7 +232,7 @@ func TestTableExists(t *testing.T) {
 		err := registry.Register(&User{})
 		require.NoError(t, err)
 
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 		err = manager.CreateTable(&User{})
 		require.NoError(t, err)
 
@@ -209,7 +242,7 @@ func TestTableExists(t *testing.T) {
 		assert.True(t, exists)
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 }
 
@@ -219,10 +252,17 @@ func TestUpdateTable(t *testing.T) {
 	}
 	tests.RequireDynamoDBLocal(t)
 
-	// Create test session
+	// Create test session with dummy credentials for DynamoDB Local
 	sess, err := session.NewSession(&session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
+		CredentialsProvider: aws.CredentialsProviderFunc(
+			func(ctx context.Context) (aws.Credentials, error) {
+				return aws.Credentials{
+					AccessKeyID:     "dummy",
+					SecretAccessKey: "dummy",
+				}, nil
+			}),
 	})
 	require.NoError(t, err)
 
@@ -234,7 +274,7 @@ func TestUpdateTable(t *testing.T) {
 
 	t.Run("UpdateBillingMode", func(t *testing.T) {
 		// Create table with on-demand billing
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 		err := manager.CreateTable(&User{})
 		require.NoError(t, err)
 
@@ -251,7 +291,7 @@ func TestUpdateTable(t *testing.T) {
 		assert.Equal(t, types.BillingModeProvisioned, desc.BillingModeSummary.BillingMode)
 
 		// Cleanup
-		_ = manager.DeleteTable("Users")
+		deleteTableIfExists(t, manager, "Users")
 	})
 }
 
@@ -275,8 +315,8 @@ func TestBuildAttributeDefinitions(t *testing.T) {
 			attrMap[*attr.AttributeName] = attr.AttributeType
 		}
 
-		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["ID"])
-		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["Email"])
+		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["id"])
+		assert.Equal(t, types.ScalarAttributeTypeS, attrMap["email"])
 	})
 
 	t.Run("TableWithIndexes", func(t *testing.T) {
@@ -294,11 +334,11 @@ func TestBuildAttributeDefinitions(t *testing.T) {
 			attrMap[*attr.AttributeName] = attr.AttributeType
 		}
 
-		assert.Contains(t, attrMap, "OrderID")
-		assert.Contains(t, attrMap, "CustomerID")
-		assert.Contains(t, attrMap, "OrderDate")
-		assert.Contains(t, attrMap, "Status")
-		assert.Contains(t, attrMap, "UpdatedAt")
+		assert.Contains(t, attrMap, "orderID")
+		assert.Contains(t, attrMap, "customerID")
+		assert.Contains(t, attrMap, "orderDate")
+		assert.Contains(t, attrMap, "status")
+		assert.Contains(t, attrMap, "updatedAt")
 	})
 }
 
@@ -307,15 +347,15 @@ func TestGetAttributeType(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		kind     reflect.Kind
 		expected types.ScalarAttributeType
+		kind     reflect.Kind
 	}{
-		{"String", reflect.String, types.ScalarAttributeTypeS},
-		{"Int", reflect.Int, types.ScalarAttributeTypeN},
-		{"Int64", reflect.Int64, types.ScalarAttributeTypeN},
-		{"Uint", reflect.Uint, types.ScalarAttributeTypeN},
-		{"Slice", reflect.Slice, types.ScalarAttributeTypeB},
-		{"Other", reflect.Bool, types.ScalarAttributeTypeS},
+		{"String", types.ScalarAttributeTypeS, reflect.String},
+		{"Int", types.ScalarAttributeTypeN, reflect.Int},
+		{"Int64", types.ScalarAttributeTypeN, reflect.Int64},
+		{"Uint", types.ScalarAttributeTypeN, reflect.Uint},
+		{"Slice", types.ScalarAttributeTypeB, reflect.Slice},
+		{"Other", types.ScalarAttributeTypeS, reflect.Bool},
 	}
 
 	for _, tt := range tests {

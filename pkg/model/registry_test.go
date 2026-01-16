@@ -4,9 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
 // Test models with various struct tag configurations
@@ -26,27 +28,33 @@ type IndexedModel struct {
 	ID       string  `dynamorm:"pk"`
 	Email    string  `dynamorm:"index:gsi-email"`
 	Category string  `dynamorm:"index:gsi-category-price,pk"`
-	Price    float64 `dynamorm:"index:gsi-category-price,sk"`
 	Status   string  `dynamorm:"lsi:lsi-status"`
+	Price    float64 `dynamorm:"index:gsi-category-price,sk"`
 }
 
 type SpecialFieldsModel struct {
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
 	ID        string    `dynamorm:"pk"`
 	Version   int       `dynamorm:"version"`
 	TTL       int64     `dynamorm:"ttl"`
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
 }
 
 type CustomAttributeModel struct {
-	ID       string   `dynamorm:"pk,attr:user_id"`
+	ID       string   `dynamorm:"pk,attr:userId"`
 	UserName string   `dynamorm:"attr:username"`
-	Tags     []string `dynamorm:"set"`
 	Optional string   `dynamorm:"omitempty"`
+	Tags     []string `dynamorm:"set"`
 }
 
 type InvalidModel struct {
 	Name string // No primary key
+}
+
+type ImplicitTimestampModel struct {
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ID        string `dynamorm:"pk"`
 }
 
 func TestNewRegistry(t *testing.T) {
@@ -181,7 +189,7 @@ func TestRegisterCustomAttributeModel(t *testing.T) {
 	// Check custom attribute names
 	idField := metadata.Fields["ID"]
 	require.NotNil(t, idField)
-	assert.Equal(t, "user_id", idField.DBName)
+	assert.Equal(t, "userId", idField.DBName)
 
 	usernameField := metadata.Fields["UserName"]
 	require.NotNil(t, usernameField)
@@ -198,7 +206,7 @@ func TestRegisterCustomAttributeModel(t *testing.T) {
 	assert.True(t, optionalField.OmitEmpty)
 
 	// Check fields by DB name
-	assert.Equal(t, idField, metadata.FieldsByDBName["user_id"])
+	assert.Equal(t, idField, metadata.FieldsByDBName["userId"])
 	assert.Equal(t, usernameField, metadata.FieldsByDBName["username"])
 }
 
@@ -209,6 +217,24 @@ func TestRegisterInvalidModel(t *testing.T) {
 	err := registry.Register(&InvalidModel{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "missing primary key")
+}
+
+func TestRegisterImplicitTimestampModel(t *testing.T) {
+	registry := model.NewRegistry()
+
+	err := registry.Register(&ImplicitTimestampModel{})
+	require.NoError(t, err)
+
+	metadata, err := registry.GetMetadata(&ImplicitTimestampModel{})
+	require.NoError(t, err)
+
+	require.NotNil(t, metadata.CreatedAtField)
+	assert.Equal(t, "CreatedAt", metadata.CreatedAtField.Name)
+	assert.True(t, metadata.CreatedAtField.IsCreatedAt)
+
+	require.NotNil(t, metadata.UpdatedAtField)
+	assert.Equal(t, "UpdatedAt", metadata.UpdatedAtField.Name)
+	assert.True(t, metadata.UpdatedAtField.IsUpdatedAt)
 }
 
 func TestRegisterDuplicatePrimaryKey(t *testing.T) {
@@ -222,6 +248,74 @@ func TestRegisterDuplicatePrimaryKey(t *testing.T) {
 	err := registry.Register(&DuplicatePKModel{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate primary key")
+}
+
+func TestRegisterModelWithIndexModifiers(t *testing.T) {
+	type IndexModifierModel struct {
+		PK     string `dynamorm:"pk,attr:PK"`
+		SK     string `dynamorm:"sk,attr:SK"`
+		GSI1PK string `dynamorm:"index:user-list-index,pk,attr:gsi1PK"`
+		GSI1SK string `dynamorm:"index:user-list-index,sk,attr:gsi1SK"`
+		GSI2PK string `dynamorm:"index:role-index,pk"`
+		GSI2SK string `dynamorm:"index:role-index,sk"`
+	}
+
+	registry := model.NewRegistry()
+
+	err := registry.Register(&IndexModifierModel{})
+	require.NoError(t, err)
+
+	metadata, err := registry.GetMetadata(&IndexModifierModel{})
+	require.NoError(t, err)
+
+	require.NotNil(t, metadata.PrimaryKey)
+	assert.Equal(t, "PK", metadata.PrimaryKey.PartitionKey.Name)
+	assert.Equal(t, "SK", metadata.PrimaryKey.SortKey.Name)
+
+	// Expect both GSIs with their respective keys
+	require.Len(t, metadata.Indexes, 2)
+
+	findIndex := func(name string) *model.IndexSchema {
+		for i := range metadata.Indexes {
+			if metadata.Indexes[i].Name == name {
+				return &metadata.Indexes[i]
+			}
+		}
+		return nil
+	}
+
+	userIndex := findIndex("user-list-index")
+	require.NotNil(t, userIndex)
+	assert.Equal(t, "GSI1PK", userIndex.PartitionKey.Name)
+	assert.Equal(t, "GSI1SK", userIndex.SortKey.Name)
+
+	roleIndex := findIndex("role-index")
+	require.NotNil(t, roleIndex)
+	assert.Equal(t, "GSI2PK", roleIndex.PartitionKey.Name)
+	assert.Equal(t, "GSI2SK", roleIndex.SortKey.Name)
+}
+
+func TestRegisterRejectsEncryptedOnKeyFields(t *testing.T) {
+	t.Run("PrimaryKey", func(t *testing.T) {
+		type EncryptedPKModel struct {
+			PK string `dynamorm:"pk,encrypted"`
+		}
+
+		registry := model.NewRegistry()
+		err := registry.Register(&EncryptedPKModel{})
+		require.ErrorIs(t, err, dynamormErrors.ErrInvalidTag)
+	})
+
+	t.Run("IndexKey", func(t *testing.T) {
+		type EncryptedIndexKeyModel struct {
+			ID    string `dynamorm:"pk"`
+			Email string `dynamorm:"index:gsi-email,pk,encrypted"`
+		}
+
+		registry := model.NewRegistry()
+		err := registry.Register(&EncryptedIndexKeyModel{})
+		require.ErrorIs(t, err, dynamormErrors.ErrInvalidTag)
+	})
 }
 
 func TestRegisterInvalidTagTypes(t *testing.T) {

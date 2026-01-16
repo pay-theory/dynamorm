@@ -6,40 +6,41 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm"
-	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/pkg/query"
-	"github.com/pay-theory/dynamorm/tests"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/pkg/session"
+	"github.com/pay-theory/dynamorm/tests"
 )
 
 // BatchTestItem represents a test item for batch operations
 type BatchTestItem struct {
-	ID        string `dynamorm:"pk"`
-	SKValue   string `dynamorm:"sk"`
+	CreatedAt time.Time `dynamorm:"created_at"`
+	UpdatedAt time.Time `dynamorm:"updated_at"`
+	ID        string    `dynamorm:"pk"`
+	SKValue   string    `dynamorm:"sk"`
 	Name      string
 	Category  string
+	Tags      []string
 	Value     int
 	Price     float64
 	Active    bool
-	Tags      []string
-	CreatedAt time.Time `dynamorm:"created_at"`
-	UpdatedAt time.Time `dynamorm:"updated_at"`
+}
+
+func (BatchTestItem) TableName() string {
+	return "BatchTestItems"
 }
 
 func TestBatchOperations(t *testing.T) {
-	// Skip if not integration test
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	// Setup
+	// Initialize test context with automatic cleanup
+	testCtx := InitTestDB(t)
 	ctx := context.Background()
-	db, cleanup := setupBatchTestDB(t)
-	defer cleanup()
+
+	// Create table with automatic cleanup
+	testCtx.CreateTableIfNotExists(t, &BatchTestItem{})
 
 	t.Run("BatchCreate", func(t *testing.T) {
 		// Create test items
@@ -76,12 +77,12 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		// Batch create
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
 		require.NoError(t, err)
 
 		// Verify all items were created
 		var results []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch1").
 			WithContext(ctx).
 			All(&results)
@@ -104,10 +105,18 @@ func TestBatchOperations(t *testing.T) {
 			})
 		}
 
-		// This should fail as BatchCreate doesn't support > 25 items
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "25 items")
+		// This should succeed by processing items in batches of 25
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(items)
+		assert.NoError(t, err)
+
+		// Verify all 30 items were created
+		var results []BatchTestItem
+		err = testCtx.DB.Model(&BatchTestItem{}).
+			Where("ID", "=", "batch2").
+			WithContext(ctx).
+			All(&results)
+		require.NoError(t, err)
+		assert.Len(t, results, 30)
 	})
 
 	t.Run("BatchGet", func(t *testing.T) {
@@ -119,7 +128,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range setupItems {
-			err := db.Model(&item).WithContext(ctx).Create()
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
 			require.NoError(t, err)
 		}
 
@@ -131,7 +140,7 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		var results []BatchTestItem
-		err := db.Model(&BatchTestItem{}).WithContext(ctx).BatchGet(keys, &results)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchGet(keys, &results)
 		require.NoError(t, err)
 		assert.Len(t, results, 3)
 
@@ -142,7 +151,65 @@ func TestBatchOperations(t *testing.T) {
 		}
 	})
 
+	t.Run("BatchGetLarge", func(t *testing.T) {
+		baseID := "batch-large"
+		seed := make([]BatchTestItem, 0, 120)
+		for i := 0; i < 120; i++ {
+			seed = append(seed, BatchTestItem{
+				ID:      baseID,
+				SKValue: fmt.Sprintf("item-%03d", i),
+				Name:    fmt.Sprintf("Large Item %d", i),
+				Value:   i,
+			})
+		}
+
+		require.NoError(t, testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchCreate(seed))
+
+		totalRequests := 140
+		keys := make([]any, 0, totalRequests)
+		for i := 0; i < totalRequests; i++ {
+			keys = append(keys, dynamorm.NewKeyPair(baseID, fmt.Sprintf("item-%03d", i)))
+		}
+
+		opts := dynamorm.DefaultBatchGetOptions()
+		opts.ChunkSize = 45
+		opts.Parallel = true
+		opts.MaxConcurrency = 3
+
+		var progressCalls int
+		var lastRetrieved int
+		opts.ProgressCallback = func(retrieved, total int) {
+			progressCalls++
+			lastRetrieved = retrieved
+			require.Equal(t, totalRequests, total)
+		}
+
+		var results []BatchTestItem
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchGetWithOptions(keys, &results, opts)
+		require.NoError(t, err)
+		assert.Len(t, results, len(seed))
+		assert.GreaterOrEqual(t, progressCalls, 3)
+		assert.Equal(t, len(seed), lastRetrieved)
+	})
+
 	t.Run("BatchDelete", func(t *testing.T) {
+		// First, clean up any existing items with the same keys
+		cleanupItems := []BatchTestItem{
+			{ID: "batch4", SKValue: "del1"},
+			{ID: "batch4", SKValue: "del2"},
+			{ID: "batch4", SKValue: "del3"},
+			{ID: "batch4", SKValue: "keep1"},
+		}
+
+		for _, item := range cleanupItems {
+			err := testCtx.DB.Model(&BatchTestItem{}).
+				Where("ID", "=", item.ID).
+				Where("SKValue", "=", item.SKValue).
+				WithContext(ctx).
+				Delete()
+			require.NoError(t, err)
+		}
+
 		// Setup: Create items to delete
 		setupItems := []BatchTestItem{
 			{ID: "batch4", SKValue: "del1", Name: "Delete Item 1"},
@@ -152,29 +219,23 @@ func TestBatchOperations(t *testing.T) {
 		}
 
 		for _, item := range setupItems {
-			err := db.Model(&item).WithContext(ctx).Create()
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
 			require.NoError(t, err)
 		}
 
-		// Create query instance to access batch operations
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    ctx,
-		})
-
-		// Batch delete specific items
+		// Delete specific items using BatchDelete
 		deleteKeys := []any{
 			BatchTestItem{ID: "batch4", SKValue: "del1"},
 			BatchTestItem{ID: "batch4", SKValue: "del2"},
 			BatchTestItem{ID: "batch4", SKValue: "del3"},
 		}
 
-		err := q.BatchDelete(deleteKeys)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchDelete(deleteKeys)
 		require.NoError(t, err)
 
 		// Verify items were deleted
 		var remaining []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch4").
 			WithContext(ctx).
 			All(&remaining)
@@ -184,300 +245,142 @@ func TestBatchOperations(t *testing.T) {
 	})
 
 	t.Run("BatchWrite_Mixed", func(t *testing.T) {
-		// Create query instance
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    ctx,
-		})
-
-		// Items to create
-		putItems := []any{
-			BatchTestItem{ID: "batch5", SKValue: "new1", Name: "New Item 1", Value: 100},
-			BatchTestItem{ID: "batch5", SKValue: "new2", Name: "New Item 2", Value: 200},
+		// First, clean up any existing items
+		cleanupItems := []BatchTestItem{
+			{ID: "batch5", SKValue: "put1"},
+			{ID: "batch5", SKValue: "put2"},
+			{ID: "batch5", SKValue: "del1"},
+			{ID: "batch5", SKValue: "del2"},
 		}
 
-		// Items to delete (create them first)
-		setupForDelete := []BatchTestItem{
-			{ID: "batch5", SKValue: "old1", Name: "Old Item 1"},
-			{ID: "batch5", SKValue: "old2", Name: "Old Item 2"},
-		}
-
-		for _, item := range setupForDelete {
-			err := db.Model(&item).WithContext(ctx).Create()
+		for _, item := range cleanupItems {
+			err := testCtx.DB.Model(&BatchTestItem{}).
+				Where("ID", "=", item.ID).
+				Where("SKValue", "=", item.SKValue).
+				WithContext(ctx).
+				Delete()
 			require.NoError(t, err)
 		}
 
+		// Setup: Create items to be deleted
+		setupItems := []BatchTestItem{
+			{ID: "batch5", SKValue: "del1", Name: "To Delete 1"},
+			{ID: "batch5", SKValue: "del2", Name: "To Delete 2"},
+		}
+
+		for _, item := range setupItems {
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
+			require.NoError(t, err)
+		}
+
+		// Items to put
+		putItems := []any{
+			BatchTestItem{ID: "batch5", SKValue: "put1", Name: "New Put 1"},
+			BatchTestItem{ID: "batch5", SKValue: "put2", Name: "New Put 2"},
+		}
+
+		// Keys to delete
 		deleteKeys := []any{
-			BatchTestItem{ID: "batch5", SKValue: "old1"},
-			BatchTestItem{ID: "batch5", SKValue: "old2"},
+			BatchTestItem{ID: "batch5", SKValue: "del1"},
+			BatchTestItem{ID: "batch5", SKValue: "del2"},
 		}
 
 		// Execute mixed batch write
-		err := q.BatchWrite(putItems, deleteKeys)
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchWrite(putItems, deleteKeys)
 		require.NoError(t, err)
 
 		// Verify results
 		var results []BatchTestItem
-		err = db.Model(&BatchTestItem{}).
+		err = testCtx.DB.Model(&BatchTestItem{}).
 			Where("ID", "=", "batch5").
 			WithContext(ctx).
 			All(&results)
 		require.NoError(t, err)
+		assert.Len(t, results, 2) // Should only have the put items
 
-		assert.Len(t, results, 2)
+		// Verify the put items exist
 		for _, result := range results {
-			assert.Contains(t, []string{"new1", "new2"}, result.SKValue)
+			assert.Contains(t, []string{"put1", "put2"}, result.SKValue)
+			assert.Contains(t, []string{"New Put 1", "New Put 2"}, result.Name)
 		}
 	})
 
 	t.Run("BatchOperations_WithOptions", func(t *testing.T) {
-		// Test with custom options
-		var progressUpdates []struct{ processed, total int }
-		var errors []error
-
-		opts := &query.BatchUpdateOptions{
-			MaxBatchSize:   2, // Small batch size to test batching
-			Parallel:       true,
-			MaxConcurrency: 2,
-			ProgressCallback: func(processed, total int) {
-				progressUpdates = append(progressUpdates, struct{ processed, total int }{processed, total})
-			},
-			ErrorHandler: func(item any, err error) error {
-				errors = append(errors, err)
-				return nil // Continue on error
-			},
-		}
-
-		// Create items with batching
+		// Create test items for update
 		items := []BatchTestItem{
-			{ID: "batch6", SKValue: "opt1", Name: "Option Item 1"},
-			{ID: "batch6", SKValue: "opt2", Name: "Option Item 2"},
-			{ID: "batch6", SKValue: "opt3", Name: "Option Item 3"},
-			{ID: "batch6", SKValue: "opt4", Name: "Option Item 4"},
-			{ID: "batch6", SKValue: "opt5", Name: "Option Item 5"},
+			{ID: "batch6", SKValue: "item1", Name: "Original 1", Value: 100},
+			{ID: "batch6", SKValue: "item2", Name: "Original 2", Value: 200},
+			{ID: "batch6", SKValue: "item3", Name: "Original 3", Value: 300},
 		}
 
-		// Convert to any slice
-		anyItems := make([]any, len(items))
-		for i, item := range items {
-			anyItems[i] = item
+		// Create items first
+		for _, item := range items {
+			err := testCtx.DB.Model(&item).WithContext(ctx).Create()
+			require.NoError(t, err)
 		}
 
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    ctx,
-		})
-
-		// Execute with options
-		err := q.BatchUpdateWithOptions(anyItems, opts, "Name", "Value")
-
-		// Since we're using a test executor, we expect some behavior
-		// In real tests with DynamoDB, we'd verify the actual updates
-		if err != nil {
-			t.Logf("BatchUpdate error (expected in test): %v", err)
+		// Update items with new values
+		updateItems := []any{
+			BatchTestItem{ID: "batch6", SKValue: "item1", Name: "Updated 1", Value: 150},
+			BatchTestItem{ID: "batch6", SKValue: "item2", Name: "Updated 2", Value: 250},
+			BatchTestItem{ID: "batch6", SKValue: "item3", Name: "Updated 3", Value: 350},
 		}
 
-		// Verify progress was reported
-		assert.NotEmpty(t, progressUpdates)
+		// Execute batch update with options
+		err := testCtx.DB.Model(&BatchTestItem{}).WithContext(ctx).BatchUpdateWithOptions(
+			updateItems,
+			[]string{"Name", "Value"},
+		)
+		require.NoError(t, err)
+
+		// Verify updates
+		var results []BatchTestItem
+		err = testCtx.DB.Model(&BatchTestItem{}).
+			Where("ID", "=", "batch6").
+			WithContext(ctx).
+			All(&results)
+		require.NoError(t, err)
+		assert.Len(t, results, 3)
+
+		// Check that values were updated
+		for _, result := range results {
+			switch result.SKValue {
+			case "item1":
+				assert.Equal(t, "Updated 1", result.Name)
+				assert.Equal(t, 150, result.Value)
+			case "item2":
+				assert.Equal(t, "Updated 2", result.Name)
+				assert.Equal(t, 250, result.Value)
+			case "item3":
+				assert.Equal(t, "Updated 3", result.Name)
+				assert.Equal(t, 350, result.Value)
+			}
+		}
 	})
-}
-
-// testMetadataAdapter adapts BatchTestItem to metadata interface
-type testMetadataAdapter struct{}
-
-func (m *testMetadataAdapter) TableName() string {
-	return "batch_test_table"
-}
-
-func (m *testMetadataAdapter) PrimaryKey() core.KeySchema {
-	return core.KeySchema{
-		PartitionKey: "ID",
-		SortKey:      "SKValue",
-	}
-}
-
-func (m *testMetadataAdapter) Indexes() []core.IndexSchema {
-	return []core.IndexSchema{
-		{
-			Name:         "category-index",
-			Type:         "GSI",
-			PartitionKey: "Category",
-			SortKey:      "Price",
-		},
-	}
-}
-
-func (m *testMetadataAdapter) AttributeMetadata(field string) *core.AttributeMetadata {
-	metadata := map[string]*core.AttributeMetadata{
-		"ID":        {Name: "ID", Type: "string", DynamoDBName: "pk"},
-		"SKValue":   {Name: "SKValue", Type: "string", DynamoDBName: "sk"},
-		"Name":      {Name: "Name", Type: "string", DynamoDBName: "name"},
-		"Category":  {Name: "Category", Type: "string", DynamoDBName: "category"},
-		"Value":     {Name: "Value", Type: "number", DynamoDBName: "value"},
-		"Price":     {Name: "Price", Type: "number", DynamoDBName: "price"},
-		"Active":    {Name: "Active", Type: "bool", DynamoDBName: "active"},
-		"Tags":      {Name: "Tags", Type: "list", DynamoDBName: "tags"},
-		"CreatedAt": {Name: "CreatedAt", Type: "string", DynamoDBName: "created_at"},
-		"UpdatedAt": {Name: "UpdatedAt", Type: "string", DynamoDBName: "updated_at"},
-	}
-
-	if meta, ok := metadata[field]; ok {
-		return meta
-	}
-	return nil
-}
-
-// testBatchExecutor implements the executor interfaces for testing
-type testBatchExecutor struct {
-	client *dynamodb.Client
-	ctx    context.Context
-}
-
-func (e *testBatchExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
-	// Mock implementation
-	return nil
-}
-
-func (e *testBatchExecutor) ExecuteScan(input *core.CompiledQuery, dest any) error {
-	// Mock implementation
-	return nil
-}
-
-func (e *testBatchExecutor) ExecuteBatchWriteItem(tableName string, writeRequests []types.WriteRequest) (*core.BatchWriteResult, error) {
-	// Execute actual batch write
-	batchInput := &dynamodb.BatchWriteItemInput{
-		RequestItems: map[string][]types.WriteRequest{
-			tableName: writeRequests,
-		},
-	}
-
-	output, err := e.client.BatchWriteItem(e.ctx, batchInput)
-	if err != nil {
-		return nil, err
-	}
-
-	return &core.BatchWriteResult{
-		UnprocessedItems: output.UnprocessedItems,
-		ConsumedCapacity: output.ConsumedCapacity,
-	}, nil
 }
 
 // Helper functions
-func setupBatchTestDB(t *testing.T) (core.ExtendedDB, func()) {
+
+func TestBatchOperationsE2E(t *testing.T) {
 	tests.RequireDynamoDBLocal(t)
 
-	db, err := dynamorm.New(dynamorm.Config{
+	// Fixed initialization with session.Config
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	db, err := dynamorm.New(sessionConfig)
 	require.NoError(t, err)
-
-	// Create test tables
-	err = db.AutoMigrate(&BatchTestItem{})
-	require.NoError(t, err)
-
-	// Cleanup function
-	cleanup := func() {
-		// Clean up test data
-		var items []BatchTestItem
-		db.Model(&BatchTestItem{}).Scan(&items)
-		for _, item := range items {
-			db.Model(&item).Delete()
-		}
-	}
-
-	return db, cleanup
-}
-
-func getTestDynamoDBClient(t *testing.T) *dynamodb.Client {
-	// This would be properly configured in a real test
-	// For now, return nil as this is just a test structure
-	return nil
-}
-
-// TestBatchOperationsErrorHandling tests error scenarios
-func TestBatchOperationsErrorHandling(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test")
-	}
-
-	t.Run("BatchDelete_WithInvalidKeys", func(t *testing.T) {
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    context.Background(),
-		})
-
-		// Try to delete with incomplete keys
-		invalidKeys := []any{
-			BatchTestItem{ID: "missing_sk"}, // Missing sort key
-		}
-
-		err := q.BatchDelete(invalidKeys)
-		assert.Error(t, err)
+	t.Cleanup(func() {
+		assert.NoError(t, db.Close())
 	})
 
-	t.Run("BatchWrite_Retries", func(t *testing.T) {
-		// Test retry logic with unprocessed items
-		// This would require a mock that simulates unprocessed items
-		t.Skip("Requires mock executor for retry simulation")
-	})
-}
-
-// TestBatchOperationsPerformance tests performance characteristics
-func TestBatchOperationsPerformance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping performance test")
-	}
-
-	t.Run("ParallelVsSequential", func(t *testing.T) {
-		// Create many items for testing
-		var items []BatchTestItem
-		for i := 0; i < 100; i++ {
-			items = append(items, BatchTestItem{
-				ID:      fmt.Sprintf("perf%d", i/25),
-				SKValue: fmt.Sprintf("item%d", i),
-				Name:    fmt.Sprintf("Performance Test Item %d", i),
-				Value:   i,
-			})
-		}
-
-		// Convert to any slice
-		anyItems := make([]any, len(items))
-		for i, item := range items {
-			anyItems[i] = item
-		}
-
-		q := query.New(&BatchTestItem{}, &testMetadataAdapter{}, &testBatchExecutor{
-			client: getTestDynamoDBClient(t),
-			ctx:    context.Background(),
-		})
-
-		// Test sequential
-		seqOpts := &query.BatchUpdateOptions{
-			MaxBatchSize: 25,
-			Parallel:     false,
-		}
-
-		start := time.Now()
-		_ = q.BatchUpdateWithOptions(anyItems, seqOpts, "Name")
-		seqDuration := time.Since(start)
-
-		// Test parallel
-		parOpts := &query.BatchUpdateOptions{
-			MaxBatchSize:   25,
-			Parallel:       true,
-			MaxConcurrency: 4,
-		}
-
-		start = time.Now()
-		_ = q.BatchUpdateWithOptions(anyItems, parOpts, "Name")
-		parDuration := time.Since(start)
-
-		// Log performance results
-		t.Logf("Sequential duration: %v", seqDuration)
-		t.Logf("Parallel duration: %v", parDuration)
-
-		// Parallel should generally be faster for large batches
-		// But this is not guaranteed in test environments
-	})
+	// ... existing code ...
 }

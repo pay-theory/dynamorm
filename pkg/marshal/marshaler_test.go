@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
 // Test structures
@@ -23,15 +24,15 @@ type SimpleStruct struct {
 }
 
 type ComplexStruct struct {
-	ID            string            `dynamodb:"id"`
-	Tags          []string          `dynamodb:"tags"`
-	Attributes    map[string]string `dynamodb:"attributes"`
 	CreatedAt     time.Time         `dynamodb:"created_at,createdAt"`
 	UpdatedAt     time.Time         `dynamodb:"updated_at,updatedAt"`
-	Version       int64             `dynamodb:"version,version"`
 	TTL           time.Time         `dynamodb:"ttl,ttl"`
+	Attributes    map[string]string `dynamodb:"attributes"`
 	OptionalField *string           `dynamodb:"optional,omitempty"`
+	ID            string            `dynamodb:"id"`
+	Tags          []string          `dynamodb:"tags"`
 	StringSet     []string          `dynamodb:"string_set,set"`
+	Version       int64             `dynamodb:"version,version"`
 }
 
 type PointerStruct struct {
@@ -42,23 +43,23 @@ type PointerStruct struct {
 }
 
 type OmitEmptyStruct struct {
+	MapOE    map[string]string `dynamodb:"map_oe,omitempty"`
 	Required string            `dynamodb:"required"`
 	Optional string            `dynamodb:"optional,omitempty"`
+	SliceOE  []string          `dynamodb:"slice_oe,omitempty"`
 	Number   int               `dynamodb:"number,omitempty"`
 	Float    float64           `dynamodb:"float,omitempty"`
-	SliceOE  []string          `dynamodb:"slice_oe,omitempty"`
-	MapOE    map[string]string `dynamodb:"map_oe,omitempty"`
 }
 
 type AllTypesStruct struct {
+	Time     time.Time         `dynamodb:"time"`
+	StrMap   map[string]string `dynamodb:"str_map"`
 	String   string            `dynamodb:"string"`
+	StrSlice []string          `dynamodb:"str_slice"`
 	Int      int               `dynamodb:"int"`
 	Int64    int64             `dynamodb:"int64"`
 	Float64  float64           `dynamodb:"float64"`
 	Bool     bool              `dynamodb:"bool"`
-	Time     time.Time         `dynamodb:"time"`
-	StrSlice []string          `dynamodb:"str_slice"`
-	StrMap   map[string]string `dynamodb:"str_map"`
 }
 
 type VersionedStruct struct {
@@ -67,12 +68,26 @@ type VersionedStruct struct {
 }
 
 // Helper function to create field metadata
-func createFieldMetadata(name, dbName string, index int, typ reflect.Type, opts ...func(*model.FieldMetadata)) *model.FieldMetadata {
+func createFieldMetadata(structType reflect.Type, name, dbName string, typ reflect.Type, opts ...func(*model.FieldMetadata)) *model.FieldMetadata {
+	if structType.Kind() == reflect.Ptr {
+		structType = structType.Elem()
+	}
+	if structType.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("createFieldMetadata requires struct type, got %s", structType.Kind()))
+	}
+
+	field, ok := structType.FieldByName(name)
+	if !ok {
+		panic(fmt.Sprintf("field %s not found in %s", name, structType.Name()))
+	}
+
+	indexPath := append([]int(nil), field.Index...)
 	fm := &model.FieldMetadata{
-		Name:   name,
-		DBName: dbName,
-		Index:  index,
-		Type:   typ,
+		Name:      name,
+		DBName:    dbName,
+		Index:     indexPath[len(indexPath)-1],
+		IndexPath: indexPath,
+		Type:      typ,
 	}
 	for _, opt := range opts {
 		opt(fm)
@@ -120,19 +135,68 @@ func createMetadata(fields ...*model.FieldMetadata) *model.Metadata {
 	return metadata
 }
 
+func requireAVS(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberS {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberS)
+	require.True(t, ok, "expected *types.AttributeValueMemberS, got %T", av)
+	return member
+}
+
+func requireAVN(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberN {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberN)
+	require.True(t, ok, "expected *types.AttributeValueMemberN, got %T", av)
+	return member
+}
+
+func requireAVBOOL(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberBOOL {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberBOOL)
+	require.True(t, ok, "expected *types.AttributeValueMemberBOOL, got %T", av)
+	return member
+}
+
+func requireAVL(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberL {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberL)
+	require.True(t, ok, "expected *types.AttributeValueMemberL, got %T", av)
+	return member
+}
+
+func requireAVM(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberM {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberM)
+	require.True(t, ok, "expected *types.AttributeValueMemberM, got %T", av)
+	return member
+}
+
+func requireAVSS(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberSS {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberSS)
+	require.True(t, ok, "expected *types.AttributeValueMemberSS, got %T", av)
+	return member
+}
+
+func requireAVNULL(t testing.TB, av types.AttributeValue) *types.AttributeValueMemberNULL {
+	t.Helper()
+	member, ok := av.(*types.AttributeValueMemberNULL)
+	require.True(t, ok, "expected *types.AttributeValueMemberNULL, got %T", av)
+	return member
+}
+
 func TestNew(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 	assert.NotNil(t, marshaler)
 }
 
 func TestMarshalItem_SimpleTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	tests := []struct {
-		name     string
 		input    interface{}
 		metadata *model.Metadata
 		expected map[string]types.AttributeValue
+		name     string
 	}{
 		{
 			name: "simple struct with all fields",
@@ -144,11 +208,11 @@ func TestMarshalItem_SimpleTypes(t *testing.T) {
 				Active: true,
 			},
 			metadata: createMetadata(
-				createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-				createFieldMetadata("Name", "name", 1, reflect.TypeOf("")),
-				createFieldMetadata("Age", "age", 2, reflect.TypeOf(0)),
-				createFieldMetadata("Score", "score", 3, reflect.TypeOf(0.0)),
-				createFieldMetadata("Active", "active", 4, reflect.TypeOf(false)),
+				createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "ID", "id", reflect.TypeOf("")),
+				createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Name", "name", reflect.TypeOf("")),
+				createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Age", "age", reflect.TypeOf(0)),
+				createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Score", "score", reflect.TypeOf(0.0)),
+				createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Active", "active", reflect.TypeOf(false)),
 			),
 			expected: map[string]types.AttributeValue{
 				"id":     &types.AttributeValueMemberS{Value: "test-id"},
@@ -170,7 +234,7 @@ func TestMarshalItem_SimpleTypes(t *testing.T) {
 }
 
 func TestMarshalItem_ComplexTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	now := time.Now()
 	optional := "optional-value"
@@ -188,56 +252,56 @@ func TestMarshalItem_ComplexTypes(t *testing.T) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Tags", "tags", 1, reflect.TypeOf([]string{})),
-		createFieldMetadata("Attributes", "attributes", 2, reflect.TypeOf(map[string]string{})),
-		createFieldMetadata("CreatedAt", "created_at", 3, reflect.TypeOf(time.Time{}), withCreatedAt()),
-		createFieldMetadata("UpdatedAt", "updated_at", 4, reflect.TypeOf(time.Time{}), withUpdatedAt()),
-		createFieldMetadata("Version", "version", 5, reflect.TypeOf(int64(0)), withVersion()),
-		createFieldMetadata("TTL", "ttl", 6, reflect.TypeOf(time.Time{}), withTTL()),
-		createFieldMetadata("OptionalField", "optional", 7, reflect.TypeOf(&optional), withOmitEmpty()),
-		createFieldMetadata("StringSet", "string_set", 8, reflect.TypeOf([]string{}), withSet()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Tags", "tags", reflect.TypeOf([]string{})),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Attributes", "attributes", reflect.TypeOf(map[string]string{})),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "CreatedAt", "created_at", reflect.TypeOf(time.Time{}), withCreatedAt()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "UpdatedAt", "updated_at", reflect.TypeOf(time.Time{}), withUpdatedAt()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Version", "version", reflect.TypeOf(int64(0)), withVersion()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "TTL", "ttl", reflect.TypeOf(time.Time{}), withTTL()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "OptionalField", "optional", reflect.TypeOf(&optional), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "StringSet", "string_set", reflect.TypeOf([]string{}), withSet()),
 	)
 
 	result, err := marshaler.MarshalItem(input, metadata)
 	require.NoError(t, err)
 
 	// Check regular fields
-	assert.Equal(t, "complex-id", result["id"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "complex-id", requireAVS(t, result["id"]).Value)
 
 	// Check list
-	tagsList := result["tags"].(*types.AttributeValueMemberL).Value
+	tagsList := requireAVL(t, result["tags"]).Value
 	assert.Len(t, tagsList, 3)
-	assert.Equal(t, "tag1", tagsList[0].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "tag1", requireAVS(t, tagsList[0]).Value)
 
 	// Check map
-	attrMap := result["attributes"].(*types.AttributeValueMemberM).Value
+	attrMap := requireAVM(t, result["attributes"]).Value
 	assert.Len(t, attrMap, 2)
-	assert.Equal(t, "value1", attrMap["key1"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "value1", requireAVS(t, attrMap["key1"]).Value)
 
 	// Check timestamps (should be current time)
-	createdAt := result["created_at"].(*types.AttributeValueMemberS).Value
-	updatedAt := result["updated_at"].(*types.AttributeValueMemberS).Value
+	createdAt := requireAVS(t, result["created_at"]).Value
+	updatedAt := requireAVS(t, result["updated_at"]).Value
 	assert.NotEmpty(t, createdAt)
 	assert.NotEmpty(t, updatedAt)
 
 	// Check version
-	assert.Equal(t, "1", result["version"].(*types.AttributeValueMemberN).Value)
+	assert.Equal(t, "1", requireAVN(t, result["version"]).Value)
 
 	// Check TTL (should be Unix timestamp)
-	ttl := result["ttl"].(*types.AttributeValueMemberN).Value
+	ttl := requireAVN(t, result["ttl"]).Value
 	assert.NotEmpty(t, ttl)
 
 	// Check optional field
-	assert.Equal(t, "optional-value", result["optional"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "optional-value", requireAVS(t, result["optional"]).Value)
 
 	// Check string set
-	stringSet := result["string_set"].(*types.AttributeValueMemberSS).Value
+	stringSet := requireAVSS(t, result["string_set"]).Value
 	assert.ElementsMatch(t, []string{"set1", "set2"}, stringSet)
 }
 
 func TestMarshalItem_PointerTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test with non-nil pointers
 	str := "test-string"
@@ -253,19 +317,19 @@ func TestMarshalItem_PointerTypes(t *testing.T) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("StringPtr", "string_ptr", 0, reflect.TypeOf(&str)),
-		createFieldMetadata("IntPtr", "int_ptr", 1, reflect.TypeOf(&num)),
-		createFieldMetadata("Float64Ptr", "float64_ptr", 2, reflect.TypeOf(&flt)),
-		createFieldMetadata("BoolPtr", "bool_ptr", 3, reflect.TypeOf(&bl)),
+		createFieldMetadata(reflect.TypeOf(PointerStruct{}), "StringPtr", "string_ptr", reflect.TypeOf(&str)),
+		createFieldMetadata(reflect.TypeOf(PointerStruct{}), "IntPtr", "int_ptr", reflect.TypeOf(&num)),
+		createFieldMetadata(reflect.TypeOf(PointerStruct{}), "Float64Ptr", "float64_ptr", reflect.TypeOf(&flt)),
+		createFieldMetadata(reflect.TypeOf(PointerStruct{}), "BoolPtr", "bool_ptr", reflect.TypeOf(&bl)),
 	)
 
 	result, err := marshaler.MarshalItem(input, metadata)
 	require.NoError(t, err)
 
-	assert.Equal(t, "test-string", result["string_ptr"].(*types.AttributeValueMemberS).Value)
-	assert.Equal(t, "42", result["int_ptr"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, "3.14", result["float64_ptr"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, true, result["bool_ptr"].(*types.AttributeValueMemberBOOL).Value)
+	assert.Equal(t, "test-string", requireAVS(t, result["string_ptr"]).Value)
+	assert.Equal(t, "42", requireAVN(t, result["int_ptr"]).Value)
+	assert.Equal(t, "3.14", requireAVN(t, result["float64_ptr"]).Value)
+	assert.Equal(t, true, requireAVBOOL(t, result["bool_ptr"]).Value)
 
 	// Test with nil pointers
 	input2 := PointerStruct{}
@@ -274,13 +338,13 @@ func TestMarshalItem_PointerTypes(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, key := range []string{"string_ptr", "int_ptr", "float64_ptr", "bool_ptr"} {
-		assert.IsType(t, &types.AttributeValueMemberNULL{}, result2[key])
-		assert.True(t, result2[key].(*types.AttributeValueMemberNULL).Value)
+		nullMember := requireAVNULL(t, result2[key])
+		assert.True(t, nullMember.Value)
 	}
 }
 
 func TestMarshalItem_OmitEmpty(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test with empty values
 	input := OmitEmptyStruct{
@@ -289,26 +353,26 @@ func TestMarshalItem_OmitEmpty(t *testing.T) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("Required", "required", 0, reflect.TypeOf("")),
-		createFieldMetadata("Optional", "optional", 1, reflect.TypeOf(""), withOmitEmpty()),
-		createFieldMetadata("Number", "number", 2, reflect.TypeOf(0), withOmitEmpty()),
-		createFieldMetadata("Float", "float", 3, reflect.TypeOf(0.0), withOmitEmpty()),
-		createFieldMetadata("SliceOE", "slice_oe", 4, reflect.TypeOf([]string{}), withOmitEmpty()),
-		createFieldMetadata("MapOE", "map_oe", 5, reflect.TypeOf(map[string]string{}), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(OmitEmptyStruct{}), "Required", "required", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(OmitEmptyStruct{}), "Optional", "optional", reflect.TypeOf(""), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(OmitEmptyStruct{}), "Number", "number", reflect.TypeOf(0), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(OmitEmptyStruct{}), "Float", "float", reflect.TypeOf(0.0), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(OmitEmptyStruct{}), "SliceOE", "slice_oe", reflect.TypeOf([]string{}), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(OmitEmptyStruct{}), "MapOE", "map_oe", reflect.TypeOf(map[string]string{}), withOmitEmpty()),
 	)
 
 	result, err := marshaler.MarshalItem(input, metadata)
 	require.NoError(t, err)
 
 	// Required field should be present
-	assert.Equal(t, "required-value", result["required"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "required-value", requireAVS(t, result["required"]).Value)
 
 	// OmitEmpty fields should not be present
 	assert.Len(t, result, 1) // Only required field should be in result
 }
 
 func TestMarshalItem_Errors(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	tests := []struct {
 		name     string
@@ -346,7 +410,7 @@ func TestMarshalItem_Errors(t *testing.T) {
 }
 
 func TestMarshalItem_AllTypesSupport(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	now := time.Now()
 	input := AllTypesStruct{
@@ -361,67 +425,67 @@ func TestMarshalItem_AllTypesSupport(t *testing.T) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("String", "string", 0, reflect.TypeOf("")),
-		createFieldMetadata("Int", "int", 1, reflect.TypeOf(0)),
-		createFieldMetadata("Int64", "int64", 2, reflect.TypeOf(int64(0))),
-		createFieldMetadata("Float64", "float64", 3, reflect.TypeOf(0.0)),
-		createFieldMetadata("Bool", "bool", 4, reflect.TypeOf(false)),
-		createFieldMetadata("Time", "time", 5, reflect.TypeOf(time.Time{})),
-		createFieldMetadata("StrSlice", "str_slice", 6, reflect.TypeOf([]string{})),
-		createFieldMetadata("StrMap", "str_map", 7, reflect.TypeOf(map[string]string{})),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "String", "string", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "Int", "int", reflect.TypeOf(0)),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "Int64", "int64", reflect.TypeOf(int64(0))),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "Float64", "float64", reflect.TypeOf(0.0)),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "Bool", "bool", reflect.TypeOf(false)),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "Time", "time", reflect.TypeOf(time.Time{})),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "StrSlice", "str_slice", reflect.TypeOf([]string{})),
+		createFieldMetadata(reflect.TypeOf(AllTypesStruct{}), "StrMap", "str_map", reflect.TypeOf(map[string]string{})),
 	)
 
 	result, err := marshaler.MarshalItem(input, metadata)
 	require.NoError(t, err)
 
-	assert.Equal(t, "test", result["string"].(*types.AttributeValueMemberS).Value)
-	assert.Equal(t, "42", result["int"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, "9223372036854775807", result["int64"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, "3.14159", result["float64"].(*types.AttributeValueMemberN).Value)
-	assert.Equal(t, true, result["bool"].(*types.AttributeValueMemberBOOL).Value)
-	assert.Equal(t, now.Format(time.RFC3339Nano), result["time"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "test", requireAVS(t, result["string"]).Value)
+	assert.Equal(t, "42", requireAVN(t, result["int"]).Value)
+	assert.Equal(t, "9223372036854775807", requireAVN(t, result["int64"]).Value)
+	assert.Equal(t, "3.14159", requireAVN(t, result["float64"]).Value)
+	assert.Equal(t, true, requireAVBOOL(t, result["bool"]).Value)
+	assert.Equal(t, now.Format(time.RFC3339Nano), requireAVS(t, result["time"]).Value)
 
 	// Check slice
-	sliceVal := result["str_slice"].(*types.AttributeValueMemberL).Value
+	sliceVal := requireAVL(t, result["str_slice"]).Value
 	assert.Len(t, sliceVal, 3)
-	assert.Equal(t, "a", sliceVal[0].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "a", requireAVS(t, sliceVal[0]).Value)
 
 	// Check map
-	mapVal := result["str_map"].(*types.AttributeValueMemberM).Value
+	mapVal := requireAVM(t, result["str_map"]).Value
 	assert.Len(t, mapVal, 1)
-	assert.Equal(t, "value", mapVal["key"].(*types.AttributeValueMemberS).Value)
+	assert.Equal(t, "value", requireAVS(t, mapVal["key"]).Value)
 }
 
 func TestMarshalItem_VersionField(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test with zero version
 	input1 := VersionedStruct{ID: "test-id", Version: 0}
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Version", "version", 1, reflect.TypeOf(int64(0)), withVersion()),
+		createFieldMetadata(reflect.TypeOf(VersionedStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(VersionedStruct{}), "Version", "version", reflect.TypeOf(int64(0)), withVersion()),
 	)
 
 	result1, err := marshaler.MarshalItem(input1, metadata)
 	require.NoError(t, err)
-	assert.Equal(t, "0", result1["version"].(*types.AttributeValueMemberN).Value)
+	assert.Equal(t, "0", requireAVN(t, result1["version"]).Value)
 
 	// Test with non-zero version
 	input2 := VersionedStruct{ID: "test-id", Version: 5}
 	result2, err := marshaler.MarshalItem(input2, metadata)
 	require.NoError(t, err)
-	assert.Equal(t, "5", result2["version"].(*types.AttributeValueMemberN).Value)
+	assert.Equal(t, "5", requireAVN(t, result2["version"]).Value)
 }
 
 func TestMarshalItem_ConcurrentAccess(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Name", "name", 1, reflect.TypeOf("")),
-		createFieldMetadata("Age", "age", 2, reflect.TypeOf(0)),
-		createFieldMetadata("Score", "score", 3, reflect.TypeOf(0.0)),
-		createFieldMetadata("Active", "active", 4, reflect.TypeOf(false)),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Name", "name", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Age", "age", reflect.TypeOf(0)),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Score", "score", reflect.TypeOf(0.0)),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Active", "active", reflect.TypeOf(false)),
 	)
 
 	var wg sync.WaitGroup
@@ -456,11 +520,11 @@ func TestMarshalItem_ConcurrentAccess(t *testing.T) {
 }
 
 func TestMarshalItem_CacheReuse(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Name", "name", 1, reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Name", "name", reflect.TypeOf("")),
 	)
 
 	// First marshal should populate cache
@@ -478,7 +542,7 @@ func TestMarshalItem_CacheReuse(t *testing.T) {
 }
 
 func TestMarshalComplexValue_EdgeCases(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test nil slice
 	var nilSlice []string
@@ -499,7 +563,7 @@ func TestMarshalComplexValue_EdgeCases(t *testing.T) {
 	v3 := reflect.ValueOf(emptySlice)
 	result3, err := marshaler.marshalComplexValue(v3)
 	require.NoError(t, err)
-	list := result3.(*types.AttributeValueMemberL).Value
+	list := requireAVL(t, result3).Value
 	assert.Len(t, list, 0)
 
 	// Test empty map
@@ -507,12 +571,12 @@ func TestMarshalComplexValue_EdgeCases(t *testing.T) {
 	v4 := reflect.ValueOf(emptyMap)
 	result4, err := marshaler.marshalComplexValue(v4)
 	require.NoError(t, err)
-	mapVal := result4.(*types.AttributeValueMemberM).Value
+	mapVal := requireAVM(t, result4).Value
 	assert.Len(t, mapVal, 0)
 }
 
 func TestMarshalValue_AllNumericTypes(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	tests := []struct {
 		name     string
@@ -535,13 +599,13 @@ func TestMarshalValue_AllNumericTypes(t *testing.T) {
 			v := reflect.ValueOf(tt.value)
 			result, err := marshaler.marshalValue(v)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, result.(*types.AttributeValueMemberN).Value)
+			assert.Equal(t, tt.expected, requireAVN(t, result).Value)
 		})
 	}
 }
 
 func BenchmarkMarshalItem_Simple(b *testing.B) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	input := SimpleStruct{
 		ID:     "bench-id",
@@ -552,21 +616,23 @@ func BenchmarkMarshalItem_Simple(b *testing.B) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Name", "name", 1, reflect.TypeOf("")),
-		createFieldMetadata("Age", "age", 2, reflect.TypeOf(0)),
-		createFieldMetadata("Score", "score", 3, reflect.TypeOf(0.0)),
-		createFieldMetadata("Active", "active", 4, reflect.TypeOf(false)),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Name", "name", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Age", "age", reflect.TypeOf(0)),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Score", "score", reflect.TypeOf(0.0)),
+		createFieldMetadata(reflect.TypeOf(SimpleStruct{}), "Active", "active", reflect.TypeOf(false)),
 	)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = marshaler.MarshalItem(input, metadata)
+		if _, err := marshaler.MarshalItem(input, metadata); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkMarshalItem_Complex(b *testing.B) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	optional := "optional"
 	input := ComplexStruct{
@@ -580,26 +646,28 @@ func BenchmarkMarshalItem_Complex(b *testing.B) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Tags", "tags", 1, reflect.TypeOf([]string{})),
-		createFieldMetadata("Attributes", "attributes", 2, reflect.TypeOf(map[string]string{})),
-		createFieldMetadata("CreatedAt", "created_at", 3, reflect.TypeOf(time.Time{}), withCreatedAt()),
-		createFieldMetadata("UpdatedAt", "updated_at", 4, reflect.TypeOf(time.Time{}), withUpdatedAt()),
-		createFieldMetadata("Version", "version", 5, reflect.TypeOf(int64(0)), withVersion()),
-		createFieldMetadata("TTL", "ttl", 6, reflect.TypeOf(time.Time{}), withTTL()),
-		createFieldMetadata("OptionalField", "optional", 7, reflect.TypeOf(&optional), withOmitEmpty()),
-		createFieldMetadata("StringSet", "string_set", 8, reflect.TypeOf([]string{}), withSet()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Tags", "tags", reflect.TypeOf([]string{})),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Attributes", "attributes", reflect.TypeOf(map[string]string{})),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "CreatedAt", "created_at", reflect.TypeOf(time.Time{}), withCreatedAt()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "UpdatedAt", "updated_at", reflect.TypeOf(time.Time{}), withUpdatedAt()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "Version", "version", reflect.TypeOf(int64(0)), withVersion()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "TTL", "ttl", reflect.TypeOf(time.Time{}), withTTL()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "OptionalField", "optional", reflect.TypeOf(&optional), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(ComplexStruct{}), "StringSet", "string_set", reflect.TypeOf([]string{}), withSet()),
 	)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = marshaler.MarshalItem(input, metadata)
+		if _, err := marshaler.MarshalItem(input, metadata); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 // Additional tests for edge cases and special scenarios
 func TestMarshalItem_SpecialStringSetHandling(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	// Test empty string set with omitempty
 	type StringSetStruct struct {
@@ -613,8 +681,8 @@ func TestMarshalItem_SpecialStringSetHandling(t *testing.T) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("Tags", "tags", 1, reflect.TypeOf([]string{}), withSet(), withOmitEmpty()),
+		createFieldMetadata(reflect.TypeOf(StringSetStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(StringSetStruct{}), "Tags", "tags", reflect.TypeOf([]string{}), withSet(), withOmitEmpty()),
 	)
 
 	result, err := marshaler.MarshalItem(input, metadata)
@@ -626,11 +694,11 @@ func TestMarshalItem_SpecialStringSetHandling(t *testing.T) {
 }
 
 func TestMarshalItem_DeepNestedStructures(t *testing.T) {
-	marshaler := New()
+	marshaler := New(nil)
 
 	type NestedMap struct {
-		ID      string                       `dynamodb:"id"`
 		DeepMap map[string]map[string]string `dynamodb:"deep_map"`
+		ID      string                       `dynamodb:"id"`
 	}
 
 	input := NestedMap{
@@ -644,8 +712,8 @@ func TestMarshalItem_DeepNestedStructures(t *testing.T) {
 	}
 
 	metadata := createMetadata(
-		createFieldMetadata("ID", "id", 0, reflect.TypeOf("")),
-		createFieldMetadata("DeepMap", "deep_map", 1, reflect.TypeOf(map[string]map[string]string{})),
+		createFieldMetadata(reflect.TypeOf(NestedMap{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(NestedMap{}), "DeepMap", "deep_map", reflect.TypeOf(map[string]map[string]string{})),
 	)
 
 	_, err := marshaler.MarshalItem(input, metadata)

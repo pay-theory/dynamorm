@@ -9,17 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // Mock types for testing
 type TestItem struct {
 	ID        string `dynamodb:"id"`
 	Name      string `dynamodb:"name"`
-	Value     int    `dynamodb:"value"`
 	Status    string `dynamodb:"status"`
+	Value     int    `dynamodb:"value"`
 	CreatedAt int64  `dynamodb:"created_at"`
 }
 
@@ -60,6 +61,10 @@ func (m *TestMetadata) AttributeMetadata(field string) *core.AttributeMetadata {
 	return nil
 }
 
+func (m *TestMetadata) VersionFieldName() string {
+	return ""
+}
+
 func TestDefaultBatchOptions(t *testing.T) {
 	opts := DefaultBatchOptions()
 
@@ -75,11 +80,11 @@ func TestDefaultBatchOptions(t *testing.T) {
 
 func TestBatchUpdate(t *testing.T) {
 	tests := []struct {
-		name    string
 		items   any
+		name    string
+		errMsg  string
 		fields  []string
 		wantErr bool
-		errMsg  string
 	}{
 		{
 			name: "valid slice of items",
@@ -164,7 +169,14 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		_ = q.BatchUpdateWithOptions(items, opts, "Name")
+		// Convert items to []any
+		anyItems := make([]any, len(items))
+		for i, item := range items {
+			anyItems[i] = item
+		}
+
+		err := q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
+		assert.NoError(t, err)
 
 		// Should have been called at least once
 		assert.NotEmpty(t, progressCalls)
@@ -185,7 +197,14 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		_ = q.BatchUpdateWithOptions(items, opts, "Name")
+		// Convert items to []any
+		anyItems := make([]any, len(items))
+		for i, item := range items {
+			anyItems[i] = item
+		}
+
+		err := q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
+		assert.NoError(t, err)
 
 		// Error handler should have been called due to execution failure
 		assert.True(t, errorHandlerCalled)
@@ -206,7 +225,13 @@ func TestBatchUpdateWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		err := q.BatchUpdateWithOptions(items, opts, "Name")
+		// Convert items to []any
+		anyItems := make([]any, len(items))
+		for i, item := range items {
+			anyItems[i] = item
+		}
+
+		err := q.BatchUpdateWithOptions(anyItems, []string{"Name"}, opts)
 		// Should not panic and should handle concurrency properly
 		// With error handler that ignores errors, this should complete without error
 		assert.NoError(t, err)
@@ -222,9 +247,9 @@ func TestPrepareBatches(t *testing.T) {
 	tests := []struct {
 		name            string
 		items           []TestItem
+		expectedSizes   []int
 		batchSize       int
 		expectedBatches int
-		expectedSizes   []int
 	}{
 		{
 			name:            "batch size 3",
@@ -294,7 +319,9 @@ func TestPrepareBatches(t *testing.T) {
 					if tt.batchSize <= 0 || tt.batchSize > 25 {
 						expectedIdx = i*25 + j
 					}
-					assert.Equal(t, tt.items[expectedIdx].ID, item.(TestItem).ID)
+					typedItem, ok := item.(TestItem)
+					require.True(t, ok)
+					assert.Equal(t, tt.items[expectedIdx].ID, typedItem.ID)
 				}
 			}
 		})
@@ -341,9 +368,9 @@ func TestPrepareKeyBatches(t *testing.T) {
 
 func TestExtractKey(t *testing.T) {
 	tests := []struct {
-		name    string
 		item    any
 		wantKey map[string]any
+		name    string
 		wantErr bool
 	}{
 		{
@@ -496,8 +523,8 @@ func TestExecuteWithRetry(t *testing.T) {
 
 func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
-		name      string
 		err       error
+		name      string
 		wantRetry bool
 	}{
 		{
@@ -695,9 +722,9 @@ func TestWithCancellation(t *testing.T) {
 
 	select {
 	case <-done:
-		// Context was cancelled successfully
+		// Context was canceled successfully
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("Context was not cancelled")
+		t.Fatal("Context was not canceled")
 	}
 
 	// Calling cancel again should not panic
@@ -738,7 +765,8 @@ func TestBatchDeleteWithOptions(t *testing.T) {
 			ctx:      context.Background(),
 		}
 
-		_ = q.BatchDeleteWithOptions(keys, opts)
+		err := q.BatchDeleteWithOptions(keys, opts)
+		assert.NoError(t, err)
 		assert.True(t, progressCalled)
 	})
 }
@@ -785,7 +813,8 @@ func TestExecuteBatchesParallel(t *testing.T) {
 		},
 	}
 
-	_ = q.executeBatchesParallel(items, opts, []string{"Name"}, &processed, total)
+	err := q.executeBatchesParallel(items, opts, []string{"Name"}, &processed, total)
+	assert.NoError(t, err)
 
 	// Verify all batches were attempted
 	assert.Len(t, executionOrder, 10)

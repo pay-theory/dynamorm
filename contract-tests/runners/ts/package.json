@@ -1,0 +1,14 @@
+{
+  "name": "@dynamorm/contract-runner-ts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:fixtures": "tsx test/fixtures.test.ts",
+    "test:contract:p0": "tsx test/contract.p0.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5",
+    "yaml": "^2.8.0"
+  }
+}
+

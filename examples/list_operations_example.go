@@ -12,9 +12,9 @@ import (
 type Product struct {
 	ID          string `dynamorm:"pk"`
 	Name        string
+	Description string
 	Tags        []string
 	Categories  []string
-	Description string
 }
 
 // DemonstrateListOperations shows how to use list append/prepend operations

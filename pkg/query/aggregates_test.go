@@ -6,24 +6,25 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
 )
 
 // Test model for aggregates
 type AggregateTestItem struct {
 	ID       string  `dynamodb:"id"`
 	Category string  `dynamodb:"category"`
+	Status   string  `dynamodb:"status"`
 	Price    float64 `dynamodb:"price"`
 	Quantity int     `dynamodb:"quantity"`
-	Status   string  `dynamodb:"status"`
 }
 
 // Mock executor for aggregate tests
 type mockAggregateExecutor struct {
-	items []any
 	err   error
+	items []any
 }
 
 func (m *mockAggregateExecutor) ExecuteQuery(input *core.CompiledQuery, dest any) error {
@@ -54,8 +55,8 @@ func (m *mockAggregateExecutor) ExecuteScan(input *core.CompiledQuery, dest any)
 func TestSum(t *testing.T) {
 	tests := []struct {
 		name     string
-		items    []any
 		field    string
+		items    []any
 		expected float64
 		wantErr  bool
 	}{
@@ -119,8 +120,8 @@ func TestSum(t *testing.T) {
 func TestAverage(t *testing.T) {
 	tests := []struct {
 		name     string
-		items    []any
 		field    string
+		items    []any
 		expected float64
 		wantErr  bool
 	}{
@@ -175,12 +176,12 @@ func TestAverage(t *testing.T) {
 
 func TestMin(t *testing.T) {
 	tests := []struct {
-		name     string
-		items    []any
-		field    string
 		expected any
-		wantErr  bool
+		name     string
+		field    string
 		errMsg   string
+		items    []any
+		wantErr  bool
 	}{
 		{
 			name: "min of numeric field",
@@ -247,12 +248,12 @@ func TestMin(t *testing.T) {
 
 func TestMax(t *testing.T) {
 	tests := []struct {
-		name     string
-		items    []any
-		field    string
 		expected any
-		wantErr  bool
+		name     string
+		field    string
 		errMsg   string
+		items    []any
+		wantErr  bool
 	}{
 		{
 			name: "max of numeric field",
@@ -538,10 +539,10 @@ func TestExtractNumericValue(t *testing.T) {
 
 func TestExtractFieldValue(t *testing.T) {
 	tests := []struct {
-		name     string
 		item     any
-		field    string
 		expected any
+		name     string
+		field    string
 		isNil    bool
 	}{
 		{
@@ -591,9 +592,9 @@ func TestExtractFieldValue(t *testing.T) {
 
 func TestCompareValues(t *testing.T) {
 	tests := []struct {
-		name     string
 		a        any
 		b        any
+		name     string
 		expected int
 	}{
 		{
@@ -650,8 +651,8 @@ func TestCompareValues(t *testing.T) {
 
 func TestToFloat64(t *testing.T) {
 	tests := []struct {
-		name     string
 		value    any
+		name     string
 		expected float64
 		wantErr  bool
 	}{

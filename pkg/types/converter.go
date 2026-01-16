@@ -5,17 +5,23 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/naming"
 )
 
 // Converter handles conversion between Go types and DynamoDB AttributeValues
 type Converter struct {
 	// customConverters allows registration of custom type converters
 	customConverters map[reflect.Type]CustomConverter
+	mu               sync.RWMutex
 }
+
+var timeType = reflect.TypeOf(time.Time{})
 
 // CustomConverter defines the interface for custom type converters
 type CustomConverter interface {
@@ -35,7 +41,41 @@ func NewConverter() *Converter {
 
 // RegisterConverter registers a custom converter for a specific type
 func (c *Converter) RegisterConverter(typ reflect.Type, converter CustomConverter) {
+	if typ == nil || converter == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.customConverters[typ] = converter
+}
+
+// HasCustomConverter returns true if a custom converter exists for the given type.
+func (c *Converter) HasCustomConverter(typ reflect.Type) bool {
+	_, ok := c.lookupConverter(typ)
+	return ok
+}
+
+// lookupConverter returns a registered converter for the provided type, walking pointer
+// indirections until a match is found or no further pointer element exists.
+func (c *Converter) lookupConverter(typ reflect.Type) (CustomConverter, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if typ == nil {
+		return nil, false
+	}
+
+	for {
+		if converter, ok := c.customConverters[typ]; ok {
+			return converter, true
+		}
+
+		if typ.Kind() != reflect.Ptr {
+			break
+		}
+		typ = typ.Elem()
+	}
+
+	return nil, false
 }
 
 // ToAttributeValue converts a Go value to DynamoDB AttributeValue
@@ -59,13 +99,16 @@ func (c *Converter) toAttributeValue(v reflect.Value) (types.AttributeValue, err
 	}
 
 	// Check for custom converter
-	if converter, exists := c.customConverters[v.Type()]; exists {
+	if converter, exists := c.lookupConverter(v.Type()); exists {
 		return converter.ToAttributeValue(v.Interface())
 	}
 
 	// Handle time.Time specially
 	if v.Type() == reflect.TypeOf(time.Time{}) {
-		t := v.Interface().(time.Time)
+		t, ok := v.Interface().(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("expected time.Time, got %T", v.Interface())
+		}
 		return &types.AttributeValueMemberS{Value: t.Format(time.RFC3339Nano)}, nil
 	}
 
@@ -184,88 +227,95 @@ func (c *Converter) FromAttributeValue(av types.AttributeValue, target any) erro
 
 // fromAttributeValue handles the actual conversion from AttributeValue
 func (c *Converter) fromAttributeValue(av types.AttributeValue, target reflect.Value) error {
-	// Handle NULL
 	if _, ok := av.(*types.AttributeValueMemberNULL); ok {
-		// Leave target as zero value
 		return nil
 	}
 
-	// Ensure target is settable
 	if !target.CanSet() {
 		return fmt.Errorf("target is not settable")
 	}
 
-	// Handle pointer targets
-	if target.Kind() == reflect.Ptr {
-		if target.IsNil() {
-			target.Set(reflect.New(target.Type().Elem()))
-		}
-		target = target.Elem()
-	}
+	target = ensureSettableConcreteTarget(target)
 
-	// Check for custom converter
-	if converter, exists := c.customConverters[target.Type()]; exists {
+	if converter, exists := c.lookupConverter(target.Type()); exists {
 		return converter.FromAttributeValue(av, target.Addr().Interface())
 	}
 
-	// Handle time.Time specially
-	if target.Type() == reflect.TypeOf(time.Time{}) {
-		if s, ok := av.(*types.AttributeValueMemberS); ok {
-			t, err := time.Parse(time.RFC3339Nano, s.Value)
-			if err != nil {
-				return fmt.Errorf("invalid time format: %w", err)
-			}
-			target.Set(reflect.ValueOf(t))
-			return nil
-		}
+	if target.Type() == timeType {
+		return c.fromAttributeValueTime(av, target)
+	}
+
+	return c.fromAttributeValueByType(av, target)
+}
+
+func ensureSettableConcreteTarget(target reflect.Value) reflect.Value {
+	if target.Kind() != reflect.Ptr {
+		return target
+	}
+
+	if target.IsNil() {
+		target.Set(reflect.New(target.Type().Elem()))
+	}
+
+	return target.Elem()
+}
+
+func (c *Converter) fromAttributeValueTime(av types.AttributeValue, target reflect.Value) error {
+	s, ok := av.(*types.AttributeValueMemberS)
+	if !ok {
 		return fmt.Errorf("expected string for time.Time, got %T", av)
 	}
 
-	// Handle based on AttributeValue type
+	t, err := time.Parse(time.RFC3339Nano, s.Value)
+	if err != nil {
+		return fmt.Errorf("invalid time format: %w", err)
+	}
+
+	target.Set(reflect.ValueOf(t))
+	return nil
+}
+
+func (c *Converter) fromAttributeValueByType(av types.AttributeValue, target reflect.Value) error {
 	switch v := av.(type) {
 	case *types.AttributeValueMemberS:
 		return c.stringToValue(v.Value, target)
-
 	case *types.AttributeValueMemberN:
 		return c.numberToValue(v.Value, target)
-
 	case *types.AttributeValueMemberBOOL:
 		if target.Kind() != reflect.Bool {
 			return fmt.Errorf("cannot convert bool to %s", target.Type())
 		}
 		target.SetBool(v.Value)
 		return nil
-
 	case *types.AttributeValueMemberB:
 		if target.Kind() != reflect.Slice || target.Type().Elem().Kind() != reflect.Uint8 {
 			return fmt.Errorf("cannot convert binary to %s", target.Type())
 		}
 		target.SetBytes(v.Value)
 		return nil
-
 	case *types.AttributeValueMemberL:
 		return c.listToSlice(v.Value, target)
-
 	case *types.AttributeValueMemberM:
-		if target.Kind() == reflect.Map {
-			return c.attributeValueMapToMap(v.Value, target)
-		}
-		if target.Kind() == reflect.Struct {
-			return c.mapToStruct(v.Value, target)
-		}
-		return fmt.Errorf("cannot convert map to %s", target.Type())
-
+		return c.fromAttributeValueMap(v.Value, target)
 	case *types.AttributeValueMemberSS:
 		return c.stringSetToSlice(v.Value, target)
-
 	case *types.AttributeValueMemberNS:
 		return c.numberSetToSlice(v.Value, target)
-
 	case *types.AttributeValueMemberBS:
 		return c.binarySetToSlice(v.Value, target)
-
 	default:
 		return fmt.Errorf("unsupported AttributeValue type: %T", av)
+	}
+}
+
+func (c *Converter) fromAttributeValueMap(value map[string]types.AttributeValue, target reflect.Value) error {
+	switch target.Kind() {
+	case reflect.Map:
+		return c.attributeValueMapToMap(value, target)
+	case reflect.Struct:
+		return c.mapToStruct(value, target)
+	default:
+		return fmt.Errorf("cannot convert map to %s", target.Type())
 	}
 }
 
@@ -362,13 +412,25 @@ func (c *Converter) mapToStruct(m map[string]types.AttributeValue, target reflec
 
 	targetType := target.Type()
 
+	// Detect naming convention from struct tags
+	convention := detectNamingConvention(targetType)
+
 	for i := 0; i < targetType.NumField(); i++ {
 		field := targetType.Field(i)
 		if !field.IsExported() {
 			continue
 		}
 
-		av, exists := m[field.Name]
+		attrName, skip := naming.ResolveAttrNameWithConvention(field, convention)
+		if skip {
+			continue
+		}
+
+		if err := naming.ValidateAttrName(attrName, convention); err != nil {
+			return fmt.Errorf("field %s: %w", field.Name, err)
+		}
+
+		av, exists := m[attrName]
 		if !exists {
 			continue
 		}
@@ -488,4 +550,62 @@ func (c *Converter) ConvertToSet(slice any, isSet bool) (types.AttributeValue, e
 	}
 
 	return nil, fmt.Errorf("%w: unsupported set type", errors.ErrUnsupportedType)
+}
+
+// detectNamingConvention scans struct fields for a naming convention tag.
+// It looks for a field with tag `dynamorm:"naming:snake_case"`.
+// Returns CamelCase (default) if no naming tag is found.
+func detectNamingConvention(modelType reflect.Type) naming.Convention {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		tag := field.Tag.Get("dynamorm")
+
+		if tag == "" {
+			continue
+		}
+
+		// Look for naming:snake_case or naming:camel_case
+		parts := splitTag(tag)
+		for _, part := range parts {
+			if len(part) > 7 && part[:7] == "naming:" {
+				convention := part[7:]
+				switch convention {
+				case "snake_case":
+					return naming.SnakeCase
+				case "camel_case", "camelCase":
+					return naming.CamelCase
+				}
+			}
+		}
+	}
+
+	// Default to CamelCase
+	return naming.CamelCase
+}
+
+// splitTag splits a tag string by commas
+func splitTag(tag string) []string {
+	if tag == "" {
+		return nil
+	}
+
+	var parts []string
+	current := ""
+
+	for _, ch := range tag {
+		if ch == ',' {
+			if current != "" {
+				parts = append(parts, current)
+				current = ""
+			}
+		} else if ch != ' ' && ch != '\t' {
+			current += string(ch)
+		}
+	}
+
+	if current != "" {
+		parts = append(parts, current)
+	}
+
+	return parts
 }

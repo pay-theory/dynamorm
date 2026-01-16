@@ -7,28 +7,19 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"github.com/pay-theory/dynamorm/internal/numutil"
 	"github.com/pay-theory/dynamorm/pkg/model"
 )
 
 // AutoMigrateOptions holds configuration for AutoMigrate operations
 type AutoMigrateOptions struct {
-	// BackupTable specifies a table name to backup data to before migration
-	BackupTable string
-
-	// DataCopy enables copying data from source to target table
-	DataCopy bool
-
-	// TargetModel specifies a different model to migrate data to
 	TargetModel any
-
-	// Transform is a function to transform data during copy
-	Transform interface{}
-
-	// BatchSize for data copy operations
-	BatchSize int
-
-	// Context for the operation
-	Context context.Context
+	Transform   interface{}
+	Context     context.Context
+	BackupTable string
+	BatchSize   int
+	DataCopy    bool
 }
 
 // AutoMigrateOption is a function that configures AutoMigrateOptions
@@ -78,48 +69,73 @@ func WithContext(ctx context.Context) AutoMigrateOption {
 
 // AutoMigrateWithOptions performs an enhanced auto-migration with data copy support
 func (m *Manager) AutoMigrateWithOptions(sourceModel any, options ...AutoMigrateOption) error {
-	// Apply options
+	opts := newAutoMigrateOptions(options)
+
+	sourceMetadata, targetModel, targetMetadata, err := m.resolveAutoMigrateModels(sourceModel, opts.TargetModel)
+	if err != nil {
+		return err
+	}
+
+	if err := m.createBackupIfRequested(opts.Context, sourceMetadata.TableName, opts.BackupTable); err != nil {
+		return err
+	}
+
+	if err := m.ensureTargetTable(targetModel, targetMetadata.TableName); err != nil {
+		return err
+	}
+
+	return m.copyDataIfRequested(opts, sourceMetadata, targetMetadata)
+}
+
+func newAutoMigrateOptions(options []AutoMigrateOption) *AutoMigrateOptions {
 	opts := &AutoMigrateOptions{
-		BatchSize: 25, // Default batch size
+		BatchSize: 25,
 		Context:   context.Background(),
 	}
 	for _, opt := range options {
 		opt(opts)
 	}
+	return opts
+}
 
-	// Register source model
+func (m *Manager) resolveAutoMigrateModels(sourceModel any, targetOverride any) (*model.Metadata, any, *model.Metadata, error) {
 	if err := m.registry.Register(sourceModel); err != nil {
-		return fmt.Errorf("failed to register source model: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to register source model: %w", err)
 	}
 
 	sourceMetadata, err := m.registry.GetMetadata(sourceModel)
 	if err != nil {
-		return fmt.Errorf("failed to get source metadata: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get source metadata: %w", err)
 	}
 
-	// Determine target model
 	targetModel := sourceModel
-	if opts.TargetModel != nil {
-		targetModel = opts.TargetModel
-		if err := m.registry.Register(targetModel); err != nil {
-			return fmt.Errorf("failed to register target model: %w", err)
+	if targetOverride != nil {
+		targetModel = targetOverride
+		if err = m.registry.Register(targetModel); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to register target model: %w", err)
 		}
 	}
 
 	targetMetadata, err := m.registry.GetMetadata(targetModel)
 	if err != nil {
-		return fmt.Errorf("failed to get target metadata: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to get target metadata: %w", err)
 	}
 
-	// Handle backup if requested
-	if opts.BackupTable != "" {
-		if err := m.createBackup(opts.Context, sourceMetadata.TableName, opts.BackupTable); err != nil {
-			return fmt.Errorf("failed to create backup: %w", err)
-		}
-	}
+	return sourceMetadata, targetModel, targetMetadata, nil
+}
 
-	// Create target table if it doesn't exist
-	exists, err := m.TableExists(targetMetadata.TableName)
+func (m *Manager) createBackupIfRequested(ctx context.Context, sourceTable string, backupTable string) error {
+	if backupTable == "" {
+		return nil
+	}
+	if err := m.createBackup(ctx, sourceTable, backupTable); err != nil {
+		return fmt.Errorf("failed to create backup: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) ensureTargetTable(targetModel any, tableName string) error {
+	exists, err := m.TableExists(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to check target table existence: %w", err)
 	}
@@ -130,11 +146,25 @@ func (m *Manager) AutoMigrateWithOptions(sourceModel any, options ...AutoMigrate
 		}
 	}
 
-	// Copy data if requested
-	if opts.DataCopy && sourceMetadata.TableName != targetMetadata.TableName {
-		if err := m.copyData(opts, sourceMetadata, targetMetadata); err != nil {
-			return fmt.Errorf("failed to copy data: %w", err)
+	return nil
+}
+
+func (m *Manager) copyDataIfRequested(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
+	if !opts.DataCopy || sourceMetadata.TableName == targetMetadata.TableName {
+		return nil
+	}
+
+	var transformFunc TransformFunc
+	if opts.Transform != nil {
+		var err error
+		transformFunc, err = CreateModelTransform(opts.Transform, sourceMetadata, targetMetadata)
+		if err != nil {
+			return fmt.Errorf("invalid transform function: %w", err)
 		}
+	}
+
+	if err := m.copyData(opts, sourceMetadata, targetMetadata, transformFunc); err != nil {
+		return fmt.Errorf("failed to copy data: %w", err)
 	}
 
 	return nil
@@ -157,7 +187,12 @@ func (m *Manager) createBackup(ctx context.Context, sourceTable, backupName stri
 		BackupName: &backupName,
 	}
 
-	_, err = m.session.Client().CreateBackup(ctx, backupRequest)
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for backup creation: %w", err)
+	}
+
+	_, err = client.CreateBackup(ctx, backupRequest)
 	if err != nil {
 		// If backup fails, try table copy instead
 		return m.copyTable(ctx, sourceTable, backupName)
@@ -169,7 +204,35 @@ func (m *Manager) createBackup(ctx context.Context, sourceTable, backupName stri
 // copyTable creates a copy of a table
 func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string) error {
 	// Get source table description
-	desc, err := m.session.Client().DescribeTable(ctx, &dynamodb.DescribeTableInput{
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table description: %w", err)
+	}
+
+	// Check if target table already exists and delete it
+	exists, err := m.TableExists(targetTable)
+	if err != nil {
+		return fmt.Errorf("failed to check if backup table exists: %w", err)
+	}
+	if exists {
+		// Delete existing backup table
+		_, err = client.DeleteTable(ctx, &dynamodb.DeleteTableInput{
+			TableName: &targetTable,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to delete existing backup table: %w", err)
+		}
+
+		// Wait for table to be deleted
+		waiter := dynamodb.NewTableNotExistsWaiter(client)
+		if waitErr := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+			TableName: &targetTable,
+		}, 2*time.Minute); waitErr != nil {
+			return fmt.Errorf("timeout waiting for table deletion: %w", waitErr)
+		}
+	}
+
+	desc, err := client.DescribeTable(ctx, &dynamodb.DescribeTableInput{
 		TableName: &sourceTable,
 	})
 	if err != nil {
@@ -223,13 +286,13 @@ func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string
 		}
 	}
 
-	_, err = m.session.Client().CreateTable(ctx, createInput)
+	_, err = client.CreateTable(ctx, createInput)
 	if err != nil {
 		return fmt.Errorf("failed to create target table: %w", err)
 	}
 
 	// Wait for table to be active
-	waiter := dynamodb.NewTableExistsWaiter(m.session.Client())
+	waiter := dynamodb.NewTableExistsWaiter(client)
 	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: &targetTable,
 	}, 5*time.Minute); err != nil {
@@ -241,28 +304,34 @@ func (m *Manager) copyTable(ctx context.Context, sourceTable, targetTable string
 }
 
 // copyData copies data from source to target table with optional transformation
-func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
+func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata, transformFunc TransformFunc) error {
 	ctx := opts.Context
+
+	// Get client once for the entire operation
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for data copy: %w", err)
+	}
 
 	// Scan source table
 	var lastEvaluatedKey map[string]types.AttributeValue
 	for {
 		scanInput := &dynamodb.ScanInput{
 			TableName: &sourceMetadata.TableName,
-			Limit:     int32Ptr(int32(opts.BatchSize)),
+			Limit:     int32Ptr(numutil.ClampIntToInt32(opts.BatchSize)),
 		}
 		if lastEvaluatedKey != nil {
 			scanInput.ExclusiveStartKey = lastEvaluatedKey
 		}
 
-		result, err := m.session.Client().Scan(ctx, scanInput)
+		result, err := client.Scan(ctx, scanInput)
 		if err != nil {
 			return fmt.Errorf("failed to scan source table: %w", err)
 		}
 
 		// Process items
 		if len(result.Items) > 0 {
-			if err := m.processItems(ctx, result.Items, opts, sourceMetadata, targetMetadata); err != nil {
+			if err := m.processItems(ctx, client, result.Items, targetMetadata.TableName, transformFunc, sourceMetadata, targetMetadata); err != nil {
 				return fmt.Errorf("failed to process items: %w", err)
 			}
 		}
@@ -278,21 +347,131 @@ func (m *Manager) copyData(opts *AutoMigrateOptions, sourceMetadata, targetMetad
 }
 
 // processItems processes and writes items to the target table
-func (m *Manager) processItems(ctx context.Context, items []map[string]types.AttributeValue,
-	opts *AutoMigrateOptions, sourceMetadata, targetMetadata *model.Metadata) error {
+func (m *Manager) processItems(ctx context.Context, client *dynamodb.Client, items []map[string]types.AttributeValue,
+	targetTable string,
+	transformFunc TransformFunc,
+	sourceMetadata, targetMetadata *model.Metadata,
+) error {
+	writeRequests, err := buildPutWriteRequestsWithTransform(items, transformFunc, sourceMetadata, targetMetadata)
+	if err != nil {
+		return err
+	}
 
-	// Prepare batch write requests
+	const (
+		maxBatchSize = 25
+		maxRetries   = 5
+	)
+
+	return writeRequestsBatched(ctx, client, targetTable, writeRequests, maxBatchSize, maxRetries)
+}
+
+// copyTableData copies all data from source to target table
+func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable string, batchSize int) error {
+	client, err := m.session.Client()
+	if err != nil {
+		return fmt.Errorf("failed to get client for table data copy: %w", err)
+	}
+
+	var lastEvaluatedKey map[string]types.AttributeValue
+
+	maxBatchSize := resolveDataCopyBatchSize(batchSize)
+
+	for {
+		result, err := scanTablePage(ctx, client, sourceTable, batchSize, lastEvaluatedKey)
+		if err != nil {
+			return err
+		}
+
+		if err := writeItemsToTable(ctx, client, targetTable, result.Items, maxBatchSize); err != nil {
+			return err
+		}
+
+		// Check if more items
+		lastEvaluatedKey = result.LastEvaluatedKey
+		if lastEvaluatedKey == nil {
+			break
+		}
+	}
+
+	return nil
+}
+
+func resolveDataCopyBatchSize(batchSize int) int {
+	const maxLocalBatchSize = 10
+	if batchSize <= 0 {
+		return maxLocalBatchSize
+	}
+	if batchSize < maxLocalBatchSize {
+		return batchSize
+	}
+	return maxLocalBatchSize
+}
+
+func scanTablePage(
+	ctx context.Context,
+	client *dynamodb.Client,
+	sourceTable string,
+	batchSize int,
+	lastEvaluatedKey map[string]types.AttributeValue,
+) (*dynamodb.ScanOutput, error) {
+	scanInput := &dynamodb.ScanInput{
+		TableName: &sourceTable,
+		Limit:     int32Ptr(numutil.ClampIntToInt32(batchSize)),
+	}
+	if lastEvaluatedKey != nil {
+		scanInput.ExclusiveStartKey = lastEvaluatedKey
+	}
+
+	result, err := client.Scan(ctx, scanInput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan source table: %w", err)
+	}
+
+	return result, nil
+}
+
+func writeItemsToTable(
+	ctx context.Context,
+	client *dynamodb.Client,
+	targetTable string,
+	items []map[string]types.AttributeValue,
+	maxBatchSize int,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	const maxRetries = 5
+	writeRequests := buildPutWriteRequests(items)
+	return writeRequestsBatched(ctx, client, targetTable, writeRequests, maxBatchSize, maxRetries)
+}
+
+func buildPutWriteRequests(items []map[string]types.AttributeValue) []types.WriteRequest {
 	writeRequests := make([]types.WriteRequest, 0, len(items))
-
 	for _, item := range items {
-		// Apply transformation if provided
-		transformedItem := item
-		if opts.Transform != nil {
-			var err error
-			transformedItem, err = m.applyTransform(item, opts.Transform, sourceMetadata, targetMetadata)
-			if err != nil {
-				return fmt.Errorf("failed to transform item: %w", err)
-			}
+		writeRequests = append(writeRequests, types.WriteRequest{
+			PutRequest: &types.PutRequest{
+				Item: item,
+			},
+		})
+	}
+	return writeRequests
+}
+
+func buildPutWriteRequestsWithTransform(
+	items []map[string]types.AttributeValue,
+	transform TransformFunc,
+	sourceMetadata, targetMetadata *model.Metadata,
+) ([]types.WriteRequest, error) {
+	if transform == nil {
+		return buildPutWriteRequests(items), nil
+	}
+
+	writeRequests := make([]types.WriteRequest, 0, len(items))
+	for _, item := range items {
+		transformedItem, err := TransformWithValidation(item, transform, sourceMetadata, targetMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to transform item: %w", err)
 		}
 
 		writeRequests = append(writeRequests, types.WriteRequest{
@@ -302,156 +481,132 @@ func (m *Manager) processItems(ctx context.Context, items []map[string]types.Att
 		})
 	}
 
-	// Batch write to target table with retry logic for unprocessed items
-	if len(writeRequests) > 0 {
-		remainingRequests := writeRequests
-		retryCount := 0
-		maxRetries := 3
+	return writeRequests, nil
+}
 
-		for len(remainingRequests) > 0 && retryCount < maxRetries {
-			batchInput := &dynamodb.BatchWriteItemInput{
-				RequestItems: map[string][]types.WriteRequest{
-					targetMetadata.TableName: remainingRequests,
-				},
-			}
+func writeRequestsBatched(
+	ctx context.Context,
+	client *dynamodb.Client,
+	tableName string,
+	writeRequests []types.WriteRequest,
+	maxBatchSize int,
+	maxRetries int,
+) error {
+	if len(writeRequests) == 0 {
+		return nil
+	}
+	if maxBatchSize <= 0 {
+		maxBatchSize = len(writeRequests)
+	}
 
-			result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
-			if err != nil {
-				return fmt.Errorf("failed to write items to target table: %w", err)
-			}
-
-			// Check for unprocessed items
-			if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
-				if unprocessed, exists := result.UnprocessedItems[targetMetadata.TableName]; exists && len(unprocessed) > 0 {
-					remainingRequests = unprocessed
-					retryCount++
-
-					// Add exponential backoff
-					if retryCount < maxRetries {
-						backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
-						select {
-						case <-time.After(backoff):
-							// Continue with retry
-						case <-ctx.Done():
-							return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
-						}
-					}
-				} else {
-					// No unprocessed items for our table
-					break
-				}
-			} else {
-				// All items processed successfully
-				break
-			}
+	for i := 0; i < len(writeRequests); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(writeRequests) {
+			end = len(writeRequests)
 		}
 
-		// If we still have unprocessed items after retries, return an error
-		if len(remainingRequests) > 0 {
-			return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
+		batch := writeRequests[i:end]
+		remaining, err := batchWriteWithRetries(ctx, client, tableName, batch, maxRetries)
+		if err != nil {
+			return err
+		}
+		if len(remaining) == 0 {
+			continue
+		}
+
+		if err := putWriteRequestsIndividually(ctx, client, tableName, remaining); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// applyTransform applies a transformation function to an item
-func (m *Manager) applyTransform(item map[string]types.AttributeValue, transform interface{},
-	sourceMetadata, targetMetadata *model.Metadata) (map[string]types.AttributeValue, error) {
-
-	// Create the appropriate transform function
-	transformFunc, err := CreateModelTransform(transform, sourceMetadata, targetMetadata)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create transform function: %w", err)
+func batchWriteWithRetries(
+	ctx context.Context,
+	client *dynamodb.Client,
+	tableName string,
+	writeRequests []types.WriteRequest,
+	maxRetries int,
+) ([]types.WriteRequest, error) {
+	if len(writeRequests) == 0 {
+		return nil, nil
+	}
+	if maxRetries <= 0 {
+		return writeRequests, nil
 	}
 
-	// Apply the transform with validation
-	return TransformWithValidation(item, transformFunc, sourceMetadata, targetMetadata)
+	remainingRequests := writeRequests
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		batchInput := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]types.WriteRequest{
+				tableName: remainingRequests,
+			},
+		}
+
+		result, err := client.BatchWriteItem(ctx, batchInput)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write batch: %w", err)
+		}
+
+		remainingRequests = unprocessedRequestsForTable(result.UnprocessedItems, tableName)
+		if len(remainingRequests) == 0 {
+			return nil, nil
+		}
+
+		if attempt == maxRetries {
+			break
+		}
+
+		if err := sleepWithBackoff(ctx, attempt); err != nil {
+			return nil, err
+		}
+	}
+
+	return remainingRequests, nil
 }
 
-// copyTableData copies all data from source to target table
-func (m *Manager) copyTableData(ctx context.Context, sourceTable, targetTable string, batchSize int) error {
-	var lastEvaluatedKey map[string]types.AttributeValue
+func unprocessedRequestsForTable(unprocessedItems map[string][]types.WriteRequest, tableName string) []types.WriteRequest {
+	if len(unprocessedItems) == 0 {
+		return nil
+	}
+	unprocessed, exists := unprocessedItems[tableName]
+	if !exists || len(unprocessed) == 0 {
+		return nil
+	}
+	return unprocessed
+}
 
-	for {
-		// Scan source table
-		scanInput := &dynamodb.ScanInput{
-			TableName: &sourceTable,
-			Limit:     int32Ptr(int32(batchSize)),
-		}
-		if lastEvaluatedKey != nil {
-			scanInput.ExclusiveStartKey = lastEvaluatedKey
-		}
+func sleepWithBackoff(ctx context.Context, retryCount int) error {
+	backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
 
-		result, err := m.session.Client().Scan(ctx, scanInput)
-		if err != nil {
-			return fmt.Errorf("failed to scan source table: %w", err)
-		}
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("context canceled during retry: %w", ctx.Err())
+	}
+}
 
-		// Batch write to target table
-		if len(result.Items) > 0 {
-			writeRequests := make([]types.WriteRequest, len(result.Items))
-			for i, item := range result.Items {
-				writeRequests[i] = types.WriteRequest{
-					PutRequest: &types.PutRequest{
-						Item: item,
-					},
-				}
-			}
-
-			// Batch write with retry logic for unprocessed items
-			remainingRequests := writeRequests
-			retryCount := 0
-			maxRetries := 3
-
-			for len(remainingRequests) > 0 && retryCount < maxRetries {
-				batchInput := &dynamodb.BatchWriteItemInput{
-					RequestItems: map[string][]types.WriteRequest{
-						targetTable: remainingRequests,
-					},
-				}
-
-				result, err := m.session.Client().BatchWriteItem(ctx, batchInput)
-				if err != nil {
-					return fmt.Errorf("failed to write batch: %w", err)
-				}
-
-				// Check for unprocessed items
-				if result.UnprocessedItems != nil && len(result.UnprocessedItems) > 0 {
-					if unprocessed, exists := result.UnprocessedItems[targetTable]; exists && len(unprocessed) > 0 {
-						remainingRequests = unprocessed
-						retryCount++
-
-						// Add exponential backoff
-						if retryCount < maxRetries {
-							backoff := time.Duration(retryCount*retryCount) * 100 * time.Millisecond
-							select {
-							case <-time.After(backoff):
-								// Continue with retry
-							case <-ctx.Done():
-								return fmt.Errorf("context cancelled during retry: %w", ctx.Err())
-							}
-						}
-					} else {
-						// No unprocessed items for our table
-						break
-					}
-				} else {
-					// All items processed successfully
-					break
-				}
-			}
-
-			// If we still have unprocessed items after retries, return an error
-			if len(remainingRequests) > 0 {
-				return fmt.Errorf("failed to process %d items after %d retries", len(remainingRequests), maxRetries)
-			}
+func putWriteRequestsIndividually(
+	ctx context.Context,
+	client *dynamodb.Client,
+	tableName string,
+	remainingRequests []types.WriteRequest,
+) error {
+	for _, req := range remainingRequests {
+		if req.PutRequest == nil {
+			continue
 		}
 
-		// Check if more items
-		lastEvaluatedKey = result.LastEvaluatedKey
-		if lastEvaluatedKey == nil {
-			break
+		putInput := &dynamodb.PutItemInput{
+			TableName: &tableName,
+			Item:      req.PutRequest.Item,
+		}
+		if _, err := client.PutItem(ctx, putInput); err != nil {
+			return fmt.Errorf("failed to put individual item after batch failures: %w", err)
 		}
 	}
 

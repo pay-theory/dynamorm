@@ -101,11 +101,11 @@ func TestEncodeCursor(t *testing.T) {
 
 func TestDecodeCursor(t *testing.T) {
 	tests := []struct {
+		wantCursor *Cursor
 		name       string
 		encoded    string
 		wantNil    bool
 		wantErr    bool
-		wantCursor *Cursor
 	}{
 		{
 			name:    "empty string returns nil",
@@ -159,8 +159,8 @@ func TestDecodeCursor(t *testing.T) {
 
 func TestCursor_ToAttributeValues(t *testing.T) {
 	tests := []struct {
-		name    string
 		cursor  *Cursor
+		name    string
 		wantNil bool
 		wantErr bool
 	}{
@@ -234,9 +234,9 @@ func TestCursor_ToAttributeValues(t *testing.T) {
 
 func TestAttributeValueToJSON(t *testing.T) {
 	tests := []struct {
-		name    string
 		av      types.AttributeValue
 		want    any
+		name    string
 		wantErr bool
 	}{
 		{
@@ -313,10 +313,10 @@ func TestAttributeValueToJSON(t *testing.T) {
 
 func TestJSONToAttributeValue(t *testing.T) {
 	tests := []struct {
-		name    string
 		json    any
-		wantErr bool
 		check   func(t *testing.T, av types.AttributeValue)
+		name    string
+		wantErr bool
 	}{
 		{
 			name: "string value",
@@ -440,19 +440,22 @@ func TestEncodeDecode_RoundTrip(t *testing.T) {
 	// Verify string values
 	pkResult, ok := resultKey["pk"].(*types.AttributeValueMemberS)
 	require.True(t, ok)
-	pkOriginal, _ := originalKey["pk"].(*types.AttributeValueMemberS)
+	pkOriginal, ok := originalKey["pk"].(*types.AttributeValueMemberS)
+	require.True(t, ok)
 	assert.Equal(t, pkOriginal.Value, pkResult.Value)
 
 	// Verify number values
 	tsResult, ok := resultKey["timestamp"].(*types.AttributeValueMemberN)
 	require.True(t, ok)
-	tsOriginal, _ := originalKey["timestamp"].(*types.AttributeValueMemberN)
+	tsOriginal, ok := originalKey["timestamp"].(*types.AttributeValueMemberN)
+	require.True(t, ok)
 	assert.Equal(t, tsOriginal.Value, tsResult.Value)
 
 	// Verify boolean values
 	activeResult, ok := resultKey["active"].(*types.AttributeValueMemberBOOL)
 	require.True(t, ok)
-	activeOriginal, _ := originalKey["active"].(*types.AttributeValueMemberBOOL)
+	activeOriginal, ok := originalKey["active"].(*types.AttributeValueMemberBOOL)
+	require.True(t, ok)
 	assert.Equal(t, activeOriginal.Value, activeResult.Value)
 }
 

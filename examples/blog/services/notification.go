@@ -32,18 +32,18 @@ const (
 
 // Notification represents a notification to be sent
 type Notification struct {
-	ID          string                `json:"id"`
-	Type        NotificationType      `json:"type"`
-	Recipient   NotificationRecipient `json:"recipient"`
-	Subject     string                `json:"subject"`
-	Content     string                `json:"content"`
-	Data        map[string]any        `json:"data"`
-	Status      NotificationStatus    `json:"status"`
-	Attempts    int                   `json:"attempts"`
 	LastAttempt time.Time             `json:"last_attempt,omitempty"`
-	Error       string                `json:"error,omitempty"`
 	CreatedAt   time.Time             `json:"created_at"`
 	SentAt      time.Time             `json:"sent_at,omitempty"`
+	Data        map[string]any        `json:"data"`
+	Recipient   NotificationRecipient `json:"recipient"`
+	ID          string                `json:"id"`
+	Type        NotificationType      `json:"type"`
+	Subject     string                `json:"subject"`
+	Content     string                `json:"content"`
+	Status      NotificationStatus    `json:"status"`
+	Error       string                `json:"error,omitempty"`
+	Attempts    int                   `json:"attempts"`
 }
 
 // NotificationRecipient represents the recipient of a notification
@@ -63,12 +63,13 @@ type NotificationProvider interface {
 
 // NotificationService handles sending notifications
 type NotificationService struct {
-	providers []NotificationProvider
-	queue     chan *Notification
-	workers   int
-	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
+	ctx         context.Context
+	queue       chan *Notification
+	cancel      context.CancelFunc
+	providers   []NotificationProvider
+	wg          sync.WaitGroup
+	workers     int
+	providersMu sync.RWMutex
 }
 
 // NewNotificationService creates a new notification service
@@ -95,6 +96,8 @@ func NewNotificationService(workers int) *NotificationService {
 
 // RegisterProvider registers a notification provider
 func (s *NotificationService) RegisterProvider(provider NotificationProvider) {
+	s.providersMu.Lock()
+	defer s.providersMu.Unlock()
 	s.providers = append(s.providers, provider)
 	log.Printf("Registered notification provider: %s", provider.Name())
 }
@@ -163,6 +166,8 @@ func (s *NotificationService) Send(notification *Notification) error {
 
 // SendSync sends a notification synchronously
 func (s *NotificationService) SendSync(ctx context.Context, notification *Notification) error {
+	s.providersMu.RLock()
+	defer s.providersMu.RUnlock()
 	for _, provider := range s.providers {
 		if provider.CanHandle(notification) {
 			if err := provider.Send(ctx, notification); err != nil {
@@ -194,7 +199,15 @@ func (s *NotificationService) worker(id int) {
 
 	for {
 		select {
-		case notification := <-s.queue:
+		case notification, ok := <-s.queue:
+			if !ok {
+				// Channel closed
+				return
+			}
+			if notification == nil {
+				// Skip nil notifications
+				continue
+			}
 			s.processNotification(notification)
 		case <-s.ctx.Done():
 			return

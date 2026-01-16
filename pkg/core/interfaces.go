@@ -3,9 +3,12 @@ package core
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	pkgTypes "github.com/pay-theory/dynamorm/pkg/types"
 )
 
 // DB represents the main database connection interface
@@ -38,6 +41,10 @@ type ExtendedDB interface {
 	// opts should be of type schema.AutoMigrateOption
 	AutoMigrateWithOptions(model any, opts ...any) error
 
+	// RegisterTypeConverter registers a custom converter for a specific Go type, allowing
+	// callers to override how values are marshaled to and unmarshaled from DynamoDB.
+	RegisterTypeConverter(typ reflect.Type, converter pkgTypes.CustomConverter) error
+
 	// CreateTable creates a DynamoDB table for the given model
 	// opts should be of type schema.TableOption
 	CreateTable(model any, opts ...any) error
@@ -61,6 +68,61 @@ type ExtendedDB interface {
 	// TransactionFunc executes a function within a full transaction context
 	// tx should be of type *transaction.Transaction
 	TransactionFunc(fn func(tx any) error) error
+
+	// Transact returns a fluent transaction builder for composing TransactWriteItems
+	Transact() TransactionBuilder
+
+	// TransactWrite executes the provided function within a transaction builder context
+	// and automatically commits the accumulated operations.
+	TransactWrite(ctx context.Context, fn func(TransactionBuilder) error) error
+}
+
+// TransactionBuilder defines the fluent DSL for composing DynamoDB transactions
+type TransactionBuilder interface {
+	// Put adds a put (upsert) operation
+	Put(model any, conditions ...TransactCondition) TransactionBuilder
+	// Create adds a put operation guarded by attribute_not_exists on the primary key
+	Create(model any, conditions ...TransactCondition) TransactionBuilder
+	// Update updates selected fields on the provided model
+	Update(model any, fields []string, conditions ...TransactCondition) TransactionBuilder
+	// UpdateWithBuilder allows complex expression-based updates
+	UpdateWithBuilder(model any, updateFn func(UpdateBuilder) error, conditions ...TransactCondition) TransactionBuilder
+	// Delete removes the provided model by primary key
+	Delete(model any, conditions ...TransactCondition) TransactionBuilder
+	// ConditionCheck adds a pure condition check without mutating data
+	ConditionCheck(model any, conditions ...TransactCondition) TransactionBuilder
+	// WithContext sets the context used for DynamoDB calls
+	WithContext(ctx context.Context) TransactionBuilder
+	// Execute commits the transaction using the currently configured context
+	Execute() error
+	// ExecuteWithContext commits the transaction with an explicit context override
+	ExecuteWithContext(ctx context.Context) error
+}
+
+// TransactConditionKind identifies the type of transactional condition
+type TransactConditionKind string
+
+const (
+	// TransactConditionKindField represents a simple field comparison (Field Operator Value)
+	TransactConditionKindField TransactConditionKind = "field"
+	// TransactConditionKindExpression represents a raw condition expression supplied by the caller
+	TransactConditionKindExpression TransactConditionKind = "expression"
+	// TransactConditionKindPrimaryKeyExists enforces that the primary key exists (attribute_exists)
+	TransactConditionKindPrimaryKeyExists TransactConditionKind = "pk_exists"
+	// TransactConditionKindPrimaryKeyNotExists enforces that the primary key does not exist (attribute_not_exists)
+	TransactConditionKindPrimaryKeyNotExists TransactConditionKind = "pk_not_exists"
+	// TransactConditionKindVersionEquals enforces that the optimistic lock/version field matches Value
+	TransactConditionKindVersionEquals TransactConditionKind = "version"
+)
+
+// TransactCondition represents a condition attached to a transactional operation
+type TransactCondition struct {
+	Value      any
+	Values     map[string]any
+	Kind       TransactConditionKind
+	Field      string
+	Operator   string
+	Expression string
 }
 
 // Query represents a chainable query builder interface
@@ -72,6 +134,14 @@ type Query interface {
 	OrFilter(field string, op string, value any) Query
 	FilterGroup(func(Query)) Query
 	OrFilterGroup(func(Query)) Query
+	// IfNotExists ensures the target item does not already exist before a write
+	IfNotExists() Query
+	// IfExists ensures the target item exists before executing a write
+	IfExists() Query
+	// WithCondition appends a simple condition expression for write operations
+	WithCondition(field, operator string, value any) Query
+	// WithConditionExpression adds a raw condition expression with placeholder values
+	WithConditionExpression(expr string, values map[string]any) Query
 	OrderBy(field string, order string) Query
 	Limit(limit int) Query
 
@@ -80,6 +150,14 @@ type Query interface {
 
 	// Select specifies which fields to retrieve
 	Select(fields ...string) Query
+
+	// ConsistentRead enables strongly consistent reads for Query operations
+	// Note: This only works on main table queries, not GSI queries
+	ConsistentRead() Query
+
+	// WithRetry configures retry behavior for eventually consistent reads
+	// Useful for GSI queries where you need read-after-write consistency
+	WithRetry(maxRetries int, initialDelay time.Duration) Query
 
 	// First retrieves the first matching item
 	First(dest any) error
@@ -95,6 +173,9 @@ type Query interface {
 
 	// Create creates a new item
 	Create() error
+
+	// CreateOrUpdate creates a new item or updates an existing one (upsert)
+	CreateOrUpdate() error
 
 	// Update updates the matching items
 	Update(fields ...string) error
@@ -114,11 +195,27 @@ type Query interface {
 	// ScanAllSegments performs parallel scan across all segments automatically
 	ScanAllSegments(dest any, totalSegments int32) error
 
-	// BatchGet retrieves multiple items by their primary keys
+	// BatchGet retrieves multiple items by their primary keys.
+	// Keys may be primitives, structs matching the model schema, or core.KeyPair values.
 	BatchGet(keys []any, dest any) error
+
+	// BatchGetWithOptions retrieves items with fine-grained control over chunking, retries, and callbacks.
+	BatchGetWithOptions(keys []any, dest any, opts *BatchGetOptions) error
+
+	// BatchGetBuilder returns a fluent builder for complex batch get workflows.
+	BatchGetBuilder() BatchGetBuilder
 
 	// BatchCreate creates multiple items
 	BatchCreate(items any) error
+
+	// BatchDelete deletes multiple items by their primary keys
+	BatchDelete(keys []any) error
+
+	// BatchWrite performs mixed batch write operations (puts and deletes)
+	BatchWrite(putItems []any, deleteKeys []any) error
+
+	// BatchUpdateWithOptions performs batch update operations with custom options
+	BatchUpdateWithOptions(items []any, fields []string, options ...any) error
 
 	// Cursor sets the pagination cursor for the query
 	Cursor(cursor string) Query
@@ -168,6 +265,9 @@ type UpdateBuilder interface {
 	// Condition adds a condition that must be met for the update to succeed
 	Condition(field string, operator string, value any) UpdateBuilder
 
+	// OrCondition adds a condition with OR logic
+	OrCondition(field string, operator string, value any) UpdateBuilder
+
 	// ConditionExists adds a condition that the field must exist
 	ConditionExists(field string) UpdateBuilder
 
@@ -189,28 +289,22 @@ type UpdateBuilder interface {
 
 // PaginatedResult contains the results and pagination metadata
 type PaginatedResult struct {
-	// Items contains the retrieved items
-	Items any
-
-	// Count is the number of items returned
-	Count int
-
-	// ScannedCount is the number of items examined
-	ScannedCount int
-
-	// LastEvaluatedKey is the key of the last item evaluated
+	Items            any
 	LastEvaluatedKey map[string]types.AttributeValue
-
-	// NextCursor is a base64-encoded cursor for the next page
-	NextCursor string
-
-	// HasMore indicates if there are more results
-	HasMore bool
+	NextCursor       string
+	Count            int
+	ScannedCount     int
+	HasMore          bool
 }
 
 // Tx represents a database transaction
 type Tx struct {
 	db DB
+}
+
+// SetDB sets the database reference for the transaction
+func (tx *Tx) SetDB(db DB) {
+	tx.db = db
 }
 
 // Model returns a new query builder for the given model within the transaction
@@ -235,38 +329,31 @@ func (tx *Tx) Delete(model any) error {
 
 // Param represents a parameter for expressions
 type Param struct {
-	Name  string
 	Value any
+	Name  string
 }
 
 // CompiledQuery represents a compiled query ready for execution
 type CompiledQuery struct {
-	Operation string // "Query", "Scan", "GetItem", etc.
-	TableName string
-	IndexName string
-
-	// Expression components
-	KeyConditionExpression string
-	FilterExpression       string
-	ProjectionExpression   string
-	UpdateExpression       string
-	ConditionExpression    string
-
-	// Expression mappings
-	ExpressionAttributeNames  map[string]string
+	ScanIndexForward          *bool
+	Limit                     *int32
+	TotalSegments             *int32
 	ExpressionAttributeValues map[string]types.AttributeValue
-
-	// Other query parameters
-	Limit             *int32
-	ExclusiveStartKey map[string]types.AttributeValue
-	ScanIndexForward  *bool
-	Select            string // "ALL_ATTRIBUTES", "COUNT", etc.
-	Offset            *int   // For pagination handling
-	ReturnValues      string // "NONE", "ALL_OLD", "UPDATED_OLD", "ALL_NEW", "UPDATED_NEW"
-
-	// Parallel scan parameters
-	Segment       *int32 // The segment number for parallel scan
-	TotalSegments *int32 // Total number of segments for parallel scan
+	Segment                   *int32
+	ExpressionAttributeNames  map[string]string
+	ConsistentRead            *bool
+	Offset                    *int
+	ExclusiveStartKey         map[string]types.AttributeValue
+	ProjectionExpression      string
+	KeyConditionExpression    string
+	TableName                 string
+	Operation                 string
+	Select                    string
+	ConditionExpression       string
+	ReturnValues              string
+	UpdateExpression          string
+	FilterExpression          string
+	IndexName                 string
 }
 
 // ModelMetadata provides metadata about a model
@@ -275,6 +362,7 @@ type ModelMetadata interface {
 	PrimaryKey() KeySchema
 	Indexes() []IndexSchema
 	AttributeMetadata(field string) *AttributeMetadata
+	VersionFieldName() string
 }
 
 // KeySchema represents a primary key or index key schema
@@ -295,8 +383,8 @@ type IndexSchema struct {
 
 // AttributeMetadata provides metadata about a model attribute
 type AttributeMetadata struct {
+	Tags         map[string]string
 	Name         string
 	Type         string
 	DynamoDBName string
-	Tags         map[string]string
 }

@@ -13,9 +13,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/pay-theory/dynamorm"
 	payment "github.com/pay-theory/dynamorm/examples/payment"
@@ -25,29 +25,29 @@ import (
 
 // ReconciliationRecord represents a row in the reconciliation CSV
 type ReconciliationRecord struct {
+	ProcessedDate  time.Time
+	SettlementDate time.Time
 	PaymentID      string
 	TransactionID  string
 	Status         string
 	ProcessorFee   int64
-	ProcessedDate  time.Time
-	SettlementDate time.Time
 }
 
 // ReconcileHandler handles payment reconciliation
 type ReconcileHandler struct {
 	db           core.ExtendedDB
-	s3Client     *s3.S3
+	s3Client     *s3.Client
 	auditTracker *utils.AuditTracker
 }
 
 // NewReconcileHandler creates a new reconciliation handler
 func NewReconcileHandler() (*ReconcileHandler, error) {
-	// Initialize AWS session for S3
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(os.Getenv("AWS_REGION")),
-	})
+	// Initialize AWS config for S3
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion(os.Getenv("AWS_REGION")),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS session: %w", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
 	// Initialize DynamoDB connection
@@ -65,7 +65,7 @@ func NewReconcileHandler() (*ReconcileHandler, error) {
 
 	return &ReconcileHandler{
 		db:           db,
-		s3Client:     s3.New(sess),
+		s3Client:     s3.NewFromConfig(cfg),
 		auditTracker: utils.NewAuditTracker(db),
 	}, nil
 }
@@ -88,14 +88,16 @@ func (h *ReconcileHandler) processFile(ctx context.Context, record events.S3Even
 	key := record.S3.Object.Key
 
 	// Download file from S3
-	result, err := h.s3Client.GetObject(&s3.GetObjectInput{
+	result, err := h.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() {
+		_ = result.Body.Close()
+	}()
 
 	// Parse CSV
 	reader := csv.NewReader(result.Body)
@@ -212,12 +214,14 @@ func (h *ReconcileHandler) processFile(ctx context.Context, record events.S3Even
 	}
 
 	// Audit the reconciliation
-	h.auditTracker.Track("reconciliation", "completed", map[string]any{
+	if err := h.auditTracker.Track("reconciliation", "completed", map[string]any{
 		"file":       key,
 		"processed":  totalProcessed,
 		"errors":     totalErrors,
 		"settlement": settlement.ID,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to track reconciliation audit: %w", err)
+	}
 
 	fmt.Printf("Reconciliation completed: %d processed, %d errors\n", totalProcessed, totalErrors)
 	return nil
@@ -285,12 +289,14 @@ func (h *ReconcileHandler) processBatch(ctx context.Context, batch []*Reconcilia
 	}
 
 	// Audit the reconciliation
-	h.auditTracker.Track("reconciliation", "completed", map[string]any{
+	if err := h.auditTracker.Track("reconciliation", "completed", map[string]any{
 		"file":       fmt.Sprintf("BATCH-%d", time.Now().Unix()),
 		"processed":  len(batch),
 		"errors":     0,
 		"settlement": settlement.ID,
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to track reconciliation audit: %w", err)
+	}
 
 	fmt.Printf("Reconciliation completed: %d processed, 0 errors\n", len(batch))
 	return nil

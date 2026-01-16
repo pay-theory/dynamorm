@@ -7,19 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dynamorm/dynamorm"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/models"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	derrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // ResourceHandler handles resource tracking and usage reporting
 type ResourceHandler struct {
-	db *dynamorm.Client
+	db core.ExtendedDB
 }
 
 // NewResourceHandler creates a new resource handler
-func NewResourceHandler(db *dynamorm.Client) *ResourceHandler {
+func NewResourceHandler(db core.ExtendedDB) *ResourceHandler {
 	return &ResourceHandler{db: db}
 }
 
@@ -64,7 +66,7 @@ func (h *ResourceHandler) RecordUsage(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.Model(&models.Project{}).
 		Where("ID", "=", fmt.Sprintf("%s#%s", orgID, req.ProjectID)).
 		First(&project); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "project not found", http.StatusNotFound)
 			return
 		}
@@ -149,7 +151,7 @@ func (h *ResourceHandler) GetUsageReport(w http.ResponseWriter, r *http.Request)
 		Where("ID", "=", fmt.Sprintf("%s#%s", orgID, billingCycle)).
 		First(&report)
 
-	if err == dynamorm.ErrNotFound {
+	if err == derrors.ErrItemNotFound {
 		// Generate new report
 		report = h.generateUsageReport(orgID, billingCycle)
 
@@ -517,7 +519,7 @@ func (h *ResourceHandler) logAuditEvent(orgID, userID, action, resourceType, res
 		Changes:      changes,
 		Success:      success,
 		ErrorMessage: errorMsg,
-		TTL:          time.Now().AddDate(0, 3, 0), // 90 days retention
+		TTL:          time.Now().AddDate(0, 3, 0).Unix(), // 90 days retention
 	}
 
 	// Best effort - don't fail the main operation if audit fails

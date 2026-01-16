@@ -22,9 +22,9 @@ func TestToAttributeValue_BasicTypes(t *testing.T) {
 	converter := NewConverter()
 
 	tests := []struct {
-		name     string
 		input    interface{}
 		expected types.AttributeValue
+		name     string
 		wantErr  bool
 	}{
 		// String types
@@ -479,9 +479,9 @@ func TestFromAttributeValue_ComplexTypes(t *testing.T) {
 
 		av := &types.AttributeValueMemberM{
 			Value: map[string]types.AttributeValue{
-				"Name":   &types.AttributeValueMemberS{Value: "Alice"},
-				"Age":    &types.AttributeValueMemberN{Value: "25"},
-				"Active": &types.AttributeValueMemberBOOL{Value: true},
+				"name":   &types.AttributeValueMemberS{Value: "Alice"},
+				"age":    &types.AttributeValueMemberN{Value: "25"},
+				"active": &types.AttributeValueMemberBOOL{Value: true},
 			},
 		}
 
@@ -489,6 +489,56 @@ func TestFromAttributeValue_ComplexTypes(t *testing.T) {
 		err := converter.FromAttributeValue(av, &result)
 		assert.NoError(t, err)
 		assert.Equal(t, Person{Name: "Alice", Age: 25, Active: true}, result)
+	})
+
+	t.Run("map to struct with attr tags", func(t *testing.T) {
+		type MerchantBusinessAddress struct {
+			Line1      string `dynamorm:"attr:line1"`
+			PostalCode string `dynamorm:"attr:postalCode"`
+		}
+
+		type MerchantUnderwritingData struct {
+			BusinessName    string                  `dynamorm:"attr:businessName"`
+			BusinessAddress MerchantBusinessAddress `dynamorm:"attr:businessAddress"`
+		}
+
+		type MerchantOnboardingBusiness struct {
+			UnderwritingData MerchantUnderwritingData `dynamorm:"attr:underwritingData"`
+		}
+
+		type MerchantOnboardingData struct {
+			MerchantUID string                     `dynamorm:"attr:merchantUid"`
+			Business    MerchantOnboardingBusiness `dynamorm:"attr:business"`
+		}
+
+		localConverter := NewConverter()
+		av := &types.AttributeValueMemberM{
+			Value: map[string]types.AttributeValue{
+				"merchantUid": &types.AttributeValueMemberS{Value: "merchant-123"},
+				"business": &types.AttributeValueMemberM{
+					Value: map[string]types.AttributeValue{
+						"underwritingData": &types.AttributeValueMemberM{
+							Value: map[string]types.AttributeValue{
+								"businessName": &types.AttributeValueMemberS{Value: "Example LLC"},
+								"businessAddress": &types.AttributeValueMemberM{
+									Value: map[string]types.AttributeValue{
+										"line1":      &types.AttributeValueMemberS{Value: "123 Main"},
+										"postalCode": &types.AttributeValueMemberS{Value: "90210"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		var dest MerchantOnboardingData
+		err := localConverter.FromAttributeValue(av, &dest)
+		require.NoError(t, err)
+		assert.Equal(t, "merchant-123", dest.MerchantUID)
+		assert.Equal(t, "Example LLC", dest.Business.UnderwritingData.BusinessName)
+		assert.Equal(t, "90210", dest.Business.UnderwritingData.BusinessAddress.PostalCode)
 	})
 
 	t.Run("string set", func(t *testing.T) {
@@ -802,19 +852,27 @@ func BenchmarkToAttributeValue(b *testing.B) {
 
 	b.Run("BasicTypes", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _ = converter.ToAttributeValue("test string")
-			_, _ = converter.ToAttributeValue(42)
-			_, _ = converter.ToAttributeValue(3.14)
-			_, _ = converter.ToAttributeValue(true)
+			if _, err := converter.ToAttributeValue("test string"); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := converter.ToAttributeValue(42); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := converter.ToAttributeValue(3.14); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := converter.ToAttributeValue(true); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 
 	b.Run("ComplexTypes", func(b *testing.B) {
 		type Person struct {
-			Name   string
-			Age    int
-			Tags   []string
 			Scores map[string]float64
+			Name   string
+			Tags   []string
+			Age    int
 		}
 
 		person := Person{
@@ -829,7 +887,9 @@ func BenchmarkToAttributeValue(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _ = converter.ToAttributeValue(person)
+			if _, err := converter.ToAttributeValue(person); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 }
@@ -855,6 +915,8 @@ func BenchmarkFromAttributeValue(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var result Person
-		_ = converter.FromAttributeValue(av, &result)
+		if err := converter.FromAttributeValue(av, &result); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

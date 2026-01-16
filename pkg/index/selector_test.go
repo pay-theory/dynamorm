@@ -3,10 +3,11 @@ package index_test
 import (
 	"testing"
 
-	"github.com/pay-theory/dynamorm/pkg/core"
-	"github.com/pay-theory/dynamorm/pkg/index"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/index"
 )
 
 func TestNewSelector(t *testing.T) {
@@ -25,9 +26,9 @@ func TestNewSelector(t *testing.T) {
 
 func TestAnalyzeConditions(t *testing.T) {
 	tests := []struct {
+		expected   index.RequiredKeys
 		name       string
 		conditions []index.Condition
-		expected   index.RequiredKeys
 	}{
 		{
 			name: "single equality condition",
@@ -124,12 +125,12 @@ func TestAnalyzeConditions(t *testing.T) {
 
 func TestSelectOptimal(t *testing.T) {
 	tests := []struct {
-		name         string
-		indexes      []core.IndexSchema
 		required     index.RequiredKeys
-		expectNil    bool
+		name         string
 		expectedName string
 		expectedType string
+		indexes      []core.IndexSchema
+		expectNil    bool
 	}{
 		{
 			name: "no partition key required",

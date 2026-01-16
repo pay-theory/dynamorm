@@ -7,11 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/examples/payment"
 	"github.com/pay-theory/dynamorm/pkg/core"
@@ -20,29 +22,29 @@ import (
 // WebhookSender handles async webhook deliveries
 type WebhookSender struct {
 	db       core.ExtendedDB
+	ctx      context.Context
 	client   *http.Client
 	workers  chan struct{}
-	retryMax int
 	queue    chan *WebhookJob
-	wg       sync.WaitGroup
-	ctx      context.Context
 	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	retryMax int
 }
 
 // WebhookJob represents a webhook to be sent
 type WebhookJob struct {
+	Data       any
 	MerchantID string
 	EventType  string
 	PaymentID  string
-	Data       any
 }
 
 // WebhookPayload represents the webhook request body
 type WebhookPayload struct {
-	ID        string    `json:"id"`
-	EventType string    `json:"event_type"`
 	Created   time.Time `json:"created"`
 	Data      any       `json:"data"`
+	ID        string    `json:"id"`
+	EventType string    `json:"event_type"`
 }
 
 // NewWebhookSender creates a new webhook sender
@@ -124,7 +126,7 @@ func (w *WebhookSender) processWebhook(job *WebhookJob) error {
 		Attempts:   0,
 		Status:     payment.WebhookStatusPending,
 		CreatedAt:  time.Now(),
-		ExpiresAt:  time.Now().Add(24 * time.Hour), // Expire after 24 hours
+		ExpiresAt:  time.Now().Add(24 * time.Hour).Unix(), // Expire after 24 hours (Unix timestamp)
 	}
 
 	// Save webhook record
@@ -182,7 +184,9 @@ func (w *WebhookSender) deliverWebhook(webhook *payment.Webhook, secret string) 
 			webhook.Status = payment.WebhookStatusFailed
 			webhook.ResponseBody = fmt.Sprintf("Network error: %v", err)
 		} else {
-			defer resp.Body.Close()
+			defer func() {
+				_ = resp.Body.Close()
+			}()
 			webhook.ResponseCode = resp.StatusCode
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -244,8 +248,8 @@ func (w *WebhookSender) generateSignature(payload []byte, secret string, timesta
 type RetryWorker struct {
 	db            *dynamorm.DB
 	webhookSender *WebhookSender
-	interval      time.Duration
 	stop          chan struct{}
+	interval      time.Duration
 }
 
 // NewRetryWorker creates a new retry worker
@@ -313,6 +317,8 @@ func (r *RetryWorker) processRetries() {
 		}
 
 		// Retry delivery
-		r.webhookSender.deliverWebhook(webhook, merchant.WebhookSecret)
+		if err := r.webhookSender.deliverWebhook(webhook, merchant.WebhookSecret); err != nil {
+			log.Printf("failed to redeliver webhook %s: %v", webhook.ID, err)
+		}
 	}
 }

@@ -58,7 +58,7 @@ func (m *IdempotencyMiddleware) Process(ctx context.Context, merchantID, key str
 		Key:        key,
 		MerchantID: merchantID,
 		CreatedAt:  time.Now(),
-		ExpiresAt:  time.Now().Add(m.ttl),
+		ExpiresAt:  time.Now().Add(m.ttl).Unix(), // Unix timestamp for TTL
 	}
 
 	// Try to create the record (will fail if duplicate)
@@ -130,8 +130,8 @@ func (m *IdempotencyMiddleware) getRecord(ctx context.Context, merchantID, key s
 		return nil, fmt.Errorf("failed to get idempotency record: %w", err)
 	}
 
-	// Check if expired
-	if time.Now().After(record.ExpiresAt) {
+	// Check if expired (ExpiresAt is Unix timestamp)
+	if time.Now().Unix() > record.ExpiresAt {
 		return nil, customerrors.ErrItemNotFound
 	}
 

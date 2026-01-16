@@ -4,28 +4,38 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/dynamorm/dynamorm"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/handlers"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/models"
+	"os"
+
 	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/pay-theory/dynamorm"
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/handlers"
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
-func setupTestDB(t *testing.T) *dynamorm.Client {
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion("us-east-1"),
-	)
-	require.NoError(t, err)
+func setupTestDB(t *testing.T) core.ExtendedDB {
+	endpoint := os.Getenv("AWS_ENDPOINT_URL")
+	if endpoint == "" {
+		// Default to localhost if not set, or skip
+		endpoint = "http://localhost:8000"
+	}
 
-	svc := dynamodb.NewFromConfig(cfg)
-	db := dynamorm.New(svc)
+	dbConfig := session.Config{
+		Region:   "us-east-1",
+		Endpoint: endpoint,
+	}
+	db, err := dynamorm.New(dbConfig)
+	require.NoError(t, err)
 
 	// Create test tables
 	models := []any{
@@ -40,7 +50,7 @@ func setupTestDB(t *testing.T) *dynamorm.Client {
 	}
 
 	for _, model := range models {
-		err := db.Model(model).CreateTable()
+		err := db.CreateTable(model)
 		if err != nil && err.Error() != "ResourceInUseException" {
 			t.Fatalf("Failed to create table for %T: %v", model, err)
 		}
@@ -53,34 +63,38 @@ func TestCreateOrganization(t *testing.T) {
 	db := setupTestDB(t)
 	handler := handlers.NewOrganizationHandler(db)
 
+	// Generate a unique slug for this test run to ensure conflict test works reliably
+	baseSlug := fmt.Sprintf("test-corp-%d", time.Now().UnixNano())
+
 	tests := []struct {
 		name           string
 		payload        map[string]any
 		expectedStatus int
-		checkResponse  func(t *testing.T, resp map[string]any)
+		checkResponse  func(*testing.T, map[string]any)
 	}{
 		{
 			name: "Create organization successfully",
 			payload: map[string]any{
 				"name":        "Test Corp",
-				"slug":        "test-corp",
-				"owner_email": "owner@test.com",
+				"slug":        baseSlug,
+				"owner_email": "test@test.com",
 				"plan":        "starter",
 			},
 			expectedStatus: http.StatusOK,
 			checkResponse: func(t *testing.T, resp map[string]any) {
 				assert.Equal(t, "Test Corp", resp["name"])
-				assert.Equal(t, "test-corp", resp["slug"])
+				assert.Equal(t, baseSlug, resp["slug"])
 				assert.Equal(t, "starter", resp["plan"])
 				assert.Equal(t, "active", resp["status"])
 				assert.NotEmpty(t, resp["id"])
+				assert.NotEmpty(t, resp["owner_id"])
 			},
 		},
 		{
 			name: "Create organization with free plan",
 			payload: map[string]any{
 				"name":        "Free Corp",
-				"slug":        "free-corp",
+				"slug":        fmt.Sprintf("free-corp-%d", time.Now().UnixNano()),
 				"owner_email": "free@test.com",
 			},
 			expectedStatus: http.StatusOK,
@@ -102,7 +116,7 @@ func TestCreateOrganization(t *testing.T) {
 			name: "Duplicate slug",
 			payload: map[string]any{
 				"name":        "Duplicate Corp",
-				"slug":        "test-corp", // Same as first test
+				"slug":        baseSlug, // Same as first test
 				"owner_email": "dup@test.com",
 			},
 			expectedStatus: http.StatusConflict,
@@ -254,7 +268,7 @@ func TestOrganizationPlanLimits(t *testing.T) {
 		t.Run(p.plan+" plan limits", func(t *testing.T) {
 			payload := map[string]any{
 				"name":        p.plan + " Test Corp",
-				"slug":        p.plan + "-test-corp",
+				"slug":        fmt.Sprintf("%s-test-corp-%d", p.plan, time.Now().UnixNano()),
 				"owner_email": p.plan + "@test.com",
 				"plan":        p.plan,
 			}

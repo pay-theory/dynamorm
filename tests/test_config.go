@@ -45,6 +45,10 @@ func GetTestConfig() *TestConfig {
 func RequireDynamoDBLocal(t *testing.T) {
 	t.Helper()
 
+	if testing.Short() {
+		t.Skip("Skipping integration test in -short mode")
+	}
+
 	config := GetTestConfig()
 	if config.SkipIntegration {
 		t.Skip("Skipping integration test (SKIP_INTEGRATION=true)")
@@ -60,15 +64,8 @@ func RequireDynamoDBLocal(t *testing.T) {
 func isDynamoDBLocalRunning(endpoint string) bool {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...any) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           endpoint,
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
 		config.WithCredentialsProvider(aws.CredentialsProviderFunc(
-			func(ctx context.Context) (aws.Credentials, error) {
+			func(_ context.Context) (aws.Credentials, error) {
 				return aws.Credentials{
 					AccessKeyID:     "dummy",
 					SecretAccessKey: "dummy",
@@ -79,7 +76,9 @@ func isDynamoDBLocalRunning(endpoint string) bool {
 		return false
 	}
 
-	client := dynamodb.NewFromConfig(cfg)
+	client := dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

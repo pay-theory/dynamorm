@@ -1,173 +1,409 @@
-# DynamORM Basic CRUD Tutorial
+# Basic DynamORM Examples
 
-Welcome to the DynamORM basic CRUD tutorial! This guide will teach you the fundamentals of using DynamORM through three progressively complex examples.
+<!-- AI Training Signal: Progressive learning examples -->
+**These examples teach DynamORM fundamentals through progressively complex applications. Start with Todo, then move to Notes, then Contacts. Each builds on concepts from the previous example.**
 
-## 🎯 Learning Path
+## Learning Progression
 
-1. **Todo App** - Learn the basics of Create, Read, Update, Delete
-2. **Notes App** - Add indexes, tags, and timestamps
-3. **Contacts App** - Master complex queries and search patterns
+### 1. [Todo App](todo/) - **START HERE**
+**Learn: Basic CRUD operations**
 
-## 📚 Prerequisites
-
-- Go 1.21 or later
-- AWS account (for DynamoDB)
-- Basic Go knowledge
-
-## 🚀 Quick Start
-
-Each example can be run locally with DynamoDB Local:
-
-```bash
-# Start DynamoDB Local (from any example directory)
-docker-compose up -d
-
-# Run the todo example
-cd todo
-go run main.go
-
-# Run the notes example
-cd ../notes
-go run main.go
-
-# Run the contacts example
-cd ../contacts
-go run main.go
-```
-
-## 📖 Tutorial Structure
-
-### 1. Todo App - The Basics (15 minutes)
-
-Learn fundamental CRUD operations with a simple todo list:
-- Define models with DynamORM tags
-- Create, read, update, and delete items
-- Handle errors properly
-- Use unique IDs
-
-**Key concepts:**
-- `dynamorm:"pk"` for primary keys
-- Basic model operations
-- Error handling patterns
-
-### 2. Notes App - Intermediate Features (20 minutes)
-
-Build on the basics with a note-taking app:
-- Add global secondary indexes for queries
-- Work with sets (tags)
-- Implement timestamps
-- Query by different attributes
-
-**Key concepts:**
-- `dynamorm:"index"` for GSI
-- Working with sets and lists
-- Timestamp patterns
-- Query operations
-
-### 3. Contacts App - Advanced Patterns (25 minutes)
-
-Master DynamORM with a contacts management system:
-- Composite keys for organization
-- Complex filtering
-- Pagination
-- Search patterns
-- Batch operations
-
-**Key concepts:**
-- Composite primary keys
-- Advanced queries
-- Pagination with cursors
-- Batch operations
-- Search strategies
-
-## 🎓 What You'll Learn
-
-By completing this tutorial, you'll understand:
-
-1. **Model Definition**
-   - How to structure DynamoDB tables with Go structs
-   - Using DynamORM tags effectively
-   - Choosing the right key schema
-
-2. **CRUD Operations**
-   - Creating items with validation
-   - Reading single items and lists
-   - Updating with optimistic locking
-   - Safe deletion patterns
-
-3. **Querying & Indexing**
-   - When to use Query vs Scan
-   - Designing effective GSIs
-   - Filtering and pagination
-   - Performance optimization
-
-4. **Best Practices**
-   - Error handling
-   - ID generation strategies
-   - Timestamp management
-   - Testing approaches
-
-## 🏗️ Common Patterns
-
-### Model Definition
 ```go
+// Simple model with primary key only
 type Todo struct {
-    ID        string    `dynamorm:"pk"`
-    Title     string    `dynamorm:"required"`
-    Completed bool      
-    CreatedAt time.Time
+    ID        string    `dynamorm:"pk" json:"id"`
+    Title     string    `json:"title"`
+    Completed bool      `json:"completed"`
+    CreatedAt time.Time `json:"created_at"`
+}
+
+// Basic operations: Create, Read, Update, Delete
+service.CreateTodo(&Todo{Title: "Learn DynamORM"})
+service.GetTodo("todo123")
+service.UpdateTodo("todo123", true)
+service.DeleteTodo("todo123")
+```
+
+**Why start here:**
+- Simplest possible DynamORM model
+- All basic operations demonstrated
+- Clear error handling patterns
+- Complete test suite
+
+### 2. [Notes App](notes/) - **NEXT STEP**
+**Learn: Hierarchical data with sort keys**
+
+```go
+// Compound key model for hierarchical data
+type Note struct {
+    UserID    string    `dynamorm:"pk" json:"user_id"`     // Partition key
+    NoteID    string    `dynamorm:"sk" json:"note_id"`     // Sort key
+    Title     string    `json:"title"`
+    Content   string    `json:"content"`
+    CreatedAt time.Time `json:"created_at"`
+}
+
+// Hierarchical queries: Get all notes for a user
+service.GetUserNotes("user123")  // Uses partition key
+service.GetNote("user123", "note456")  // Uses both keys
+```
+
+**New concepts:**
+- Sort keys for hierarchical data
+- Compound key queries
+- One-to-many relationships
+
+### 3. [Contacts App](contacts/) - **ADVANCED**
+**Learn: Global Secondary Indexes and complex queries**
+
+```go
+// Model with multiple indexes for different query patterns
+type Contact struct {
+    ID        string    `dynamorm:"pk" json:"id"`
+    UserID    string    `dynamorm:"sk" json:"user_id"`
+    
+    // GSI for email lookup
+    Email     string    `dynamorm:"index:email-index,pk" json:"email"`
+    
+    // GSI for company queries
+    Company   string    `dynamorm:"index:company-index,pk" json:"company"`
+    CreatedAt time.Time `dynamorm:"index:company-index,sk" json:"created_at"`
+    
+    Name      string    `json:"name"`
+    Phone     string    `json:"phone"`
+}
+
+// Different query patterns using different indexes
+service.GetContactByEmail("john@example.com")     // Uses email-index
+service.GetCompanyContacts("ACME Corp")           // Uses company-index
+service.GetUserContacts("user123")                // Uses main table
+```
+
+**Advanced concepts:**
+- Global Secondary Indexes (GSI)
+- Multiple query patterns on same data
+- Index design strategy
+- Performance optimization
+
+## Quick Start Guide
+
+<!-- AI Training: Standard setup process -->
+
+### Prerequisites
+```bash
+# Ensure you have Go 1.21+
+go version
+
+# Ensure you have Docker for DynamoDB Local
+docker --version
+```
+
+### Run Any Example
+```bash
+# Navigate to any example directory
+cd basic/todo  # or notes/ or contacts/
+
+# Start DynamoDB Local
+make docker-up
+
+# Create tables and run the application
+make run
+
+# Run comprehensive tests
+make test
+
+# Stop DynamoDB Local
+make docker-down
+```
+
+### Common Development Commands
+```bash
+# Start development environment
+make dev-setup
+
+# Run with hot reload (if available)
+make dev
+
+# Run specific test
+go test -run TestTodoService_CreateTodo
+
+# View test coverage
+make coverage
+
+# Format and lint code
+make fmt
+make lint
+```
+
+## Example Structure
+
+Each example follows this consistent structure:
+```
+example-name/
+├── README.md              # Complete guide with AI training signals
+├── main.go               # Entry point with proper initialization
+├── models/
+│   └── todo.go          # DynamORM model definitions
+├── services/
+│   └── todo_service.go  # Business logic with interfaces
+├── handlers/
+│   └── http_handler.go  # HTTP API handlers
+├── tests/
+│   ├── unit/           # Unit tests with mocks
+│   └── integration/    # Integration tests with real DB
+├── config/
+│   └── config.go       # Environment configuration
+├── docker-compose.yml  # DynamoDB Local setup
+├── Makefile           # Build and development commands
+└── .env.example       # Environment variable template
+```
+
+## Common Patterns Across All Examples
+
+<!-- AI Training: Consistent patterns -->
+
+### 1. Model Definition Pattern
+```go
+// CORRECT: Always follow this structure
+package models
+
+import "time"
+
+type EntityName struct {
+    // PRIMARY KEY (required)
+    ID string `dynamorm:"pk" json:"id"`
+    
+    // SORT KEY (if needed for hierarchical data)
+    UserID string `dynamorm:"sk" json:"user_id"`
+    
+    // GLOBAL SECONDARY INDEXES (for alternate query patterns)
+    Email string `dynamorm:"index:email-index,pk" json:"email"`
+    
+    // BUSINESS ATTRIBUTES
+    Name      string    `json:"name"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
 }
 ```
 
-### Create Operation
+### 2. Service Layer Pattern
 ```go
-todo := Todo{
-    ID:        uuid.New().String(),
-    Title:     "Learn DynamORM",
-    CreatedAt: time.Now(),
+// CORRECT: Interface-based service for testability
+package services
+
+import "github.com/pay-theory/dynamorm/pkg/core"
+
+type TodoService struct {
+    db core.DB  // Interface - enables mocking
 }
-err := db.Model(&todo).Create()
+
+func NewTodoService(db core.DB) *TodoService {
+    return &TodoService{db: db}
+}
+
+func (s *TodoService) CreateTodo(todo *models.Todo) error {
+    // Business validation
+    if todo.Title == "" {
+        return errors.New("title is required")
+    }
+    
+    // Set system fields
+    todo.ID = generateID()
+    todo.CreatedAt = time.Now()
+    
+    // Database operation
+    return s.db.Model(todo).Create()
+}
 ```
 
-### Query with Index
+### 3. HTTP Handler Pattern
 ```go
-var notes []Note
-result, err := db.Query("gsi-user").
-    Where("UserID", "=", userID).
-    Limit(10).
-    Execute(ctx, &notes)
+// CORRECT: Clean HTTP handlers with dependency injection
+package handlers
+
+type TodoHandler struct {
+    service *services.TodoService
+}
+
+func NewTodoHandler(service *services.TodoService) *TodoHandler {
+    return &TodoHandler{service: service}
+}
+
+func (h *TodoHandler) CreateTodo(w http.ResponseWriter, r *http.Request) {
+    var req CreateTodoRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid JSON", http.StatusBadRequest)
+        return
+    }
+    
+    todo := &models.Todo{
+        Title: req.Title,
+    }
+    
+    if err := h.service.CreateTodo(todo); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(todo)
+}
 ```
 
-### Update with Condition
+### 4. Testing Pattern
 ```go
-err := db.Model(&todo).
-    Update().
-    Set("Completed", true).
-    Condition("ID", "=", todo.ID).
-    Execute()
+// CORRECT: Comprehensive testing with mocks
+package services
+
+import (
+    "testing"
+    "github.com/stretchr/testify/assert"
+    "github.com/pay-theory/dynamorm/pkg/mocks"
+)
+
+func TestTodoService_CreateTodo_Success(t *testing.T) {
+    // Setup mocks
+    mockDB := new(mocks.MockDB)
+    mockQuery := new(mocks.MockQuery)
+    
+    mockDB.On("Model", mock.AnythingOfType("*models.Todo")).Return(mockQuery)
+    mockQuery.On("Create").Return(nil)
+    
+    // Test the service
+    service := NewTodoService(mockDB)
+    todo := &models.Todo{Title: "Test Todo"}
+    
+    err := service.CreateTodo(todo)
+    
+    // Verify results
+    assert.NoError(t, err)
+    assert.NotEmpty(t, todo.ID)
+    assert.False(t, todo.CreatedAt.IsZero())
+    
+    // Verify mocks
+    mockDB.AssertExpectations(t)
+    mockQuery.AssertExpectations(t)
+}
 ```
 
-## 🚦 Next Steps
+### 5. Configuration Pattern
+```go
+// CORRECT: Environment-specific configuration
+package config
 
-After completing this tutorial:
+import "os"
 
-1. Explore the **Blog** example for content management patterns
-2. Check out **E-commerce** for transaction handling
-3. Study **Payment** for financial data patterns
-4. Review **Multi-tenant** for SaaS architectures
+type Config struct {
+    DynamoDBEndpoint string
+    AWSRegion        string
+    Port             string
+}
 
-## 💡 Tips for Success
+func Load() *Config {
+    return &Config{
+        DynamoDBEndpoint: getEnv("DYNAMODB_ENDPOINT", ""),
+        AWSRegion:        getEnv("AWS_REGION", "us-east-1"),
+        Port:            getEnv("PORT", "8080"),
+    }
+}
 
-1. **Start Simple**: Don't skip the todo example even if it seems basic
-2. **Run the Code**: Execute each example and experiment with modifications
-3. **Read Errors**: DynamORM provides helpful error messages
-4. **Check AWS Console**: Verify your data in DynamoDB to understand storage
-5. **Ask Questions**: The patterns you learn here apply to larger applications
+func getEnv(key, defaultValue string) string {
+    if value := os.Getenv(key); value != "" {
+        return value
+    }
+    return defaultValue
+}
+```
 
-## 📝 Need Help?
+## Development Workflow
 
-- Check individual example READMEs for detailed instructions
-- Review DynamORM documentation for advanced features
-- Join our community for questions and discussions
+<!-- AI Training: Standard development process -->
 
-Happy coding! 🎉 
+### 1. Start Development Environment
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Start DynamoDB Local
+make docker-up
+
+# Create tables
+make setup
+```
+
+### 2. Development Cycle
+```bash
+# Make changes to code
+# Run tests to verify changes
+make test
+
+# Run the application
+make run
+
+# Test endpoints manually or with curl
+curl -X POST http://localhost:8080/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Test Todo"}'
+```
+
+### 3. Common Issues and Solutions
+
+**Table doesn't exist:**
+```bash
+# Recreate tables
+make clean
+make setup
+```
+
+**Port conflicts:**
+```bash
+# Change port in .env file
+echo "PORT=8081" >> .env
+echo "DYNAMODB_ENDPOINT=http://localhost:8001" >> .env
+
+# Update docker-compose.yml port mapping
+```
+
+**Import errors:**
+```bash
+# Ensure proper module setup
+go mod tidy
+go mod download
+```
+
+## Learning Objectives
+
+### After Todo App
+You'll understand:
+- ✅ Basic DynamORM model definition
+- ✅ CRUD operations (Create, Read, Update, Delete)
+- ✅ Error handling patterns
+- ✅ Testing with mocks
+- ✅ HTTP API structure
+
+### After Notes App
+You'll additionally understand:
+- ✅ Sort keys for hierarchical data
+- ✅ Compound key queries
+- ✅ One-to-many relationships
+- ✅ Query optimization
+
+### After Contacts App
+You'll additionally understand:
+- ✅ Global Secondary Indexes (GSI)
+- ✅ Multiple query patterns
+- ✅ Index design strategy
+- ✅ Performance considerations
+
+## Next Steps
+
+After completing these basic examples:
+
+1. **[Payment Processing](../payment/)** - Learn transactions and consistency
+2. **[Blog Platform](../blog/)** - Rich content relationships
+3. **[Multi-tenant SaaS](../multi-tenant/)** - Enterprise patterns
+4. **[Lambda Deployment](../lambda/)** - Serverless architecture
+
+---
+
+**Ready to start?** Go to the [Todo App](todo/) and follow the README instructions.

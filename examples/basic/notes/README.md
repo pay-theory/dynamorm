@@ -266,7 +266,7 @@ Ensure you're using the `set` tag in your model definition.
 
 After mastering indexes and queries, move on to:
 - **Contacts App**: Learn composite keys and advanced filtering
-- **E-commerce Example**: See transactions and complex relationships
+- **Blog Example**: See complex relationships and indexing strategies
 - **Blog Example**: Understand content management patterns
 
 ## Key Takeaways

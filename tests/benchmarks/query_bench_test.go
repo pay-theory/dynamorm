@@ -2,6 +2,7 @@ package benchmarks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -11,8 +12,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/pay-theory/dynamorm"
 	"github.com/pay-theory/dynamorm/pkg/core"
+	"github.com/pay-theory/dynamorm/pkg/session"
 	"github.com/pay-theory/dynamorm/tests/models"
 )
 
@@ -27,32 +30,40 @@ func setupBenchDB(b *testing.B) (core.ExtendedDB, *dynamodb.Client) {
 		return benchDB, benchDynamoDB
 	}
 
-	// Create AWS config
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
+	// Skip if DynamoDB Local is not available
+	// Note: For benchmarks, we assume DynamoDB Local is running
+
+	// Create AWS config for DynamoDB client
+	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion("us-east-1"),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...any) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:           "http://localhost:8000",
-					SigningRegion: "us-east-1",
-				}, nil
-			})),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy", "")),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+		),
 	)
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	// Create DynamoDB client
-	dynamoClient := dynamodb.NewFromConfig(cfg)
+	// Create DynamoDB client with endpoint override
+	dynamoClient := dynamodb.NewFromConfig(awsCfg, func(o *dynamodb.Options) {
+		o.BaseEndpoint = aws.String("http://localhost:8000")
+	})
 
-	// Initialize DynamORM
-	db, err := dynamorm.New(dynamorm.Config{
+	// Fixed initialization with session.Config for DynamORM
+	sessionConfig := session.Config{
 		Region:   "us-east-1",
 		Endpoint: "http://localhost:8000",
-	})
+		AWSConfigOptions: []func(*config.LoadOptions) error{
+			config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider("dummy", "dummy", ""),
+			),
+			config.WithRegion("us-east-1"),
+		},
+	}
+
+	db, err := dynamorm.New(sessionConfig)
 	if err != nil {
-		b.Fatal(err)
+		b.Fatalf("Failed to create DB: %v", err)
 	}
 
 	benchDB = db
@@ -71,9 +82,15 @@ func createBenchTable(b *testing.B) {
 	ctx := context.TODO()
 
 	// Delete existing table if it exists
-	_, _ = benchDynamoDB.DeleteTable(ctx, &dynamodb.DeleteTableInput{
+	_, err := benchDynamoDB.DeleteTable(ctx, &dynamodb.DeleteTableInput{
 		TableName: aws.String(benchTableName),
 	})
+	if err != nil {
+		var notFound *types.ResourceNotFoundException
+		if !errors.As(err, &notFound) {
+			b.Fatalf("delete table %s: %v", benchTableName, err)
+		}
+	}
 
 	// Wait a bit for deletion
 	time.Sleep(2 * time.Second)
@@ -130,7 +147,7 @@ func createBenchTable(b *testing.B) {
 		},
 	}
 
-	_, err := benchDynamoDB.CreateTable(ctx, input)
+	_, err = benchDynamoDB.CreateTable(ctx, input)
 	if err != nil {
 		b.Fatal(err)
 	}

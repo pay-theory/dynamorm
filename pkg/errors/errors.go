@@ -49,22 +49,66 @@ var (
 
 	// ErrInvalidOperator is returned when an invalid query operator is used
 	ErrInvalidOperator = errors.New("invalid query operator")
+
+	// ErrEncryptionNotConfigured is returned when a model uses dynamorm:"encrypted" fields but no KMS key ARN is configured.
+	ErrEncryptionNotConfigured = errors.New("encryption not configured")
+
+	// ErrInvalidEncryptedEnvelope is returned when an encrypted attribute value is not a valid DynamORM envelope.
+	ErrInvalidEncryptedEnvelope = errors.New("invalid encrypted envelope")
+
+	// ErrEncryptedFieldNotQueryable is returned when a dynamorm:"encrypted" field is used in query/filter conditions.
+	ErrEncryptedFieldNotQueryable = errors.New("encrypted fields are not queryable/filterable")
 )
+
+// EncryptedFieldError wraps failures related to dynamorm:"encrypted" fields (encryption/decryption).
+// It is safe-by-default: the error string must never include decrypted plaintext.
+type EncryptedFieldError struct {
+	Err       error
+	Field     string
+	Operation string
+}
+
+func (e *EncryptedFieldError) Error() string {
+	if e == nil {
+		return "dynamorm: encrypted field error"
+	}
+
+	op := e.Operation
+	if op == "" {
+		op = "operation"
+	}
+
+	field := e.Field
+	if field == "" {
+		field = "field"
+	}
+
+	if e.Err == nil {
+		return fmt.Sprintf("dynamorm: encrypted %s failed for %s", op, field)
+	}
+	return fmt.Sprintf("dynamorm: encrypted %s failed for %s: %v", op, field, e.Err)
+}
+
+func (e *EncryptedFieldError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // DynamORMError represents a detailed error with context
 type DynamORMError struct {
-	Op      string         // Operation that failed
-	Model   string         // Model type name
-	Err     error          // Underlying error
-	Context map[string]any // Additional context
+	Err     error
+	Context map[string]any
+	Op      string
+	Model   string
 }
 
 // Error implements the error interface
 func (e *DynamORMError) Error() string {
-	if e.Context != nil && len(e.Context) > 0 {
-		return fmt.Sprintf("dynamorm: %s failed for %s: %v (context: %v)", e.Op, e.Model, e.Err, e.Context)
-	}
-	return fmt.Sprintf("dynamorm: %s failed for %s: %v", e.Op, e.Model, e.Err)
+	// SECURITY: Don't expose model names or context data in error messages
+	// Only return the operation and underlying error for secure logging
+	return fmt.Sprintf("dynamorm: %s operation failed: %v", e.Op, e.Err)
 }
 
 // Unwrap returns the underlying error
@@ -109,4 +153,40 @@ func IsInvalidModel(err error) bool {
 // IsConditionFailed checks if an error indicates a condition check failure
 func IsConditionFailed(err error) bool {
 	return errors.Is(err, ErrConditionFailed)
+}
+
+// TransactionError provides context for transactional failures.
+type TransactionError struct {
+	Err            error
+	Operation      string
+	Model          string
+	Reason         string
+	OperationIndex int
+}
+
+// Error implements the error interface.
+func (e *TransactionError) Error() string {
+	if e == nil {
+		return "dynamorm: transaction failed"
+	}
+
+	op := "transaction"
+	if e.Operation != "" {
+		op = fmt.Sprintf("%s operation %s", op, e.Operation)
+	}
+	if e.OperationIndex >= 0 {
+		op = fmt.Sprintf("%s (index %d)", op, e.OperationIndex)
+	}
+	if e.Reason != "" {
+		return fmt.Sprintf("dynamorm: %s failed: %s", op, e.Reason)
+	}
+	return fmt.Sprintf("dynamorm: %s failed", op)
+}
+
+// Unwrap returns the underlying error.
+func (e *TransactionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
 }

@@ -8,13 +8,19 @@ import (
 	"sync"
 
 	"github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/naming"
+)
+
+const (
+	tagValueTrue = "true"
+	tagEncrypted = "encrypted"
 )
 
 // Registry manages registered models and their metadata
 type Registry struct {
-	mu     sync.RWMutex
 	models map[reflect.Type]*Metadata
 	tables map[string]*Metadata
+	mu     sync.RWMutex
 }
 
 // NewRegistry creates a new model registry
@@ -90,16 +96,17 @@ func (r *Registry) GetMetadataByTable(tableName string) (*Metadata, error) {
 
 // Metadata holds all metadata for a model
 type Metadata struct {
-	Type           reflect.Type
-	TableName      string
-	PrimaryKey     *KeySchema
-	Indexes        []IndexSchema
-	Fields         map[string]*FieldMetadata
-	FieldsByDBName map[string]*FieldMetadata
-	VersionField   *FieldMetadata
-	TTLField       *FieldMetadata
-	CreatedAtField *FieldMetadata
-	UpdatedAtField *FieldMetadata
+	Type             reflect.Type
+	PrimaryKey       *KeySchema
+	Fields           map[string]*FieldMetadata
+	FieldsByDBName   map[string]*FieldMetadata
+	VersionField     *FieldMetadata
+	TTLField         *FieldMetadata
+	CreatedAtField   *FieldMetadata
+	UpdatedAtField   *FieldMetadata
+	TableName        string
+	Indexes          []IndexSchema
+	NamingConvention naming.Convention
 }
 
 // KeySchema represents a primary key or index key schema
@@ -129,20 +136,22 @@ const (
 
 // FieldMetadata holds metadata for a single field
 type FieldMetadata struct {
-	Name        string               // Go field name
-	Type        reflect.Type         // Go type
-	DBName      string               // DynamoDB attribute name
-	Index       int                  // Field index in struct
-	Tags        map[string]string    // Parsed tags
-	IsPK        bool                 // Is partition key
-	IsSK        bool                 // Is sort key
-	IsVersion   bool                 // Is version field
-	IsTTL       bool                 // Is TTL field
-	IsCreatedAt bool                 // Is created_at field
-	IsUpdatedAt bool                 // Is updated_at field
-	IsSet       bool                 // Should be stored as DynamoDB set
-	OmitEmpty   bool                 // Omit if empty
-	IndexInfo   map[string]IndexRole // Index participation
+	Type        reflect.Type
+	IndexInfo   map[string]IndexRole
+	Tags        map[string]string
+	DBName      string
+	Name        string
+	IndexPath   []int
+	Index       int
+	IsPK        bool
+	IsEncrypted bool
+	IsVersion   bool
+	IsTTL       bool
+	IsCreatedAt bool
+	IsUpdatedAt bool
+	IsSet       bool
+	OmitEmpty   bool
+	IsSK        bool
 }
 
 // IndexRole represents a field's role in an index
@@ -154,195 +163,243 @@ type IndexRole struct {
 
 // parseMetadata parses model metadata from struct tags
 func parseMetadata(modelType reflect.Type) (*Metadata, error) {
-	metadata := &Metadata{
-		Type:           modelType,
-		TableName:      getTableName(modelType),
-		Fields:         make(map[string]*FieldMetadata),
-		FieldsByDBName: make(map[string]*FieldMetadata),
-		Indexes:        make([]IndexSchema, 0),
-	}
+	convention := detectNamingConvention(modelType)
+	metadata := newMetadata(modelType, resolveTableName(modelType), convention)
 
 	indexMap := make(map[string]*IndexSchema)
-
-	// Parse fields
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-
-		// Skip unexported fields
-		if !field.IsExported() {
-			continue
-		}
-
-		fieldMeta, err := parseFieldMetadata(field, i)
-		if err != nil {
-			return nil, fmt.Errorf("field %s: %w", field.Name, err)
-		}
-
-		// Register field
-		metadata.Fields[field.Name] = fieldMeta
-		metadata.FieldsByDBName[fieldMeta.DBName] = fieldMeta
-
-		// Handle primary key
-		if fieldMeta.IsPK {
-			if metadata.PrimaryKey == nil {
-				metadata.PrimaryKey = &KeySchema{}
-			}
-			if metadata.PrimaryKey.PartitionKey != nil {
-				return nil, fmt.Errorf("field %s: %w", field.Name, errors.ErrDuplicatePrimaryKey)
-			}
-			metadata.PrimaryKey.PartitionKey = fieldMeta
-		}
-
-		if fieldMeta.IsSK {
-			if metadata.PrimaryKey == nil {
-				metadata.PrimaryKey = &KeySchema{}
-			}
-			if metadata.PrimaryKey.SortKey != nil {
-				return nil, fmt.Errorf("field %s: duplicate sort key definition", field.Name)
-			}
-			metadata.PrimaryKey.SortKey = fieldMeta
-		}
-
-		// Handle special fields
-		if fieldMeta.IsVersion {
-			metadata.VersionField = fieldMeta
-		}
-		if fieldMeta.IsTTL {
-			metadata.TTLField = fieldMeta
-		}
-		if fieldMeta.IsCreatedAt {
-			metadata.CreatedAtField = fieldMeta
-		}
-		if fieldMeta.IsUpdatedAt {
-			metadata.UpdatedAtField = fieldMeta
-		}
-
-		// Process indexes
-		for indexName, role := range fieldMeta.IndexInfo {
-			index, exists := indexMap[indexName]
-			if !exists {
-				index = &IndexSchema{
-					Name: indexName,
-					Type: determineIndexType(indexName),
-				}
-				indexMap[indexName] = index
-			}
-
-			if role.IsPK {
-				if index.PartitionKey != nil {
-					return nil, fmt.Errorf("field %s: duplicate partition key for index %s", field.Name, indexName)
-				}
-				index.PartitionKey = fieldMeta
-			}
-			if role.IsSK {
-				if index.SortKey != nil {
-					return nil, fmt.Errorf("field %s: duplicate sort key for index %s", field.Name, indexName)
-				}
-				index.SortKey = fieldMeta
-			}
-		}
+	if err := parseFields(modelType, metadata, indexMap, []int{}); err != nil {
+		return nil, err
 	}
 
-	// Validate primary key
 	if metadata.PrimaryKey == nil || metadata.PrimaryKey.PartitionKey == nil {
 		return nil, errors.ErrMissingPrimaryKey
 	}
 
-	// Convert index map to slice
-	for _, index := range indexMap {
-		// LSIs share the partition key with the main table
-		if index.Type == LocalSecondaryIndex {
-			index.PartitionKey = metadata.PrimaryKey.PartitionKey
-		} else if index.PartitionKey == nil {
-			// GSIs must have their own partition key
-			return nil, fmt.Errorf("index %s: missing partition key", index.Name)
-		}
-		metadata.Indexes = append(metadata.Indexes, *index)
+	if err := registerIndexes(metadata, indexMap); err != nil {
+		return nil, err
 	}
 
 	return metadata, nil
 }
 
+func newMetadata(modelType reflect.Type, tableName string, convention naming.Convention) *Metadata {
+	return &Metadata{
+		Type:             modelType,
+		TableName:        tableName,
+		NamingConvention: convention,
+		Fields:           make(map[string]*FieldMetadata),
+		FieldsByDBName:   make(map[string]*FieldMetadata),
+		Indexes:          make([]IndexSchema, 0),
+	}
+}
+
+func resolveTableName(modelType reflect.Type) string {
+	if name := tableNameFromMethod(reflect.New(modelType).Elem()); name != "" {
+		return name
+	}
+	if name := tableNameFromMethod(reflect.New(modelType)); name != "" {
+		return name
+	}
+	return getTableName(modelType)
+}
+
+func tableNameFromMethod(receiver reflect.Value) string {
+	method := receiver.MethodByName("TableName")
+	if !method.IsValid() {
+		return ""
+	}
+	if method.Type().NumIn() != 0 || method.Type().NumOut() != 1 {
+		return ""
+	}
+
+	results := method.Call(nil)
+	if len(results) == 0 || results[0].Kind() != reflect.String {
+		return ""
+	}
+
+	return results[0].String()
+}
+
+func registerIndexes(metadata *Metadata, indexMap map[string]*IndexSchema) error {
+	for _, index := range indexMap {
+		if index.Type == LocalSecondaryIndex {
+			index.PartitionKey = metadata.PrimaryKey.PartitionKey
+		} else if index.PartitionKey == nil {
+			return fmt.Errorf("missing partition key for index")
+		}
+
+		metadata.Indexes = append(metadata.Indexes, *index)
+	}
+
+	return nil
+}
+
+// parseFields recursively parses fields including embedded structs
+func parseFields(modelType reflect.Type, metadata *Metadata, indexMap map[string]*IndexSchema, indexPath []int) error {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		currentPath := appendIndexPath(indexPath, i)
+
+		if err := parseField(field, currentPath, metadata, indexMap); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func appendIndexPath(indexPath []int, index int) []int {
+	currentPath := make([]int, len(indexPath)+1)
+	copy(currentPath, indexPath)
+	currentPath[len(indexPath)] = index
+	return currentPath
+}
+
+func parseField(field reflect.StructField, indexPath []int, metadata *Metadata, indexMap map[string]*IndexSchema) error {
+	if !field.IsExported() {
+		return nil
+	}
+
+	if isEmbeddedStruct(field) {
+		return parseFields(field.Type, metadata, indexMap, indexPath)
+	}
+
+	fieldMeta, err := parseFieldMetadata(field, indexPath, metadata.NamingConvention)
+	if err != nil {
+		return fmt.Errorf("field validation failed: %w", err)
+	}
+	if fieldMeta == nil {
+		return nil
+	}
+
+	if fieldMeta.IsEncrypted {
+		if fieldMeta.IsPK || fieldMeta.IsSK || len(fieldMeta.IndexInfo) > 0 {
+			return fmt.Errorf("%w: encrypted fields cannot be used as primary or index keys", errors.ErrInvalidTag)
+		}
+	}
+
+	registerField(metadata, fieldMeta)
+
+	if err := applyKeyFields(metadata, fieldMeta); err != nil {
+		return err
+	}
+
+	applySpecialFields(metadata, fieldMeta)
+	return applyFieldIndexes(fieldMeta, indexMap)
+}
+
+func isEmbeddedStruct(field reflect.StructField) bool {
+	return field.Anonymous && field.Type.Kind() == reflect.Struct
+}
+
+func registerField(metadata *Metadata, fieldMeta *FieldMetadata) {
+	metadata.Fields[fieldMeta.Name] = fieldMeta
+	metadata.FieldsByDBName[fieldMeta.DBName] = fieldMeta
+}
+
+func applyKeyFields(metadata *Metadata, fieldMeta *FieldMetadata) error {
+	if fieldMeta.IsPK {
+		if metadata.PrimaryKey == nil {
+			metadata.PrimaryKey = &KeySchema{}
+		}
+		if metadata.PrimaryKey.PartitionKey != nil {
+			return fmt.Errorf("duplicate primary key definition: %w", errors.ErrDuplicatePrimaryKey)
+		}
+		metadata.PrimaryKey.PartitionKey = fieldMeta
+	}
+
+	if fieldMeta.IsSK {
+		if metadata.PrimaryKey == nil {
+			metadata.PrimaryKey = &KeySchema{}
+		}
+		if metadata.PrimaryKey.SortKey != nil {
+			return fmt.Errorf("duplicate sort key definition")
+		}
+		metadata.PrimaryKey.SortKey = fieldMeta
+	}
+
+	return nil
+}
+
+func applySpecialFields(metadata *Metadata, fieldMeta *FieldMetadata) {
+	if fieldMeta.IsVersion {
+		metadata.VersionField = fieldMeta
+	}
+	if fieldMeta.IsTTL {
+		metadata.TTLField = fieldMeta
+	}
+	if fieldMeta.IsCreatedAt {
+		metadata.CreatedAtField = fieldMeta
+	}
+	if fieldMeta.IsUpdatedAt {
+		metadata.UpdatedAtField = fieldMeta
+	}
+}
+
+func applyFieldIndexes(fieldMeta *FieldMetadata, indexMap map[string]*IndexSchema) error {
+	for indexName, role := range fieldMeta.IndexInfo {
+		index := getOrCreateIndexSchema(fieldMeta, indexName, indexMap)
+
+		if role.IsPK {
+			if index.PartitionKey != nil {
+				return fmt.Errorf("duplicate partition key for index %s", indexName)
+			}
+			index.PartitionKey = fieldMeta
+		}
+		if role.IsSK {
+			if index.SortKey != nil {
+				return fmt.Errorf("duplicate sort key for index %s", indexName)
+			}
+			index.SortKey = fieldMeta
+		}
+	}
+
+	return nil
+}
+
+func getOrCreateIndexSchema(fieldMeta *FieldMetadata, indexName string, indexMap map[string]*IndexSchema) *IndexSchema {
+	index, exists := indexMap[indexName]
+	if exists {
+		return index
+	}
+
+	indexType := determineIndexType(indexName)
+	if _, isLSI := fieldMeta.Tags["lsi:"+indexName]; isLSI {
+		indexType = LocalSecondaryIndex
+	}
+
+	index = &IndexSchema{
+		Name: indexName,
+		Type: indexType,
+	}
+	indexMap[indexName] = index
+	return index
+}
+
 // parseFieldMetadata parses metadata for a single field
-func parseFieldMetadata(field reflect.StructField, index int) (*FieldMetadata, error) {
+func parseFieldMetadata(field reflect.StructField, indexPath []int, convention naming.Convention) (*FieldMetadata, error) {
 	meta := &FieldMetadata{
 		Name:      field.Name,
 		Type:      field.Type,
-		DBName:    field.Name,
-		Index:     index,
+		DBName:    naming.ConvertAttrName(field.Name, convention),
+		Index:     indexPath[len(indexPath)-1], // Keep for backward compatibility
+		IndexPath: indexPath,
 		Tags:      make(map[string]string),
 		IndexInfo: make(map[string]IndexRole),
 	}
 
-	// Parse dynamorm tag
+	applyImplicitTimestampTags(meta, field)
+
 	tag := field.Tag.Get("dynamorm")
 	if tag == "" {
 		return meta, nil
 	}
-
 	if tag == "-" {
 		return nil, nil // Skip this field
 	}
 
-	// Parse tag components - need special handling for index tags
-	parts := splitTags(tag)
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		// Handle key:value tags
-		if colonIdx := strings.Index(part, ":"); colonIdx > 0 {
-			key := part[:colonIdx]
-			value := part[colonIdx+1:]
-
-			switch key {
-			case "attr":
-				meta.DBName = value
-			case "index":
-				if err := parseIndexTag(meta, value); err != nil {
-					return nil, err
-				}
-			case "lsi":
-				meta.IndexInfo[value] = IndexRole{
-					IndexName: value,
-					IsSK:      true,
-				}
-			case "project":
-				meta.Tags["project"] = value
-			default:
-				meta.Tags[key] = value
-			}
-		} else {
-			// Handle simple tags
-			switch part {
-			case "pk":
-				meta.IsPK = true
-				// Use lowercase field name for primary key fields
-				meta.DBName = strings.ToLower(field.Name)
-			case "sk":
-				meta.IsSK = true
-				// Use lowercase field name for sort key fields
-				meta.DBName = strings.ToLower(field.Name)
-			case "version":
-				meta.IsVersion = true
-			case "ttl":
-				meta.IsTTL = true
-			case "created_at":
-				meta.IsCreatedAt = true
-			case "updated_at":
-				meta.IsUpdatedAt = true
-			case "set":
-				meta.IsSet = true
-			case "omitempty":
-				meta.OmitEmpty = true
-			case "binary", "json", "encrypted":
-				meta.Tags[part] = "true"
-			default:
-				return nil, fmt.Errorf("%w: unknown tag '%s'", errors.ErrInvalidTag, part)
-			}
-		}
+	if err := parseDynamormTag(meta, tag); err != nil {
+		return nil, err
 	}
 
 	// Validate field type for special tags
@@ -350,7 +407,138 @@ func parseFieldMetadata(field reflect.StructField, index int) (*FieldMetadata, e
 		return nil, err
 	}
 
+	if err := naming.ValidateAttrName(meta.DBName, convention); err != nil {
+		return nil, fmt.Errorf("%w: %v", errors.ErrInvalidTag, err)
+	}
+
 	return meta, nil
+}
+
+func applyImplicitTimestampTags(meta *FieldMetadata, field reflect.StructField) {
+	if !isTimeField(field.Type) {
+		return
+	}
+	if strings.EqualFold(field.Name, "CreatedAt") {
+		meta.IsCreatedAt = true
+	}
+	if strings.EqualFold(field.Name, "UpdatedAt") {
+		meta.IsUpdatedAt = true
+	}
+}
+
+func isTimeField(fieldType reflect.Type) bool {
+	return fieldType.Kind() == reflect.Struct &&
+		fieldType.PkgPath() == "time" &&
+		fieldType.Name() == "Time"
+}
+
+func parseDynamormTag(meta *FieldMetadata, tag string) error {
+	parts := splitTags(tag)
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		if err := applyTagPart(meta, part); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func applyTagPart(meta *FieldMetadata, part string) error {
+	if colonIdx := strings.Index(part, ":"); colonIdx > 0 {
+		key := part[:colonIdx]
+		value := strings.TrimSpace(part[colonIdx+1:])
+		return applyKeyValueTag(meta, key, value)
+	}
+	return applySimpleTag(meta, part)
+}
+
+func applyKeyValueTag(meta *FieldMetadata, key, value string) error {
+	switch key {
+	case "attr":
+		meta.DBName = value
+		return nil
+	case "index":
+		return parseIndexTag(meta, value)
+	case "lsi":
+		return parseLSITag(meta, value)
+	case "project":
+		meta.Tags["project"] = value
+		return nil
+	case tagEncrypted:
+		meta.Tags[tagEncrypted] = value
+		meta.IsEncrypted = true
+		return nil
+	default:
+		meta.Tags[key] = value
+		return nil
+	}
+}
+
+func applySimpleTag(meta *FieldMetadata, tag string) error {
+	switch tag {
+	case "pk":
+		meta.IsPK = true
+		return nil
+	case "sk":
+		meta.IsSK = true
+		return nil
+	case "version":
+		meta.IsVersion = true
+		return nil
+	case "ttl":
+		meta.IsTTL = true
+		return nil
+	case "created_at":
+		meta.IsCreatedAt = true
+		return nil
+	case "updated_at":
+		meta.IsUpdatedAt = true
+		return nil
+	case "set":
+		meta.IsSet = true
+		return nil
+	case "omitempty":
+		meta.OmitEmpty = true
+		return nil
+	case "binary", "json", tagEncrypted:
+		meta.Tags[tag] = tagValueTrue
+		if tag == tagEncrypted {
+			meta.IsEncrypted = true
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unknown tag '%s'", errors.ErrInvalidTag, tag)
+	}
+}
+
+func parseLSITag(meta *FieldMetadata, value string) error {
+	lsiParts := strings.Split(value, ",")
+	indexName := strings.TrimSpace(lsiParts[0])
+
+	role := IndexRole{IndexName: indexName}
+
+	if len(lsiParts) == 1 {
+		role.IsSK = true
+	} else {
+		for i := 1; i < len(lsiParts); i++ {
+			modifier := strings.TrimSpace(lsiParts[i])
+			switch modifier {
+			case "sk":
+				role.IsSK = true
+			default:
+				return fmt.Errorf("%w: unknown lsi tag modifier '%s'", errors.ErrInvalidTag, modifier)
+			}
+		}
+	}
+
+	meta.IndexInfo[indexName] = role
+	meta.Tags["lsi:"+indexName] = tagValueTrue
+	return nil
 }
 
 // parseIndexTag parses an index tag value
@@ -375,7 +563,7 @@ func parseIndexTag(meta *FieldMetadata, value string) error {
 			case "sk":
 				role.IsSK = true
 			case "sparse":
-				meta.Tags["sparse:"+indexName] = "true"
+				meta.Tags["sparse:"+indexName] = tagValueTrue
 			default:
 				return fmt.Errorf("%w: unknown index tag modifier '%s'", errors.ErrInvalidTag, part)
 			}
@@ -439,127 +627,96 @@ func getTableName(modelType reflect.Type) string {
 
 // determineIndexType determines if an index is GSI or LSI based on naming convention
 func determineIndexType(indexName string) IndexType {
-	if strings.HasPrefix(indexName, "lsi-") || strings.HasPrefix(indexName, "lsi:") {
+	if strings.HasPrefix(indexName, "lsi-") || strings.HasPrefix(indexName, "lsi_") {
 		return LocalSecondaryIndex
 	}
 	return GlobalSecondaryIndex
 }
 
-// splitTags splits struct tags while preserving index tag values that contain commas
+// splitTags splits struct tags while keeping index/LSI modifiers attached to the index tag
 func splitTags(tag string) []string {
-	var parts []string
+	tokens := strings.Split(tag, ",")
+	parts := make([]string, 0, len(tokens))
+
 	var current strings.Builder
-	inSpecialTag := false
+	inIndexClause := false
 
-	for i := 0; i < len(tag); i++ {
-		ch := tag[i]
+	flushCurrent := func() {
+		if current.Len() == 0 {
+			return
+		}
+		parts = append(parts, current.String())
+		current.Reset()
+		inIndexClause = false
+	}
 
-		if ch == ',' && !inSpecialTag {
-			if current.Len() > 0 {
-				parts = append(parts, current.String())
-				current.Reset()
+	for _, raw := range tokens {
+		part := strings.TrimSpace(raw)
+		if part == "" {
+			continue
+		}
+
+		if inIndexClause {
+			if isIndexModifier(part) {
+				current.WriteString(",")
+				current.WriteString(part)
+				continue
 			}
-		} else {
-			current.WriteByte(ch)
+			flushCurrent()
+		}
 
-			// Check if we're in a special tag that might contain commas
-			currentStr := current.String()
-			if strings.HasPrefix(currentStr, "index:") || strings.HasPrefix(currentStr, "lsi:") {
-				// We're in an index tag - need to check if we've reached the end
-				if ch == ',' && i+1 < len(tag) {
-					// Look ahead to see what follows the comma
-					remaining := tag[i+1:]
-					remaining = strings.TrimSpace(remaining)
+		if strings.HasPrefix(part, "index:") || strings.HasPrefix(part, "lsi:") {
+			inIndexClause = true
+			current.WriteString(part)
+			continue
+		}
 
-					// Check if the next part is a standalone tag (not an index modifier)
-					if isStandaloneTag(remaining) {
-						// This comma ends the index tag
-						parts = append(parts, current.String())
-						current.Reset()
-						inSpecialTag = false
-					} else {
-						// This comma is part of the index tag value
-						inSpecialTag = true
-					}
-				} else {
-					inSpecialTag = true
+		parts = append(parts, part)
+	}
+
+	flushCurrent()
+
+	return parts
+}
+
+// detectNamingConvention scans struct fields for a naming convention tag.
+// It looks for a field (typically blank identifier _) with tag `dynamorm:"naming:snake_case"`.
+// Returns CamelCase (default) if no naming tag is found.
+func detectNamingConvention(modelType reflect.Type) naming.Convention {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		tag := field.Tag.Get("dynamorm")
+
+		if tag == "" {
+			continue
+		}
+
+		// Look for naming:snake_case or naming:camel_case
+		parts := strings.Split(tag, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "naming:") {
+				convention := strings.TrimPrefix(part, "naming:")
+				switch convention {
+				case "snake_case":
+					return naming.SnakeCase
+				case "camel_case", "camelCase":
+					return naming.CamelCase
 				}
 			}
 		}
 	}
 
-	// Add the last part
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
+	// Default to CamelCase
+	return naming.CamelCase
 }
 
-// isStandaloneTag checks if the string starts with a standalone tag (not an index modifier)
-func isStandaloneTag(s string) bool {
-	// Check for simple tags
-	simpleTags := []string{
-		"pk", "sk", "version", "ttl", "created_at", "updated_at",
-		"set", "omitempty", "binary", "json", "encrypted",
-	}
-
-	for _, tag := range simpleTags {
-		if s == tag || strings.HasPrefix(s, tag+",") {
-			// But pk/sk after index: are modifiers, not standalone tags
-			if (tag == "pk" || tag == "sk") && !strings.Contains(s, ":") {
-				// This could be a modifier for the previous index tag
-				return false
-			}
-			return true
-		}
-	}
-
-	// Check for key:value tags
-	if strings.Contains(s, ":") {
-		colonIdx := strings.Index(s, ":")
-		key := s[:colonIdx]
-		knownKeys := []string{"attr", "index", "lsi", "project"}
-		for _, k := range knownKeys {
-			if key == k {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// getNextTagPart extracts the next tag part after current position
-func getNextTagPart(s string) string {
-	s = strings.TrimSpace(s)
-	commaIdx := strings.Index(s, ",")
-	colonIdx := strings.Index(s, ":")
-
-	if commaIdx == -1 {
-		return s
-	}
-	if colonIdx == -1 || colonIdx > commaIdx {
-		return s[:commaIdx]
-	}
-	return s[:colonIdx]
-}
-
-// isKnownSimpleTag checks if a string is a known simple tag
-func isKnownSimpleTag(s string) bool {
-	knownTags := []string{
-		"pk", "sk", "version", "ttl", "created_at", "updated_at",
-		"set", "omitempty", "binary", "json", "encrypted",
-	}
-	s = strings.TrimSpace(s)
-	for _, tag := range knownTags {
-		if s == tag {
-			return true
-		}
-	}
-	// Also check for known key:value tags
-	if strings.HasPrefix(s, "attr:") || strings.HasPrefix(s, "project:") {
+// isIndexModifier returns true if the token belongs to the current index/LSI clause
+func isIndexModifier(token string) bool {
+	switch token {
+	case "pk", "sk", "sparse":
 		return true
+	default:
+		return false
 	}
-	return false
 }

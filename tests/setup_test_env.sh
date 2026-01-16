@@ -6,6 +6,8 @@ set -e
 
 echo "Setting up DynamORM test environment..."
 
+DYNAMODB_LOCAL_IMAGE="${DYNAMODB_LOCAL_IMAGE:-amazon/dynamodb-local:3.1.0}"
+
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     echo "Error: Docker is required to run DynamoDB Local"
@@ -13,40 +15,49 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Check if DynamoDB Local is already running
-if docker ps | grep -q dynamodb-local; then
-    echo "DynamoDB Local is already running"
+# Check if DynamoDB Local container exists
+if docker ps -a | grep -q dynamodb-local; then
+    # Container exists, check if it's running
+    if docker ps | grep -q dynamodb-local; then
+        echo "DynamoDB Local is already running"
+    else
+        echo "Starting existing DynamoDB Local container..."
+        docker start dynamodb-local
+        echo "Waiting for DynamoDB Local to be ready..."
+        sleep 3
+    fi
 else
-    echo "Starting DynamoDB Local..."
+    # Container doesn't exist, create it
+    echo "Creating and starting DynamoDB Local..."
     docker run -d \
         --name dynamodb-local \
         -p 8000:8000 \
-        amazon/dynamodb-local \
+        "${DYNAMODB_LOCAL_IMAGE}" \
         -jar DynamoDBLocal.jar \
         -inMemory \
         -sharedDb
     
-    # Wait for DynamoDB to be ready
     echo "Waiting for DynamoDB Local to be ready..."
     sleep 5
-    
-    # Test connection
-    max_attempts=10
-    attempt=1
-    while [ $attempt -le $max_attempts ]; do
-        if curl -s http://localhost:8000 > /dev/null; then
-            echo "DynamoDB Local is ready!"
-            break
-        fi
-        echo "Waiting for DynamoDB Local... (attempt $attempt/$max_attempts)"
-        sleep 2
-        ((attempt++))
-    done
-    
-    if [ $attempt -gt $max_attempts ]; then
-        echo "Error: DynamoDB Local failed to start"
-        exit 1
+fi
+
+# Test connection to ensure it's accessible
+max_attempts=10
+attempt=1
+while [ $attempt -le $max_attempts ]; do
+    if curl -s http://localhost:8000 > /dev/null 2>&1; then
+        echo "DynamoDB Local is ready!"
+        break
     fi
+    echo "Waiting for DynamoDB Local... (attempt $attempt/$max_attempts)"
+    sleep 2
+    ((attempt++))
+done
+
+if [ $attempt -gt $max_attempts ]; then
+    echo "Error: DynamoDB Local failed to start or is not accessible"
+    echo "Try running: docker logs dynamodb-local"
+    exit 1
 fi
 
 # Export environment variables

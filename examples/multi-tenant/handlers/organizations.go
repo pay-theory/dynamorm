@@ -7,19 +7,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dynamorm/dynamorm"
-	"github.com/dynamorm/dynamorm/examples/multi-tenant/models"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
+	"github.com/pay-theory/dynamorm/examples/multi-tenant/models"
+	"github.com/pay-theory/dynamorm/pkg/core"
+	derrors "github.com/pay-theory/dynamorm/pkg/errors"
 )
 
 // OrganizationHandler handles organization-related requests
 type OrganizationHandler struct {
-	db *dynamorm.Client
+	db core.ExtendedDB
 }
 
 // NewOrganizationHandler creates a new organization handler
-func NewOrganizationHandler(db *dynamorm.Client) *OrganizationHandler {
+func NewOrganizationHandler(db core.ExtendedDB) *OrganizationHandler {
 	return &OrganizationHandler{db: db}
 }
 
@@ -51,6 +53,18 @@ func (h *OrganizationHandler) CreateOrganization(w http.ResponseWriter, r *http.
 
 	// Get plan limits based on plan type
 	limits := getPlanLimits(req.Plan)
+
+	// Check if slug exists
+	var existing models.Organization
+	if err := h.db.Model(&models.Organization{}).
+		Where("Slug", "=", req.Slug).
+		First(&existing); err == nil {
+		http.Error(w, "organization with this slug already exists", http.StatusConflict)
+		return
+	} else if err != derrors.ErrItemNotFound {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// Create organization
 	org := &models.Organization{
@@ -108,7 +122,7 @@ func (h *OrganizationHandler) CreateOrganization(w http.ResponseWriter, r *http.
 	if err := h.db.Model(owner).Create(); err != nil {
 		// Rollback organization creation
 		h.db.Model(org).Delete()
-		http.Error(w, "failed to create owner user", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to create owner user: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -142,7 +156,7 @@ func (h *OrganizationHandler) GetOrganization(w http.ResponseWriter, r *http.Req
 	if err := h.db.Model(&models.Organization{}).
 		Where("ID", "=", orgID).
 		First(&org); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "organization not found", http.StatusNotFound)
 			return
 		}
@@ -176,7 +190,7 @@ func (h *OrganizationHandler) UpdateOrganizationSettings(w http.ResponseWriter, 
 	if err := h.db.Model(&models.Organization{}).
 		Where("ID", "=", orgID).
 		First(&org); err != nil {
-		if err == dynamorm.ErrNotFound {
+		if err == derrors.ErrItemNotFound {
 			http.Error(w, "organization not found", http.StatusNotFound)
 			return
 		}
@@ -303,7 +317,7 @@ func (h *OrganizationHandler) logAuditEvent(orgID, userID, action, resourceType,
 		Changes:      changes,
 		Success:      success,
 		ErrorMessage: errorMsg,
-		TTL:          time.Now().AddDate(0, 3, 0), // 90 days retention
+		TTL:          time.Now().AddDate(0, 3, 0).Unix(), // 90 days retention
 	}
 
 	// Best effort - don't fail the main operation if audit fails

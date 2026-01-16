@@ -122,7 +122,9 @@ func TestNewSession(t *testing.T) {
 			// Verify that region option is not added when empty
 			for _, opt := range opts {
 				loadOpts := &config.LoadOptions{}
-				opt(loadOpts)
+				if err := opt(loadOpts); err != nil {
+					t.Fatalf("unexpected error applying config option: %v", err)
+				}
 			}
 			return aws.Config{}, nil
 		}
@@ -176,7 +178,9 @@ func TestNewSession(t *testing.T) {
 		configLoadFunc = func(ctx context.Context, opts ...func(*config.LoadOptions) error) (aws.Config, error) {
 			loadOpts := &config.LoadOptions{}
 			for _, opt := range opts {
-				opt(loadOpts)
+				if err := opt(loadOpts); err != nil {
+					t.Fatalf("unexpected error applying config option: %v", err)
+				}
 			}
 			return aws.Config{Region: loadOpts.Region}, nil
 		}
@@ -237,7 +241,8 @@ func TestSession_Getters(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("Client", func(t *testing.T) {
-		client := sess.Client()
+		client, err := sess.Client()
+		assert.NoError(t, err)
 		assert.NotNil(t, client)
 		assert.IsType(t, &dynamodb.Client{}, client)
 	})
@@ -304,7 +309,9 @@ func TestSessionIntegration(t *testing.T) {
 		assert.NotNil(t, sess)
 
 		// Verify all getters work correctly
-		assert.NotNil(t, sess.Client())
+		client, err := sess.Client()
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
 		assert.Equal(t, cfg, sess.Config())
 		assert.Equal(t, "us-west-2", sess.AWSConfig().Region)
 
@@ -329,7 +336,9 @@ func TestSessionIntegration(t *testing.T) {
 		configLoadFunc = func(ctx context.Context, opts ...func(*config.LoadOptions) error) (aws.Config, error) {
 			loadOpts := &config.LoadOptions{}
 			for _, opt := range opts {
-				opt(loadOpts)
+				if err := opt(loadOpts); err != nil {
+					t.Fatalf("unexpected error applying config option: %v", err)
+				}
 			}
 			return aws.Config{}, nil
 		}
@@ -388,7 +397,9 @@ func BenchmarkSessionGetters(b *testing.B) {
 
 	b.Run("Client", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = sess.Client()
+			if _, err := sess.Client(); err != nil {
+				b.Fatal(err)
+			}
 		}
 	})
 

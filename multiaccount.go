@@ -3,8 +3,12 @@ package dynamorm
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
 
@@ -19,10 +24,10 @@ import (
 type MultiAccountDB struct {
 	baseDB        *LambdaDB
 	accounts      map[string]AccountConfig
-	cache         *sync.Map // Cache DB connections per account
-	baseConfig    aws.Config
+	cache         *sync.Map
 	refreshTicker *time.Ticker
 	refreshStop   chan struct{}
+	baseConfig    aws.Config
 	mu            sync.RWMutex
 }
 
@@ -212,8 +217,15 @@ func (mdb *MultiAccountDB) refreshExpiredCredentials() {
 	now := time.Now()
 
 	mdb.cache.Range(func(key, value any) bool {
-		partnerID := key.(string)
-		entry := value.(*cacheEntry)
+		partnerID, ok := key.(string)
+		if !ok {
+			return true
+		}
+
+		entry, ok := value.(*cacheEntry)
+		if !ok || entry == nil {
+			return true
+		}
 
 		// Check if credentials are about to expire
 		if now.After(entry.expiry.Add(-10 * time.Minute)) {
@@ -221,8 +233,15 @@ func (mdb *MultiAccountDB) refreshExpiredCredentials() {
 			go func() {
 				_, err := mdb.createPartnerDB(partnerID, entry.accountCfg)
 				if err != nil {
-					// Log error but don't fail - next request will retry
-					fmt.Printf("Failed to refresh credentials for partner %s: %v\n", partnerID, err)
+					// SECURITY: Log without exposing sensitive credential details
+					// Generate operation ID for correlation
+					opID := generateOperationID()
+
+					// Log detailed error internally for debugging (sanitized)
+					log.Printf("Credential refresh failed: operation_id=%s partner_id=%s",
+						opID, sanitizePartnerID(partnerID))
+
+					// Don't expose internal error details in logs
 				}
 			}()
 		}
@@ -282,3 +301,56 @@ func GetPartnerFromContext(ctx context.Context) string {
 }
 
 type partnerContextKey struct{}
+
+// Security helper functions for safe logging
+
+// generateOperationID generates a unique operation ID for error correlation
+func generateOperationID() string {
+	bytes := make([]byte, 8)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to timestamp if crypto/rand fails
+		return fmt.Sprintf("op_%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("op_%s", hex.EncodeToString(bytes))
+}
+
+// sanitizePartnerID removes or masks sensitive information from partner IDs
+func sanitizePartnerID(partnerID string) string {
+	if partnerID == "" {
+		return "[empty]"
+	}
+
+	// If it looks like an AWS account ID (12 digits), mask it
+	if len(partnerID) == 12 && isNumeric(partnerID) {
+		return partnerID[:4] + "****" + partnerID[8:]
+	}
+
+	// If it contains sensitive patterns, mask them
+	if strings.Contains(strings.ToLower(partnerID), "arn:aws") {
+		return "[masked_arn]"
+	}
+
+	// For other cases, limit length and remove special characters
+	cleaned := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return -1
+	}, partnerID)
+
+	if len(cleaned) > 20 {
+		return cleaned[:20] + "..."
+	}
+
+	return cleaned
+}
+
+// isNumeric checks if a string contains only digits
+func isNumeric(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}

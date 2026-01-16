@@ -27,42 +27,42 @@ type QueryRequest struct {
 	StartDate  string `json:"start_date,omitempty"`
 	EndDate    string `json:"end_date,omitempty"`
 	CustomerID string `json:"customer_id,omitempty"`
+	Cursor     string `json:"cursor,omitempty"`
 	MinAmount  int64  `json:"min_amount,omitempty"`
 	MaxAmount  int64  `json:"max_amount,omitempty"`
 	Limit      int    `json:"limit,omitempty"`
-	Cursor     string `json:"cursor,omitempty"`
 }
 
 // QueryResponse represents the paginated response
 type QueryResponse struct {
-	Payments   []*payment.Payment `json:"payments"`
 	NextCursor string             `json:"next_cursor,omitempty"`
+	Payments   []*payment.Payment `json:"payments"`
 	Total      int                `json:"total"`
 	HasMore    bool               `json:"has_more"`
 }
 
 // PaymentSummary provides aggregated statistics
 type PaymentSummary struct {
-	TotalAmount   int64            `json:"total_amount"`
-	TotalCount    int              `json:"total_count"`
 	ByStatus      map[string]int   `json:"by_status"`
 	ByCurrency    map[string]int64 `json:"by_currency"`
+	TotalAmount   int64            `json:"total_amount"`
+	TotalCount    int              `json:"total_count"`
 	AverageAmount int64            `json:"average_amount"`
 }
 
 // ExportJob represents an export job in the queue
 type ExportJob struct {
+	CreatedAt  time.Time              `dynamorm:"created_at" json:"created_at"`
+	UpdatedAt  time.Time              `dynamorm:"updated_at" json:"updated_at"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 	ID         string                 `dynamorm:"pk" json:"id"`
 	MerchantID string                 `dynamorm:"index:gsi-merchant,pk" json:"merchant_id"`
 	Status     string                 `dynamorm:"index:gsi-status,pk" json:"status"`
-	Query      QueryRequest           `json:"query"`
-	Format     string                 `json:"format"` // csv, json
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Format     string                 `json:"format"`
 	ResultURL  string                 `json:"result_url,omitempty"`
 	Error      string                 `json:"error,omitempty"`
-	CreatedAt  time.Time              `dynamorm:"created_at" json:"created_at"`
-	UpdatedAt  time.Time              `dynamorm:"updated_at" json:"updated_at"`
-	ExpiresAt  time.Time              `dynamorm:"ttl" json:"expires_at"`
+	Query      QueryRequest           `json:"query"`
+	ExpiresAt  int64                  `dynamorm:"ttl" json:"expires_at"`
 }
 
 // QueryHandler handles payment query requests
@@ -296,7 +296,7 @@ func (h *QueryHandler) exportPayments(_ context.Context, merchantID string, req 
 		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(7 * 24 * time.Hour), // Expire after 7 days
+		ExpiresAt: time.Now().Add(7 * 24 * time.Hour).Unix(), // Expire after 7 days (Unix timestamp)
 	}
 
 	// Save export job to DynamoDB

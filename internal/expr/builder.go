@@ -3,10 +3,14 @@ package expr
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	dynamormErrors "github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/validation"
 )
 
 // Reserved words in DynamoDB that need to be escaped
@@ -128,31 +132,52 @@ var reservedWords = map[string]bool{
 	"WRITE": true, "YEAR": true, "ZONE": true,
 }
 
-// Builder compiles expressions for DynamoDB operations
-type Builder struct {
-	// Expression components
-	keyConditions     []string
-	filterConditions  []string
-	updateExpressions map[string][]string // SET, ADD, REMOVE, DELETE
-	conditions        []string
-	projections       []string
-	filterOperators   []string // "AND", "OR"
-
-	// Attribute mappings
-	names  map[string]string
-	values map[string]types.AttributeValue
-
-	// Counters for placeholder generation
-	nameCounter  int
-	valueCounter int
+// CustomConverter defines the interface for custom type converters
+// This matches the interface in pkg/types to avoid circular dependencies
+type CustomConverter interface {
+	ToAttributeValue(value any) (types.AttributeValue, error)
+	FromAttributeValue(av types.AttributeValue, target any) error
 }
 
-// NewBuilder creates a new expression builder
+// ConverterLookup provides access to registered custom converters
+type ConverterLookup interface {
+	HasCustomConverter(typ reflect.Type) bool
+	ToAttributeValue(value any) (types.AttributeValue, error)
+}
+
+// Builder compiles expressions for DynamoDB operations
+type Builder struct {
+	converter          ConverterLookup
+	updateExpressions  map[string][]string
+	names              map[string]string
+	values             map[string]types.AttributeValue
+	keyConditions      []string
+	filterConditions   []string
+	conditions         []string
+	projections        []string
+	filterOperators    []string
+	conditionOperators []string
+	nameCounter        int
+	valueCounter       int
+}
+
+// NewBuilder creates a new expression builder without custom converter support
 func NewBuilder() *Builder {
 	return &Builder{
 		names:             make(map[string]string),
 		values:            make(map[string]types.AttributeValue),
 		updateExpressions: make(map[string][]string),
+		converter:         nil,
+	}
+}
+
+// NewBuilderWithConverter creates a new expression builder with custom converter support
+func NewBuilderWithConverter(converter ConverterLookup) *Builder {
+	return &Builder{
+		names:             make(map[string]string),
+		values:            make(map[string]types.AttributeValue),
+		updateExpressions: make(map[string][]string),
+		converter:         converter,
 	}
 }
 
@@ -200,48 +225,160 @@ func (b *Builder) AddGroupFilter(logicalOp string, components ExpressionComponen
 // AddProjection adds fields to the projection expression
 func (b *Builder) AddProjection(fields ...string) {
 	for _, field := range fields {
-		nameRef := b.addName(field)
+		nameRef := b.addNameSecure(field)
 		b.projections = append(b.projections, nameRef)
 	}
 }
 
+func parseListIndexOperation(field string) (fieldName string, index int, ok bool, err error) {
+	if !strings.Contains(field, "[") || !strings.HasSuffix(field, "]") {
+		return "", 0, false, nil
+	}
+
+	openBracket := strings.LastIndex(field, "[")
+	if openBracket <= 0 || openBracket >= len(field)-1 {
+		return "", 0, false, &validation.SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "invalid list index syntax",
+		}
+	}
+
+	fieldName = field[:openBracket]
+	indexPart := field[openBracket+1 : len(field)-1]
+	if indexPart == "" {
+		return "", 0, false, &validation.SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "list index cannot be empty",
+		}
+	}
+
+	for _, r := range indexPart {
+		if r < '0' || r > '9' {
+			return "", 0, false, &validation.SecurityError{
+				Type:   "InvalidField",
+				Field:  "",
+				Detail: "list index must be numeric",
+			}
+		}
+	}
+
+	parsedIndex, convErr := strconv.Atoi(indexPart)
+	if convErr != nil || parsedIndex < 0 {
+		return "", 0, false, &validation.SecurityError{
+			Type:   "InvalidField",
+			Field:  "",
+			Detail: "list index out of range",
+		}
+	}
+
+	return fieldName, parsedIndex, true, nil
+}
+
 // AddUpdateSet adds a SET update expression
-func (b *Builder) AddUpdateSet(field string, value any) {
-	nameRef := b.addName(field)
-	valueRef := b.addValue(value)
+func (b *Builder) AddUpdateSet(field string, value any) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
+	// Check if this is a list index operation (e.g., "field[1]")
+	fieldName, index, ok, err := parseListIndexOperation(field)
+	if err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+	if ok {
+		nameRef := b.addNameSecure(fieldName)
+		valueRef, addErr := b.addValueSecure(value)
+		if addErr != nil {
+			return addErr
+		}
+		expr := fmt.Sprintf("%s[%d] = %s", nameRef, index, valueRef)
+		b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
+		return nil
+	}
+
+	// Standard field set
+	nameRef := b.addNameSecure(field)
+	valueRef, err := b.addValueSecure(value)
+	if err != nil {
+		return err
+	}
 	expr := fmt.Sprintf("%s = %s", nameRef, valueRef)
 	b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
+	return nil
 }
 
 // AddUpdateAdd adds an ADD update expression (for numeric increment)
-func (b *Builder) AddUpdateAdd(field string, value any) {
-	nameRef := b.addName(field)
-	valueRef := b.addValue(value)
+func (b *Builder) AddUpdateAdd(field string, value any) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
+	nameRef := b.addNameSecure(field)
+	valueRef, err := b.addValueSecure(value)
+	if err != nil {
+		return err
+	}
 	expr := fmt.Sprintf("%s %s", nameRef, valueRef)
 	b.updateExpressions["ADD"] = append(b.updateExpressions["ADD"], expr)
+	return nil
 }
 
 // AddUpdateRemove adds a REMOVE update expression
-func (b *Builder) AddUpdateRemove(field string) {
-	nameRef := b.addName(field)
+func (b *Builder) AddUpdateRemove(field string) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
+	fieldName, index, ok, err := parseListIndexOperation(field)
+	if err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+	if ok {
+		nameRef := b.addNameSecure(fieldName)
+		expression := fmt.Sprintf("%s[%d]", nameRef, index)
+		b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], expression)
+		return nil
+	}
+
+	// Standard field removal
+	nameRef := b.addNameSecure(field)
 	b.updateExpressions["REMOVE"] = append(b.updateExpressions["REMOVE"], nameRef)
+	return nil
 }
 
 // AddUpdateDelete adds a DELETE update expression (for removing elements from a set)
-func (b *Builder) AddUpdateDelete(field string, value any) {
-	nameRef := b.addName(field)
-	valueRef := b.addValue(value)
+func (b *Builder) AddUpdateDelete(field string, value any) error {
+	if err := validation.ValidateFieldName(field); err != nil {
+		return fmt.Errorf("invalid field name: %w", err)
+	}
+
+	nameRef := b.addNameSecure(field)
+	valueRef, err := b.addValueAsSet(value)
+	if err != nil {
+		return err
+	}
 	expr := fmt.Sprintf("%s %s", nameRef, valueRef)
 	b.updateExpressions["DELETE"] = append(b.updateExpressions["DELETE"], expr)
+	return nil
 }
 
-// AddConditionExpression adds a condition for conditional updates
+// AddConditionExpression adds a condition for conditional updates (defaults to AND)
 func (b *Builder) AddConditionExpression(field string, operator string, value any) error {
+	return b.AddConditionExpressionWithOp("AND", field, operator, value)
+}
+
+// AddConditionExpressionWithOp adds a condition with a specific logical operator
+func (b *Builder) AddConditionExpressionWithOp(logicalOp, field, operator string, value any) error {
 	expr, err := b.buildCondition(field, operator, value)
 	if err != nil {
 		return err
 	}
 	b.conditions = append(b.conditions, expr)
+	if len(b.conditions) > 1 {
+		b.conditionOperators = append(b.conditionOperators, logicalOp)
+	}
 	return nil
 }
 
@@ -287,93 +424,210 @@ func (b *Builder) Build() ExpressionComponents {
 
 	// Build condition expression
 	if len(b.conditions) > 0 {
-		components.ConditionExpression = strings.Join(b.conditions, " AND ")
+		var builtExpr strings.Builder
+		builtExpr.WriteString(b.conditions[0])
+		for i := 1; i < len(b.conditions); i++ {
+			// The operator at i-1 links condition i-1 and condition i
+			if i-1 < len(b.conditionOperators) {
+				builtExpr.WriteString(" " + b.conditionOperators[i-1] + " ")
+			} else {
+				builtExpr.WriteString(" AND ") // Fallback
+			}
+			builtExpr.WriteString(b.conditions[i])
+		}
+		components.ConditionExpression = builtExpr.String()
 	}
 
 	return components
 }
 
-// buildCondition builds a single condition expression
+// ResetConditions clears the conditions list (used for splitting logic)
+func (b *Builder) ResetConditions() {
+	b.conditions = nil
+	b.conditionOperators = nil
+}
+
+// Clone creates a deep copy of the builder so additional expressions can be
+func (b *Builder) Clone() *Builder {
+	if b == nil {
+		return NewBuilder()
+	}
+
+	clone := NewBuilder()
+	clone.nameCounter = b.nameCounter
+	clone.valueCounter = b.valueCounter
+
+	clone.keyConditions = append(clone.keyConditions, b.keyConditions...)
+	clone.filterConditions = append(clone.filterConditions, b.filterConditions...)
+	clone.filterOperators = append(clone.filterOperators, b.filterOperators...)
+	clone.projections = append(clone.projections, b.projections...)
+	clone.conditions = append(clone.conditions, b.conditions...)
+	clone.conditionOperators = append(clone.conditionOperators, b.conditionOperators...)
+
+	clone.names = make(map[string]string, len(b.names))
+	for k, v := range b.names {
+		clone.names[k] = v
+	}
+
+	clone.values = make(map[string]types.AttributeValue, len(b.values))
+	for k, v := range b.values {
+		clone.values[k] = v
+	}
+
+	clone.updateExpressions = make(map[string][]string, len(b.updateExpressions))
+	for action, exprs := range b.updateExpressions {
+		clone.updateExpressions[action] = append(clone.updateExpressions[action], exprs...)
+	}
+
+	clone.nameCounter = b.nameCounter
+	clone.valueCounter = b.valueCounter
+
+	// Preserve custom converter reference
+	clone.converter = b.converter
+
+	return clone
+}
+
+// buildCondition builds a single condition expression with security validation
 func (b *Builder) buildCondition(field string, operator string, value any) (string, error) {
-	nameRef := b.addName(field)
+	// SECURITY: Validate all inputs before processing
+	if err := validation.ValidateFieldName(field); err != nil {
+		// SECURITY: Log validation failure without exposing field name
+		return "", fmt.Errorf("invalid field name: %w", err)
+	}
+
+	if err := validation.ValidateOperator(operator); err != nil {
+		// SECURITY: Log validation failure without exposing operator
+		return "", fmt.Errorf("invalid operator: %w", err)
+	}
+
+	if err := validation.ValidateValue(value); err != nil {
+		// SECURITY: Log validation failure without exposing value
+		return "", fmt.Errorf("invalid value: %w", err)
+	}
+
+	// Use ONLY parameterized expressions - no direct string interpolation
+	nameRef := b.addNameSecure(field)
 
 	switch strings.ToUpper(operator) {
 	case "=", "EQ":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s = %s", nameRef, valueRef), nil
 
 	case "!=", "<>", "NE":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s <> %s", nameRef, valueRef), nil
 
 	case "<", "LT":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s < %s", nameRef, valueRef), nil
 
 	case "<=", "LE":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s <= %s", nameRef, valueRef), nil
 
 	case ">", "GT":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s > %s", nameRef, valueRef), nil
 
 	case ">=", "GE":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s >= %s", nameRef, valueRef), nil
 
 	case "BETWEEN":
 		// Value should be []any with two elements
 		values, ok := value.([]any)
 		if !ok || len(values) != 2 {
-			return "", errors.New("BETWEEN operator requires two values")
+			return "", &validation.SecurityError{
+				Type:   "InvalidValue",
+				Field:  "between_values",
+				Detail: "BETWEEN operator requires exactly two values",
+			}
 		}
-		valueRef1 := b.addValue(values[0])
-		valueRef2 := b.addValue(values[1])
+		valueRef1, err := b.addValueSecure(values[0])
+		if err != nil {
+			return "", err
+		}
+		valueRef2, err := b.addValueSecure(values[1])
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("%s BETWEEN %s AND %s", nameRef, valueRef1, valueRef2), nil
 
 	case "IN":
 		// Value should be a slice
-		values, err := b.convertToSlice(value)
+		values, err := b.convertToSliceSecure(value)
 		if err != nil {
 			return "", err
 		}
 		if len(values) > 100 {
-			return "", errors.New("IN operator supports maximum 100 values")
+			return "", &validation.SecurityError{
+				Type:   "InvalidValue",
+				Field:  "in_values",
+				Detail: "IN operator supports maximum 100 values",
+			}
 		}
 		var valueRefs []string
 		for _, v := range values {
-			valueRefs = append(valueRefs, b.addValue(v))
+			valueRef, err := b.addValueSecure(v)
+			if err != nil {
+				return "", err
+			}
+			valueRefs = append(valueRefs, valueRef)
 		}
 		return fmt.Sprintf("%s IN (%s)", nameRef, strings.Join(valueRefs, ", ")), nil
 
 	case "BEGINS_WITH":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("begins_with(%s, %s)", nameRef, valueRef), nil
 
 	case "CONTAINS":
-		valueRef := b.addValue(value)
+		valueRef, err := b.addValueSecure(value)
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("contains(%s, %s)", nameRef, valueRef), nil
 
-	case "EXISTS":
+	case "EXISTS", "ATTRIBUTE_EXISTS":
 		return fmt.Sprintf("attribute_exists(%s)", nameRef), nil
 
-	case "NOT_EXISTS":
-		return fmt.Sprintf("attribute_not_exists(%s)", nameRef), nil
-
-	case "ATTRIBUTE_EXISTS":
-		return fmt.Sprintf("attribute_exists(%s)", nameRef), nil
-
-	case "ATTRIBUTE_NOT_EXISTS":
+	case "NOT_EXISTS", "ATTRIBUTE_NOT_EXISTS":
 		return fmt.Sprintf("attribute_not_exists(%s)", nameRef), nil
 
 	default:
-		return "", fmt.Errorf("%w: %s", dynamormErrors.ErrInvalidOperator, operator)
+		return "", fmt.Errorf("%w: unsupported operator", dynamormErrors.ErrInvalidOperator)
 	}
 }
 
-// addName adds an attribute name and returns its placeholder
-func (b *Builder) addName(name string) string {
+// addNameSecure adds an attribute name with security validation
+func (b *Builder) addNameSecure(name string) string {
+	// Additional security check
+	if err := validation.ValidateFieldName(name); err != nil {
+		// SECURITY: Return safe placeholder without logging field name
+		return "#invalid"
+	}
+
 	// Check if already added
 	for placeholder, attrName := range b.names {
 		if attrName == name {
@@ -381,28 +635,25 @@ func (b *Builder) addName(name string) string {
 		}
 	}
 
-	// Check if it's a reserved word
-	if b.isReservedWord(name) {
-		// Always use placeholder for reserved words
-		b.nameCounter++
-		placeholder := fmt.Sprintf("#%s", strings.ToUpper(name))
-		b.names[placeholder] = name
-		return placeholder
-	}
-
-	// For nested attributes, process each part
+	// For nested attributes, process each part securely
 	if strings.Contains(name, ".") {
 		parts := strings.Split(name, ".")
 		processedParts := make([]string, len(parts))
 
 		for i, part := range parts {
+			// Validate each part
+			if err := validation.ValidateFieldName(part); err != nil {
+				// SECURITY: Return safe placeholder without logging details
+				return "#invalid"
+			}
+
 			if b.isReservedWord(part) {
 				b.nameCounter++
 				placeholder := fmt.Sprintf("#%s", strings.ToUpper(part))
 				b.names[placeholder] = part
 				processedParts[i] = placeholder
 			} else {
-				// Check if we need a placeholder for consistency
+				// Use placeholder for consistency and security
 				b.nameCounter++
 				placeholder := fmt.Sprintf("#n%d", b.nameCounter)
 				b.names[placeholder] = part
@@ -413,7 +664,15 @@ func (b *Builder) addName(name string) string {
 		return strings.Join(processedParts, ".")
 	}
 
-	// Generate new placeholder
+	// Check if it's a reserved word
+	if b.isReservedWord(name) {
+		b.nameCounter++
+		placeholder := fmt.Sprintf("#%s", strings.ToUpper(name))
+		b.names[placeholder] = name
+		return placeholder
+	}
+
+	// Generate new placeholder for non-reserved words (for consistency)
 	b.nameCounter++
 	placeholder := fmt.Sprintf("#n%d", b.nameCounter)
 	b.names[placeholder] = name
@@ -425,31 +684,63 @@ func (b *Builder) isReservedWord(word string) bool {
 	return reservedWords[strings.ToUpper(word)]
 }
 
-// addValue adds an attribute value and returns its placeholder
-func (b *Builder) addValue(value any) string {
-	b.valueCounter++
-	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
-
-	// Convert value to AttributeValue
-	av, err := ConvertToAttributeValue(value)
-	if err != nil {
-		// For now, store as string
-		av = &types.AttributeValueMemberS{Value: fmt.Sprintf("%v", value)}
+// addValueSecure adds an attribute value with security validation.
+//
+// High-risk domain rule: this must never panic. Validation/conversion failures must surface as errors.
+func (b *Builder) addValueSecure(value any) (string, error) {
+	// CRITICAL: Check for custom converter FIRST, before security validation.
+	// Custom converters handle their own validation and marshaling.
+	if b.converter != nil && value != nil {
+		valueType := reflect.TypeOf(value)
+		if b.converter.HasCustomConverter(valueType) {
+			av, err := b.converter.ToAttributeValue(value)
+			if err != nil {
+				return "", fmt.Errorf("custom converter failed for %T: %w", value, err)
+			}
+			b.valueCounter++
+			placeholder := fmt.Sprintf(":v%d", b.valueCounter)
+			b.values[placeholder] = av
+			return placeholder, nil
+		}
 	}
 
+	av, err := ConvertToAttributeValueSecure(value)
+	if err != nil {
+		return "", fmt.Errorf("failed to convert value type %T: %w", value, err)
+	}
+
+	b.valueCounter++
+	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
 	b.values[placeholder] = av
-	return placeholder
+	return placeholder, nil
 }
 
-// convertToSlice converts various slice types to []any
-func (b *Builder) convertToSlice(value any) ([]any, error) {
+// convertToSliceSecure converts various slice types to []any with validation
+func (b *Builder) convertToSliceSecure(value any) ([]any, error) {
 	switch v := value.(type) {
 	case []any:
+		// Validate each element
+		for _, item := range v {
+			if err := validation.ValidateValue(item); err != nil {
+				return nil, &validation.SecurityError{
+					Type:   "InvalidValue",
+					Field:  "",
+					Detail: "invalid slice item",
+				}
+			}
+		}
 		return v, nil
 	case []string:
 		result := make([]any, len(v))
-		for i, s := range v {
-			result[i] = s
+		for idx, s := range v {
+			if err := validation.ValidateValue(s); err != nil {
+				return nil, &validation.SecurityError{
+					Type:   "InvalidValue",
+					Field:  "",
+					Detail: "invalid string item",
+				}
+			}
+			result[idx] = s
 		}
 		return result, nil
 	case []int:
@@ -459,24 +750,39 @@ func (b *Builder) convertToSlice(value any) ([]any, error) {
 		}
 		return result, nil
 	default:
-		return nil, errors.New("value must be a slice for IN operator")
+		return nil, &validation.SecurityError{
+			Type:   "InvalidValue",
+			Field:  "slice_conversion",
+			Detail: "value must be a slice for IN operator",
+		}
 	}
+}
+
+// ConvertToAttributeValueSecure converts a value to AttributeValue with security checks
+func ConvertToAttributeValueSecure(value any) (types.AttributeValue, error) {
+	// First validate the value
+	if err := validation.ValidateValue(value); err != nil {
+		return nil, fmt.Errorf("security validation failed: %w", err)
+	}
+
+	// Then use the existing conversion logic
+	return ConvertToAttributeValue(value)
 }
 
 // ExpressionComponents holds all expression components
 type ExpressionComponents struct {
+	ExpressionAttributeNames  map[string]string
+	ExpressionAttributeValues map[string]types.AttributeValue
 	KeyConditionExpression    string
 	FilterExpression          string
 	ProjectionExpression      string
 	UpdateExpression          string
 	ConditionExpression       string
-	ExpressionAttributeNames  map[string]string
-	ExpressionAttributeValues map[string]types.AttributeValue
 }
 
 // AddAdvancedFunction adds support for DynamoDB functions
 func (b *Builder) AddAdvancedFunction(function string, field string, args ...any) (string, error) {
-	nameRef := b.addName(field)
+	nameRef := b.addNameSecure(field)
 
 	switch strings.ToLower(function) {
 	case "size":
@@ -486,7 +792,10 @@ func (b *Builder) AddAdvancedFunction(function string, field string, args ...any
 		if len(args) != 1 {
 			return "", errors.New("attribute_type requires one argument (type)")
 		}
-		valueRef := b.addValue(args[0])
+		valueRef, err := b.addValueSecure(args[0])
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("attribute_type(%s, %s)", nameRef, valueRef), nil
 
 	case "attribute_exists":
@@ -499,17 +808,20 @@ func (b *Builder) AddAdvancedFunction(function string, field string, args ...any
 		if len(args) != 1 {
 			return "", errors.New("list_append requires one argument (value to append)")
 		}
-		valueRef := b.addValue(args[0])
+		valueRef, err := b.addValueSecure(args[0])
+		if err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("list_append(%s, %s)", nameRef, valueRef), nil
 
 	default:
-		return "", fmt.Errorf("unsupported function: %s", function)
+		return "", fmt.Errorf("unsupported function")
 	}
 }
 
 // AddUpdateFunction adds a function-based update expression (e.g., list_append)
 func (b *Builder) AddUpdateFunction(field string, function string, args ...any) error {
-	nameRef := b.addName(field)
+	nameRef := b.addNameSecure(field)
 
 	switch function {
 	case "list_append":
@@ -521,16 +833,28 @@ func (b *Builder) AddUpdateFunction(field string, function string, args ...any) 
 		var expr string
 		if args[0] == field {
 			// list_append(field, value) - append to end
-			valueRef := b.addValue(args[1])
+			valueRef, err := b.addValueSecure(args[1])
+			if err != nil {
+				return err
+			}
 			expr = fmt.Sprintf("%s = list_append(%s, %s)", nameRef, nameRef, valueRef)
 		} else if args[1] == field {
 			// list_append(value, field) - prepend to beginning
-			valueRef := b.addValue(args[0])
+			valueRef, err := b.addValueSecure(args[0])
+			if err != nil {
+				return err
+			}
 			expr = fmt.Sprintf("%s = list_append(%s, %s)", nameRef, valueRef, nameRef)
 		} else {
 			// Both arguments are values (for merging two lists)
-			valueRef1 := b.addValue(args[0])
-			valueRef2 := b.addValue(args[1])
+			valueRef1, err := b.addValueSecure(args[0])
+			if err != nil {
+				return err
+			}
+			valueRef2, err := b.addValueSecure(args[1])
+			if err != nil {
+				return err
+			}
 			expr = fmt.Sprintf("%s = list_append(%s, %s)", nameRef, valueRef1, valueRef2)
 		}
 
@@ -543,12 +867,119 @@ func (b *Builder) AddUpdateFunction(field string, function string, args ...any) 
 		}
 
 		// if_not_exists(field, default_value)
-		defaultRef := b.addValue(args[1])
+		defaultRef, err := b.addValueSecure(args[1])
+		if err != nil {
+			return err
+		}
 		expr := fmt.Sprintf("%s = if_not_exists(%s, %s)", nameRef, nameRef, defaultRef)
 		b.updateExpressions["SET"] = append(b.updateExpressions["SET"], expr)
 		return nil
 
 	default:
-		return fmt.Errorf("unsupported update function: %s", function)
+		return fmt.Errorf("unsupported update function")
 	}
+}
+
+// addValueAsSet adds an attribute value specifically as a DynamoDB set
+func (b *Builder) addValueAsSet(value any) (string, error) {
+	av, err := b.convertToSetAttributeValue(value)
+	if err != nil {
+		return "", err
+	}
+
+	b.valueCounter++
+	placeholder := fmt.Sprintf(":v%d", b.valueCounter)
+	b.values[placeholder] = av
+	return placeholder, nil
+}
+
+// convertToSetAttributeValue converts a value to a DynamoDB set AttributeValue
+func (b *Builder) convertToSetAttributeValue(value any) (types.AttributeValue, error) {
+	// First validate the value
+	if err := validation.ValidateValue(value); err != nil {
+		return nil, fmt.Errorf("security validation failed: %w", err)
+	}
+
+	// Handle direct string slice case first
+	if strSlice, ok := value.([]string); ok {
+		if len(strSlice) == 0 {
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		}
+		return &types.AttributeValueMemberSS{Value: strSlice}, nil
+	}
+
+	// Handle direct []any case
+	if anySlice, ok := value.([]any); ok {
+		if len(anySlice) == 0 {
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		}
+		// Convert []any to appropriate set type based on first element
+		if len(anySlice) > 0 {
+			switch anySlice[0].(type) {
+			case string:
+				strSet := make([]string, len(anySlice))
+				for i, v := range anySlice {
+					if s, ok := v.(string); ok {
+						strSet[i] = s
+					} else {
+						return nil, fmt.Errorf("mixed types in string set")
+					}
+				}
+				return &types.AttributeValueMemberSS{Value: strSet}, nil
+			}
+		}
+	}
+
+	// Fallback to reflection for other types
+	v := reflect.ValueOf(value)
+	if v.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("DELETE operation requires a slice value for sets, got %s", v.Kind())
+	}
+
+	if v.Len() == 0 {
+		return &types.AttributeValueMemberNULL{Value: true}, nil
+	}
+
+	elemType := v.Type().Elem()
+
+	switch elemType.Kind() {
+	case reflect.String:
+		set := make([]string, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			set[i] = v.Index(i).String()
+		}
+		return &types.AttributeValueMemberSS{Value: set}, nil
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		set := make([]string, v.Len())
+		for i := 0; i < v.Len(); i++ {
+			av, err := ConvertToAttributeValue(v.Index(i).Interface())
+			if err != nil {
+				return nil, err
+			}
+			if n, ok := av.(*types.AttributeValueMemberN); ok {
+				set[i] = n.Value
+			} else {
+				return nil, fmt.Errorf("expected number type for number set")
+			}
+		}
+		return &types.AttributeValueMemberNS{Value: set}, nil
+
+	case reflect.Slice:
+		if elemType.Elem().Kind() == reflect.Uint8 {
+			// [][]byte
+			set := make([][]byte, v.Len())
+			for i := 0; i < v.Len(); i++ {
+				set[i] = v.Index(i).Bytes()
+			}
+			return &types.AttributeValueMemberBS{Value: set}, nil
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported set element type: %s", elemType)
+	}
+
+	return nil, fmt.Errorf("unsupported set type")
 }

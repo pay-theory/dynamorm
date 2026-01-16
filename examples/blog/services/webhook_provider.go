@@ -25,8 +25,8 @@ type WebhookConfig struct {
 
 // WebhookProvider implements NotificationProvider for webhook notifications
 type WebhookProvider struct {
-	config WebhookConfig
 	client *http.Client
+	config WebhookConfig
 }
 
 // NewWebhookProvider creates a new webhook provider
@@ -48,10 +48,10 @@ func NewWebhookProvider(config WebhookConfig) *WebhookProvider {
 
 // WebhookPayload represents the webhook payload structure
 type WebhookPayload struct {
-	ID        string         `json:"id"`
-	Type      string         `json:"type"`
 	Timestamp time.Time      `json:"timestamp"`
 	Data      map[string]any `json:"data"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
 }
 
 // Send sends a webhook notification
@@ -133,7 +133,9 @@ func (p *WebhookProvider) sendWebhook(ctx context.Context, url string, payload [
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	// Read response body
 	body, _ := io.ReadAll(resp.Body)
