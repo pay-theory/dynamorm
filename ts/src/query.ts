@@ -12,6 +12,11 @@ import {
   type CursorSort,
 } from './cursor.js';
 import { DynamormError } from './errors.js';
+import {
+  decryptItemAttributes,
+  modelHasEncryptedAttributes,
+  type EncryptionProvider,
+} from './encryption.js';
 import { marshalScalar, unmarshalItem } from './marshal.js';
 import type { AttributeSchema, IndexSchema, Model } from './model.js';
 
@@ -36,6 +41,7 @@ export class QueryBuilder {
   constructor(
     private readonly ddb: DynamoDBClient,
     private readonly model: Model,
+    private readonly encryption?: EncryptionProvider,
   ) {}
 
   usingIndex(name: string): this {
@@ -94,6 +100,12 @@ export class QueryBuilder {
       throw new DynamormError(
         'ErrInvalidOperator',
         'Consistent reads are not supported on GSIs',
+      );
+    }
+    if (modelHasEncryptedAttributes(this.model) && !this.encryption) {
+      throw new DynamormError(
+        'ErrEncryptionNotConfigured',
+        `Encryption is required for model: ${this.model.name}`,
       );
     }
 
@@ -192,7 +204,16 @@ export class QueryBuilder {
       }),
     );
 
-    const items = (resp.Items ?? []).map((it) => unmarshalItem(this.model, it));
+    const rawItems = resp.Items ?? [];
+    const items = modelHasEncryptedAttributes(this.model)
+      ? (
+          await Promise.all(
+            rawItems.map((it) =>
+              decryptItemAttributes(this.model, it, this.encryption!),
+            ),
+          )
+        ).map((it) => unmarshalItem(this.model, it))
+      : rawItems.map((it) => unmarshalItem(this.model, it));
     let cursor: string | undefined;
     if (resp.LastEvaluatedKey) {
       const c: Cursor = { lastKey: resp.LastEvaluatedKey, sort: this.sortDir };
@@ -292,6 +313,7 @@ export class ScanBuilder {
   constructor(
     private readonly ddb: DynamoDBClient,
     private readonly model: Model,
+    private readonly encryption?: EncryptionProvider,
   ) {}
 
   usingIndex(name: string): this {
@@ -324,6 +346,12 @@ export class ScanBuilder {
       throw new DynamormError(
         'ErrInvalidOperator',
         'Consistent reads are not supported on GSIs',
+      );
+    }
+    if (modelHasEncryptedAttributes(this.model) && !this.encryption) {
+      throw new DynamormError(
+        'ErrEncryptionNotConfigured',
+        `Encryption is required for model: ${this.model.name}`,
       );
     }
 
@@ -364,7 +392,16 @@ export class ScanBuilder {
       }),
     );
 
-    const items = (resp.Items ?? []).map((it) => unmarshalItem(this.model, it));
+    const rawItems = resp.Items ?? [];
+    const items = modelHasEncryptedAttributes(this.model)
+      ? (
+          await Promise.all(
+            rawItems.map((it) =>
+              decryptItemAttributes(this.model, it, this.encryption!),
+            ),
+          )
+        ).map((it) => unmarshalItem(this.model, it))
+      : rawItems.map((it) => unmarshalItem(this.model, it));
     let cursor: string | undefined;
     if (resp.LastEvaluatedKey) {
       const c: Cursor = { lastKey: resp.LastEvaluatedKey };

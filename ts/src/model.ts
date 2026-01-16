@@ -143,6 +143,12 @@ function validateModelSchema(schema: ModelSchema): void {
       `Partition key type mismatch: ${pk}`,
     );
   }
+  if (pkAttr.encryption) {
+    throw new DynamormError(
+      'ErrInvalidModel',
+      `Encrypted fields cannot be primary keys: ${pk}`,
+    );
+  }
 
   if (schema.keys.sort) {
     const sk = schema.keys.sort.attribute;
@@ -156,6 +162,12 @@ function validateModelSchema(schema: ModelSchema): void {
       throw new DynamormError(
         'ErrInvalidModel',
         `Sort key type mismatch: ${sk}`,
+      );
+    }
+    if (skAttr.encryption) {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `Encrypted fields cannot be primary keys: ${sk}`,
       );
     }
   }

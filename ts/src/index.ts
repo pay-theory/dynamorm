@@ -6,3 +6,4 @@ export * from './query.js';
 export * from './batch.js';
 export * from './transaction.js';
 export * from './streams.js';
+export * from './encryption.js';

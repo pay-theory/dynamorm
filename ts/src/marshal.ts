@@ -162,6 +162,13 @@ export function marshalScalar(
         'ErrInvalidModel',
         `Expected number for ${schema.attribute}`,
       );
+    case 'B': {
+      if (value instanceof Uint8Array) return { B: value };
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `Expected Uint8Array for ${schema.attribute}`,
+      );
+    }
     case 'SS': {
       if (!Array.isArray(value)) {
         throw new DynamormError(
@@ -204,6 +211,7 @@ export function unmarshalScalar(
 ): unknown {
   if ('S' in av && av.S !== undefined) return av.S;
   if ('N' in av && av.N !== undefined) return Number(av.N);
+  if ('B' in av && av.B !== undefined) return Buffer.from(av.B);
   if ('SS' in av && av.SS !== undefined) return av.SS.slice();
   if ('BOOL' in av && av.BOOL !== undefined) return av.BOOL;
   if ('NULL' in av && av.NULL) return null;

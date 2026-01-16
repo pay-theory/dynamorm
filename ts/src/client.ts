@@ -36,11 +36,29 @@ import {
 } from './marshal.js';
 import { QueryBuilder, ScanBuilder } from './query.js';
 import type { TransactAction } from './transaction.js';
+import {
+  decryptItemAttributes,
+  encryptAttributeValue,
+  marshalPutItemEncrypted,
+  modelHasEncryptedAttributes,
+  type EncryptionProvider,
+} from './encryption.js';
 
 export class DynamormClient {
   private readonly models = new Map<string, Model>();
+  private encryption: EncryptionProvider | undefined;
 
-  constructor(private readonly ddb: DynamoDBClient) {}
+  constructor(
+    private readonly ddb: DynamoDBClient,
+    opts: { encryption?: EncryptionProvider } = {},
+  ) {
+    this.encryption = opts.encryption;
+  }
+
+  withEncryption(provider: EncryptionProvider): this {
+    this.encryption = provider;
+    return this;
+  }
 
   register(...models: Model[]): this {
     for (const model of models) {
@@ -56,6 +74,17 @@ export class DynamormClient {
     return model;
   }
 
+  private requireEncryption(model: Model): EncryptionProvider {
+    const provider = this.encryption;
+    if (!provider) {
+      throw new DynamormError(
+        'ErrEncryptionNotConfigured',
+        `Encryption is required for model: ${model.name}`,
+      );
+    }
+    return provider;
+  }
+
   async create(
     modelName: string,
     item: Record<string, unknown>,
@@ -64,7 +93,16 @@ export class DynamormClient {
     const model = this.requireModel(modelName);
 
     const now = nowRfc3339Nano();
-    const putItem = marshalPutItem(model, item, { now });
+    const putItem = modelHasEncryptedAttributes(model)
+      ? await marshalPutItemEncrypted(
+          model,
+          item,
+          this.requireEncryption(model),
+          {
+            now,
+          },
+        )
+      : marshalPutItem(model, item, { now });
 
     const cmd = new PutItemCommand({
       TableName: model.tableName,
@@ -89,6 +127,9 @@ export class DynamormClient {
     key: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const model = this.requireModel(modelName);
+    const provider = modelHasEncryptedAttributes(model)
+      ? this.requireEncryption(model)
+      : undefined;
     const cmd = new GetItemCommand({
       TableName: model.tableName,
       Key: marshalKey(model, key),
@@ -99,7 +140,10 @@ export class DynamormClient {
       const resp = await this.ddb.send(cmd);
       if (!resp.Item)
         throw new DynamormError('ErrItemNotFound', 'Item not found');
-      return unmarshalItem(model, resp.Item);
+      const item = provider
+        ? await decryptItemAttributes(model, resp.Item, provider)
+        : resp.Item;
+      return unmarshalItem(model, item);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -111,6 +155,9 @@ export class DynamormClient {
     fields: string[],
   ): Promise<void> {
     const model = this.requireModel(modelName);
+    const provider = modelHasEncryptedAttributes(model)
+      ? this.requireEncryption(model)
+      : undefined;
     const key = marshalKey(model, item);
 
     const versionAttr = model.roles.version;
@@ -194,7 +241,13 @@ export class DynamormClient {
       }
 
       const valueKey = `:v${fieldIndex}`;
-      values[valueKey] = marshalScalar(schema, value);
+      values[valueKey] =
+        schema.encryption !== undefined
+          ? await encryptAttributeValue(schema, value, provider!, {
+              model: model.name,
+              attribute: field,
+            })
+          : marshalScalar(schema, value);
       setParts.push(`${placeholder} = ${valueKey}`);
     }
 
@@ -222,6 +275,7 @@ export class DynamormClient {
 
   async delete(modelName: string, key: Record<string, unknown>): Promise<void> {
     const model = this.requireModel(modelName);
+    if (modelHasEncryptedAttributes(model)) this.requireEncryption(model);
     const cmd = new DeleteItemCommand({
       TableName: model.tableName,
       Key: marshalKey(model, key),
@@ -240,6 +294,9 @@ export class DynamormClient {
     opts: RetryOptions & { consistentRead?: boolean } = {},
   ): Promise<BatchGetResult> {
     const model = this.requireModel(modelName);
+    const provider = modelHasEncryptedAttributes(model)
+      ? this.requireEncryption(model)
+      : undefined;
 
     const maxAttempts = opts.maxAttempts ?? 5;
     const baseDelayMs = opts.baseDelayMs ?? 25;
@@ -264,7 +321,14 @@ export class DynamormClient {
         );
 
         const got = resp.Responses?.[model.tableName] ?? [];
-        allItems.push(...got.map((it) => unmarshalItem(model, it)));
+        if (provider) {
+          const decrypted = await Promise.all(
+            got.map((it) => decryptItemAttributes(model, it, provider)),
+          );
+          allItems.push(...decrypted.map((it) => unmarshalItem(model, it)));
+        } else {
+          allItems.push(...got.map((it) => unmarshalItem(model, it)));
+        }
 
         const next = resp.UnprocessedKeys?.[model.tableName]?.Keys ?? [];
         if (next.length === 0) {
@@ -293,6 +357,9 @@ export class DynamormClient {
     opts: RetryOptions = {},
   ): Promise<BatchWriteResult> {
     const model = this.requireModel(modelName);
+    const provider = modelHasEncryptedAttributes(model)
+      ? this.requireEncryption(model)
+      : undefined;
 
     const maxAttempts = opts.maxAttempts ?? 5;
     const baseDelayMs = opts.baseDelayMs ?? 25;
@@ -301,9 +368,12 @@ export class DynamormClient {
     const writeRequests: WriteRequest[] = [];
 
     for (const item of req.puts ?? []) {
+      const marshaledItem = provider
+        ? await marshalPutItemEncrypted(model, item, provider, { now })
+        : marshalPutItem(model, item, { now });
       writeRequests.push({
         PutRequest: {
-          Item: marshalPutItem(model, item, { now }),
+          Item: marshaledItem,
         },
       });
     }
@@ -349,47 +419,56 @@ export class DynamormClient {
   }
 
   async transactWrite(actions: TransactAction[]): Promise<void> {
-    const transactItems: TransactWriteItem[] = actions.map(
-      (a): TransactWriteItem => {
-        const model = this.requireModel(a.model);
+    const transactItems: TransactWriteItem[] = [];
 
-        switch (a.kind) {
-          case 'put': {
-            const put: Put = {
-              TableName: model.tableName,
-              Item: marshalPutItem(model, a.item),
-            };
-            if (a.ifNotExists) {
-              put.ConditionExpression = 'attribute_not_exists(#pk)';
-              put.ExpressionAttributeNames = { '#pk': model.roles.pk };
-            }
-            return { Put: put };
+    for (const a of actions) {
+      const model = this.requireModel(a.model);
+      const provider = modelHasEncryptedAttributes(model)
+        ? this.requireEncryption(model)
+        : undefined;
+
+      switch (a.kind) {
+        case 'put': {
+          const item = provider
+            ? await marshalPutItemEncrypted(model, a.item, provider)
+            : marshalPutItem(model, a.item);
+          const put: Put = {
+            TableName: model.tableName,
+            Item: item,
+          };
+          if (a.ifNotExists) {
+            put.ConditionExpression = 'attribute_not_exists(#pk)';
+            put.ExpressionAttributeNames = { '#pk': model.roles.pk };
           }
-          case 'delete':
-            return {
-              Delete: {
-                TableName: model.tableName,
-                Key: marshalKey(model, a.key),
-              } satisfies Delete,
-            };
-          case 'condition':
-            return {
-              ConditionCheck: {
-                TableName: model.tableName,
-                Key: marshalKey(model, a.key),
-                ConditionExpression: a.conditionExpression,
-                ExpressionAttributeNames: a.expressionAttributeNames,
-                ExpressionAttributeValues: a.expressionAttributeValues,
-              } satisfies ConditionCheck,
-            };
-          default:
-            throw new DynamormError(
-              'ErrInvalidOperator',
-              'Unknown transaction action',
-            );
+          transactItems.push({ Put: put });
+          break;
         }
-      },
-    );
+        case 'delete':
+          transactItems.push({
+            Delete: {
+              TableName: model.tableName,
+              Key: marshalKey(model, a.key),
+            } satisfies Delete,
+          });
+          break;
+        case 'condition':
+          transactItems.push({
+            ConditionCheck: {
+              TableName: model.tableName,
+              Key: marshalKey(model, a.key),
+              ConditionExpression: a.conditionExpression,
+              ExpressionAttributeNames: a.expressionAttributeNames,
+              ExpressionAttributeValues: a.expressionAttributeValues,
+            } satisfies ConditionCheck,
+          });
+          break;
+        default:
+          throw new DynamormError(
+            'ErrInvalidOperator',
+            'Unknown transaction action',
+          );
+      }
+    }
 
     try {
       await this.ddb.send(
@@ -402,12 +481,12 @@ export class DynamormClient {
 
   query(modelName: string): QueryBuilder {
     const model = this.requireModel(modelName);
-    return new QueryBuilder(this.ddb, model);
+    return new QueryBuilder(this.ddb, model, this.encryption);
   }
 
   scan(modelName: string): ScanBuilder {
     const model = this.requireModel(modelName);
-    return new ScanBuilder(this.ddb, model);
+    return new ScanBuilder(this.ddb, model, this.encryption);
   }
 }
 

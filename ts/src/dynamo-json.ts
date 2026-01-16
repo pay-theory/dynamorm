@@ -18,7 +18,8 @@ export function toDynamoJson(av: AttributeValue): unknown {
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(av.M)) {
       const child = av.M[key];
-      if (!child) throw new DynamormError('ErrInvalidModel', `Invalid map value: ${key}`);
+      if (!child)
+        throw new DynamormError('ErrInvalidModel', `Invalid map value: ${key}`);
       out[key] = toDynamoJson(child);
     }
     return { M: out };
