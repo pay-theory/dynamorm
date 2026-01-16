@@ -20,8 +20,9 @@ Initial layout (no Go move yet):
 
 Versioning in a monorepo:
 
-- Each language implementation is versioned/released independently.
-- DMS is versioned and implementations pin a DMS version.
+- **Single shared version:** Go, TypeScript, and Python move together under the same GitHub tag/release (`vX.Y.Z` and `vX.Y.Z-rc.N`).
+- **No registry publishing (for now):** TypeScript is not published to npm and Python is not published to PyPI; GitHub releases are the source of truth.
+- **DMS is separately versioned:** implementations pin a DMS version (it may or may not match the repo version).
 
 ## Principles (non-negotiable)
 
@@ -90,7 +91,8 @@ Runnable outline (starting point):
 - “Reference implementation” policy:
   - start with Go as reference, then move “truth” to DMS
 - Release + versioning policy:
-  - each implementation semver’ed independently
+  - single shared repo version across languages (Go + TS + Python)
+  - no registry publishing (GitHub releases only)
   - DMS semver’ed and pinned by implementations
 
 **Acceptance criteria**
@@ -133,7 +135,7 @@ Runnable outline (starting point):
 **Goal:** a stable foundation that can ship and be maintained.
 
 **Recommended defaults**
-- Node 20+ (Lambda-compatible), TypeScript 5+
+- Node 24 (Lambda runtime), TypeScript 5+
 - AWS SDK v3
 - strict lint + formatting + typecheck in CI
 - integration tests run against DynamoDB Local (endpoint via `DYNAMODB_ENDPOINT`)
@@ -229,11 +231,108 @@ Runnable outline (starting point):
 
 ### Phase 2 — Python (`dynamorm-py`)
 
-After TS P0–P2 is stable, replicate the same contract-driven approach in Python:
+Build `dynamorm-py` with the same contract-driven posture as Go and TypeScript.
 
-- model definitions (dataclasses / pydantic) mapped from DMS
-- boto3-based core operations + query builder
-- the same contract tests + DynamoDB Local pin
+#### PY-0 — Tooling + package skeleton
+
+**Goal:** a stable foundation that can ship and be maintained.
+
+**Recommended defaults**
+- Python 3.14 (pinned), AWS Lambda target runtime (or container runtime if 3.14 is not yet available)
+- AWS SDK: `boto3` (sync) + `botocore` exceptions mapping
+- `ruff` (format + lint), `pyright` or `mypy` (typecheck), `pytest` (tests)
+- integration tests run against DynamoDB Local (endpoint via `DYNAMODB_ENDPOINT`)
+
+**Acceptance criteria**
+- `py/` package builds cleanly (wheel/sdist) and is importable.
+- CI runs format check, lint, typecheck, unit tests, and DynamoDB Local-backed integration tests.
+- Integration tests are strict-by-default (only skipped when `SKIP_INTEGRATION=1|true`).
+- Rubric is extended to enforce the Python surface (no weaker than Go/TS).
+- Release automation updates Python package version files to match the repo version (and a verifier enforces alignment).
+
+---
+
+#### PY-1 — Model definition API (one way to define data)
+
+**Goal:** match Go’s struct-tag schema and TS schema builder with a typed Python equivalent.
+
+**Decisions to make**
+- Model definition approach:
+  - dataclasses + field metadata (lightweight)
+  - pydantic models (heavier; validation-first)
+  - codegen from DMS (ideal for “single source of truth”)
+
+**Acceptance criteria**
+- Python can define: PK/SK, attribute names, GSI/LSI, lifecycle fields, modifiers (`omitempty/set/json/binary/encrypted/-`).
+- The library validates model definitions early (fail fast on invalid combinations).
+
+---
+
+#### PY-2 — Core operations parity (P0)
+
+**Goal:** shipping-grade CRUD + conditions with typed results.
+
+**Acceptance criteria**
+- Put/Get/Update/Delete support conditional expressions (idempotency / optimistic concurrency use-cases).
+- Errors map to typed exceptions with a consistent taxonomy (condition failed, validation, not found).
+- Marshaling/unmarshaling is deterministic and round-trips correctly for supported types.
+
+---
+
+#### PY-3 — Query builder parity (P1)
+
+**Goal:** match core query ergonomics without leaking raw expression strings.
+
+**Acceptance criteria**
+- Query + Scan support:
+  - index selection (table vs GSI/LSI)
+  - common operators (`=`, `<`, `<=`, `>`, `>=`, `between`, `begins_with`)
+  - pagination (cursor in/out; deterministic ordering rules)
+  - `limit`, projection/selection, optional consistent reads
+
+---
+
+#### PY-4 — Batch + transactions (P2)
+
+**Goal:** unlock production patterns (bulk writes; atomic multi-item updates).
+
+**Acceptance criteria**
+- Batch get/write with partial-failure handling and retry semantics that are explicit and test-covered.
+- Transaction write support with condition checks and clear error reporting.
+
+---
+
+#### PY-5 — Streams + events (P3)
+
+**Goal:** parity with Go/TS stream parsing ergonomics.
+
+**Acceptance criteria**
+- Streams image unmarshalling (New/Old image) into typed models.
+- Clear handling of missing/optional attributes and type mismatches.
+
+---
+
+#### PY-6 — `encrypted` semantics (P4)
+
+**Goal:** enforce real encryption semantics, not metadata.
+
+**Acceptance criteria**
+- Envelope encryption via AWS KMS (mirrors `docs/development/planning/dynamorm-encryption-tag-roadmap.md`):
+  - fail closed when encrypted fields exist but KMS config is missing
+  - encrypted fields rejected for PK/SK and indexes
+  - encrypted fields not queryable/filterable
+  - round-trip tests (write → read → decrypt)
+
+---
+
+#### PY-7 — Documentation + examples + first stable release (P0–P2)
+
+**Goal:** make adoption copy/pasteable and reduce “AI-generated misuse”.
+
+**Acceptance criteria**
+- README + “Getting started” + core patterns equivalent to Go/TS docs (Lambda init, pagination, optimistic locking, batch, tx).
+- Examples include local DynamoDB and AWS Lambda usage.
+- A parity statement exists: which tiers/features match Go/TS and which are intentionally missing.
 
 ## Key risks (and mitigations)
 
