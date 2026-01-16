@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass
 from decimal import Decimal
 from typing import Any, cast, get_args, get_origin
 
@@ -18,6 +18,7 @@ from .errors import (
     ValidationError,
 )
 from .model import AttributeDefinition, ModelDefinition
+from .query import Page, SortKeyCondition, decode_cursor, encode_cursor
 
 
 def _is_empty(value: Any) -> bool:
@@ -79,6 +80,110 @@ class Table[T]:
         self._client = client or boto3.client("dynamodb")
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
+
+    def query(
+        self,
+        partition: Any,
+        *,
+        sort: SortKeyCondition | None = None,
+        index_name: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        scan_forward: bool = True,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+    ) -> Page[T]:
+        partition_attr, sort_attr, index_type = self._resolve_index(index_name)
+        if index_type == "GSI" and consistent_read:
+            raise ValidationError("consistent_read is not supported for GSIs")
+
+        if partition is None:
+            raise ValidationError("partition is required")
+
+        if limit is not None and limit <= 0:
+            raise ValidationError("limit must be > 0")
+
+        names: dict[str, str] = {"#pk": partition_attr}
+        values: dict[str, Any] = {":pk": self._serializer.serialize(partition)}
+
+        key_expr = "#pk = :pk"
+        if sort is not None:
+            if sort_attr is None:
+                raise ValidationError("model/index does not define a sort key")
+            names["#sk"] = sort_attr
+            key_expr = self._apply_sort_condition(key_expr, sort, values)
+
+        req: dict[str, Any] = {
+            "TableName": self._table_name,
+            "KeyConditionExpression": key_expr,
+            "ExpressionAttributeNames": names,
+            "ExpressionAttributeValues": values,
+            "ScanIndexForward": scan_forward,
+            "ConsistentRead": consistent_read,
+        }
+        if index_name is not None:
+            req["IndexName"] = index_name
+        if limit is not None:
+            req["Limit"] = limit
+        if cursor is not None:
+            try:
+                req["ExclusiveStartKey"] = decode_cursor(cursor)
+            except Exception as err:
+                raise ValidationError("invalid cursor") from err
+        if projection is not None:
+            req["ProjectionExpression"] = self._projection_expression(
+                projection, req["ExpressionAttributeNames"]
+            )
+
+        try:
+            resp = self._client.query(**req)
+        except ClientError as err:  # pragma: no cover
+            raise _map_client_error(err) from err
+
+        items = [self._from_item(item) for item in resp.get("Items", [])]
+        last = resp.get("LastEvaluatedKey")
+        return Page(items=items, next_cursor=encode_cursor(last) if last else None)
+
+    def scan(
+        self,
+        *,
+        index_name: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+    ) -> Page[T]:
+        _, _, index_type = self._resolve_index(index_name)
+        if index_type == "GSI" and consistent_read:
+            raise ValidationError("consistent_read is not supported for GSIs")
+
+        if limit is not None and limit <= 0:
+            raise ValidationError("limit must be > 0")
+
+        req: dict[str, Any] = {"TableName": self._table_name, "ConsistentRead": consistent_read}
+        if index_name is not None:
+            req["IndexName"] = index_name
+        if limit is not None:
+            req["Limit"] = limit
+        if cursor is not None:
+            try:
+                req["ExclusiveStartKey"] = decode_cursor(cursor)
+            except Exception as err:
+                raise ValidationError("invalid cursor") from err
+        if projection is not None:
+            req["ExpressionAttributeNames"] = {}
+            req["ProjectionExpression"] = self._projection_expression(
+                projection, req["ExpressionAttributeNames"]
+            )
+
+        try:
+            resp = self._client.scan(**req)
+        except ClientError as err:  # pragma: no cover
+            raise _map_client_error(err) from err
+
+        items = [self._from_item(item) for item in resp.get("Items", [])]
+        last = resp.get("LastEvaluatedKey")
+        return Page(items=items, next_cursor=encode_cursor(last) if last else None)
 
     def put(
         self,
@@ -287,3 +392,63 @@ class Table[T]:
             return model_cls(**kwargs)
         except TypeError as err:
             raise ValidationError(str(err)) from err
+
+    def _resolve_index(self, index_name: str | None) -> tuple[str, str | None, str]:
+        if index_name is None:
+            return (
+                self._model.pk.attribute_name,
+                self._model.sk.attribute_name if self._model.sk else None,
+                "TABLE",
+            )
+
+        for idx in self._model.indexes:
+            if idx.name == index_name:
+                return idx.partition, idx.sort, idx.type
+
+        raise ValidationError(f"unknown index: {index_name}")
+
+    def _apply_sort_condition(self, prefix: str, cond: SortKeyCondition, values: dict[str, Any]) -> str:
+        op = cond.op
+        if op in {"=", "<", "<=", ">", ">="}:
+            if len(cond.values) != 1:
+                raise ValidationError("invalid sort key condition")
+            values[":sk"] = self._serializer.serialize(cond.values[0])
+            return f"{prefix} AND #sk {op} :sk"
+        if op == "between":
+            if len(cond.values) != 2:
+                raise ValidationError("invalid sort key condition")
+            values[":sk1"] = self._serializer.serialize(cond.values[0])
+            values[":sk2"] = self._serializer.serialize(cond.values[1])
+            return f"{prefix} AND #sk BETWEEN :sk1 AND :sk2"
+        if op == "begins_with":
+            if len(cond.values) != 1:
+                raise ValidationError("invalid sort key condition")
+            values[":sk"] = self._serializer.serialize(cond.values[0])
+            return f"{prefix} AND begins_with(#sk, :sk)"
+        raise ValidationError(f"unsupported sort key operator: {op}")
+
+    def _projection_expression(self, projection: list[str], names: dict[str, str]) -> str:
+        required = self._required_fields()
+        missing = required.difference(projection)
+        if missing:
+            raise ValidationError(f"projection is missing required fields: {sorted(missing)}")
+
+        refs: list[str] = []
+        for field_name in projection:
+            if field_name not in self._model.attributes:
+                raise ValidationError(f"unknown field: {field_name}")
+            ref = f"#p_{field_name}"
+            names[ref] = self._model.attributes[field_name].attribute_name
+            refs.append(ref)
+        return ", ".join(refs)
+
+    def _required_fields(self) -> set[str]:
+        required: set[str] = {self._model.pk.python_name}
+        if self._model.sk is not None:
+            required.add(self._model.sk.python_name)
+        for dc_field in fields(cast(Any, self._model.model_type)):
+            if dc_field.name not in self._model.attributes:
+                continue
+            if dc_field.default is MISSING and dc_field.default_factory is MISSING:
+                required.add(dc_field.name)
+        return required

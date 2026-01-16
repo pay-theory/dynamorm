@@ -23,6 +23,7 @@ from .model import (
     gsi,
     lsi,
 )
+from .query import Page, SortKeyCondition
 
 if TYPE_CHECKING:
     from .table import Table as Table
@@ -68,6 +69,8 @@ __all__ = [
     "ModelDefinitionError",
     "NotFoundError",
     "Projection",
+    "Page",
+    "SortKeyCondition",
     "Table",
     "ValidationError",
     "__repo_version__",
