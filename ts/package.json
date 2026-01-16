@@ -23,7 +23,8 @@
     "format:check": "prettier --check .",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "tsx test/run-unit.ts",
-    "test:integration": "tsx test/run-integration.ts"
+    "test:integration": "tsx test/run-integration.ts",
+    "example:local": "tsx examples/local.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.758.0"
