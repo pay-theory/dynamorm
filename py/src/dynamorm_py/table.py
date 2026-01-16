@@ -188,9 +188,15 @@ class Table[T]:
             req["Limit"] = limit
         if cursor is not None:
             try:
-                req["ExclusiveStartKey"] = decode_cursor(cursor)
+                decoded = decode_cursor(cursor)
             except Exception as err:
                 raise ValidationError("invalid cursor") from err
+            if decoded.index is not None and decoded.index != index_name:
+                raise ValidationError("cursor index does not match query")
+            expected_sort = "ASC" if scan_forward else "DESC"
+            if decoded.sort is not None and decoded.sort != expected_sort:
+                raise ValidationError("cursor sort does not match query")
+            req["ExclusiveStartKey"] = decoded.last_key
         if projection is not None:
             req["ProjectionExpression"] = self._projection_expression(
                 projection, req["ExpressionAttributeNames"]
@@ -203,7 +209,14 @@ class Table[T]:
 
         items = [self._from_item(item) for item in resp.get("Items", [])]
         last = resp.get("LastEvaluatedKey")
-        return Page(items=items, next_cursor=encode_cursor(last) if last else None)
+        return Page(
+            items=items,
+            next_cursor=(
+                encode_cursor(last, index=index_name, sort="ASC" if scan_forward else "DESC")
+                if last
+                else None
+            ),
+        )
 
     def scan(
         self,
@@ -228,9 +241,12 @@ class Table[T]:
             req["Limit"] = limit
         if cursor is not None:
             try:
-                req["ExclusiveStartKey"] = decode_cursor(cursor)
+                decoded = decode_cursor(cursor)
             except Exception as err:
                 raise ValidationError("invalid cursor") from err
+            if decoded.index is not None and decoded.index != index_name:
+                raise ValidationError("cursor index does not match scan")
+            req["ExclusiveStartKey"] = decoded.last_key
         if projection is not None:
             req["ExpressionAttributeNames"] = {}
             req["ProjectionExpression"] = self._projection_expression(
@@ -244,7 +260,7 @@ class Table[T]:
 
         items = [self._from_item(item) for item in resp.get("Items", [])]
         last = resp.get("LastEvaluatedKey")
-        return Page(items=items, next_cursor=encode_cursor(last) if last else None)
+        return Page(items=items, next_cursor=encode_cursor(last, index=index_name) if last else None)
 
     def batch_get(
         self,
@@ -603,6 +619,9 @@ class Table[T]:
         return out
 
     def _serialize_attr_value(self, attr_def: AttributeDefinition, value: Any) -> Any:
+        if attr_def.set and isinstance(value, set) and len(value) == 0:
+            return self._serializer.serialize(None)
+
         if attr_def.json and value is not None:
             value = json.dumps(value, separators=(",", ":"), sort_keys=True)
 

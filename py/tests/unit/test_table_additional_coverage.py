@@ -392,6 +392,18 @@ def test_internal_helpers_cover_projection_and_serialization_error_paths() -> No
     av = table._serialize_attr_value(attr_def, {"b": 2, "a": 1})
     assert av["S"] == '{"a":1,"b":2}'
 
+    empty_set_attr = AttributeDefinition(
+        python_name="tags",
+        attribute_name="tags",
+        roles=(),
+        omitempty=False,
+        set=True,
+        json=False,
+        binary=False,
+        encrypted=False,
+    )
+    assert table._serialize_attr_value(empty_set_attr, set()) == {"NULL": True}
+
     encrypted_attr = AttributeDefinition(
         python_name="secret",
         attribute_name="secret",

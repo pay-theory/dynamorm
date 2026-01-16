@@ -286,6 +286,9 @@ func (m *SafeMarshaler) marshalSliceValue(v reflect.Value, fieldMeta *safeFieldM
 	}
 
 	if v.Type().Elem().Kind() == reflect.String && fieldMeta.isSet {
+		if v.Len() == 0 {
+			return &types.AttributeValueMemberNULL{Value: true}, nil
+		}
 		values := make([]string, v.Len())
 		for i := 0; i < v.Len(); i++ {
 			values[i] = v.Index(i).String()

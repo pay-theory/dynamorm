@@ -38,3 +38,17 @@ Run the Go runner:
 cd contract-tests/runners/go
 go test ./... -v
 ```
+
+Run the TypeScript runner:
+
+```bash
+npm --prefix contract-tests/runners/ts ci
+npm --prefix contract-tests/runners/ts test
+```
+
+Run the Python runner:
+
+```bash
+uv --directory py sync --frozen --all-extras
+uv --directory py run pytest -q ../contract-tests/runners/py
+```

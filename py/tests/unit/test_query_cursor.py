@@ -11,11 +11,13 @@ def test_cursor_round_trip_with_bytes_and_nested_structures() -> None:
         "SK": {"S": "B"},
         "blob": {"B": b"hi"},
         "nested": {"M": {"x": {"B": b"bye"}}},
-        "list": [{"B": b"x"}, {"S": "y"}],
+        "list": {"L": [{"B": b"x"}, {"S": "y"}]},
     }
-    cursor = encode_cursor(key)
+    cursor = encode_cursor(key, index="gsi-email", sort="ASC")
     decoded = decode_cursor(cursor)
-    assert decoded == key
+    assert decoded.last_key == key
+    assert decoded.index == "gsi-email"
+    assert decoded.sort == "ASC"
 
 
 def test_decode_cursor_invalid_base64_raises() -> None:

@@ -693,6 +693,33 @@ func TestMarshalItem_SpecialStringSetHandling(t *testing.T) {
 	assert.False(t, exists)
 }
 
+func TestMarshalItem_EmptySetEncodesNullWithoutOmitEmpty(t *testing.T) {
+	marshaler := New(nil)
+
+	type StringSetStruct struct {
+		ID   string   `dynamodb:"id"`
+		Tags []string `dynamodb:"tags,set"`
+	}
+
+	input := StringSetStruct{
+		ID:   "test-id",
+		Tags: []string{},
+	}
+
+	metadata := createMetadata(
+		createFieldMetadata(reflect.TypeOf(StringSetStruct{}), "ID", "id", reflect.TypeOf("")),
+		createFieldMetadata(reflect.TypeOf(StringSetStruct{}), "Tags", "tags", reflect.TypeOf([]string{}), withSet()),
+	)
+
+	result, err := marshaler.MarshalItem(input, metadata)
+	require.NoError(t, err)
+
+	av, ok := result["tags"]
+	require.True(t, ok, "expected tags field")
+	_, isNull := av.(*types.AttributeValueMemberNULL)
+	require.True(t, isNull, "expected NULL for empty set, got %T", av)
+}
+
 func TestMarshalItem_DeepNestedStructures(t *testing.T) {
 	marshaler := New(nil)
 

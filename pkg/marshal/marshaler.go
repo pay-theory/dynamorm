@@ -354,7 +354,7 @@ func (m *Marshaler) buildSliceMarshalFunc(typ reflect.Type, fieldMeta *model.Fie
 		if fieldMeta.IsSet {
 			return func(ptr unsafe.Pointer) (types.AttributeValue, error) {
 				slice := (*[]string)(ptr)
-				if len(*slice) == 0 && fieldMeta.OmitEmpty {
+				if len(*slice) == 0 {
 					return &types.AttributeValueMemberNULL{Value: true}, nil
 				}
 				return &types.AttributeValueMemberSS{Value: *slice}, nil

@@ -17,4 +17,6 @@ if [[ -f "py/pyproject.toml" ]]; then
   bash scripts/verify-python-integration.sh
 fi
 
+bash scripts/verify-contract-tests.sh
+
 echo "integration-tests: PASS"

@@ -1,11 +1,16 @@
-import type { Scenario } from "./types.js";
+import type { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamormClient } from "../../../../ts/src/client.js";
+import type { Model } from "../../../../ts/src/model.js";
 
 export type ErrorCode =
   | "ErrItemNotFound"
   | "ErrConditionFailed"
   | "ErrInvalidModel"
   | "ErrMissingPrimaryKey"
-  | "ErrInvalidOperator";
+  | "ErrInvalidOperator"
+  | "ErrEncryptedFieldNotQueryable"
+  | "ErrEncryptionNotConfigured"
+  | "ErrInvalidEncryptedEnvelope";
 
 export interface Driver {
   create(model: string, item: Record<string, unknown>, opts: { ifNotExists?: boolean }): Promise<void>;
@@ -14,23 +19,26 @@ export interface Driver {
   delete(model: string, key: Record<string, unknown>): Promise<void>;
 }
 
-export class NotImplementedDriver implements Driver {
-  async create(_model: string, _item: Record<string, unknown>, _opts: { ifNotExists?: boolean }): Promise<void> {
-    throw new Error("NotImplementedDriver.create");
+export class DynamormDriver implements Driver {
+  private readonly client: DynamormClient;
+
+  constructor(ddb: DynamoDBClient, models: Model[]) {
+    this.client = new DynamormClient(ddb).register(...models);
   }
-  async get(_model: string, _key: Record<string, unknown>): Promise<Record<string, unknown>> {
-    throw new Error("NotImplementedDriver.get");
+
+  async create(model: string, item: Record<string, unknown>, opts: { ifNotExists?: boolean }): Promise<void> {
+    await this.client.create(model, item, { ifNotExists: opts.ifNotExists });
   }
-  async update(_model: string, _item: Record<string, unknown>, _fields: string[]): Promise<void> {
-    throw new Error("NotImplementedDriver.update");
+
+  async get(model: string, key: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return await this.client.get(model, key);
   }
-  async delete(_model: string, _key: Record<string, unknown>): Promise<void> {
-    throw new Error("NotImplementedDriver.delete");
+
+  async update(model: string, item: Record<string, unknown>, fields: string[]): Promise<void> {
+    await this.client.update(model, item, fields);
+  }
+
+  async delete(model: string, key: Record<string, unknown>): Promise<void> {
+    await this.client.delete(model, key);
   }
 }
-
-export async function runScenario(_scenario: Scenario, _driver: Driver): Promise<void> {
-  // Intentionally stubbed: the TS implementation should wire scenario steps to dynamorm-ts operations.
-  throw new Error("runScenario not implemented");
-}
-

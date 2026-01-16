@@ -1,7 +1,7 @@
-# DynamORM: Contract Test Suite Outline (Runnable, Go↔TS)
+# DynamORM: Contract Test Suite Outline (Runnable, Go↔TS↔Py)
 
 Goal: a single, shareable test suite that **prevents semantic drift** between DynamORM implementations in different
-languages (starting with Go ↔ TypeScript).
+languages (starting with Go ↔ TypeScript, then adding Python).
 
 This is a runnable outline: it specifies folder structure, scenario formats, required drivers, and the exact commands
 each language repo should expose so CI can run the same contract surface.
@@ -80,6 +80,9 @@ dynamorm-contract-tests/
         driver.go
         runner.go
       contract_test.go
+    py/
+      README.md
+      test_*.py
 ```
 
 Notes:

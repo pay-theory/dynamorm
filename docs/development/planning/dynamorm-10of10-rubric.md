@@ -6,12 +6,13 @@ It is designed for an **AI-generated codebase**: gates must be **versioned, meas
 
 ## Versioning (no moving goalposts)
 
-- **Rubric version:** `v0.9` (2026-01-16)
+- **Rubric version:** `v0.10` (2026-01-16)
 - **Comparability rule:** grades are only comparable within the same rubric version.
 - **Change rule:** rubric changes must bump the version and include a brief changelog entry (what changed + why).
 
 ### Changelog
 
+- `v0.10` (2026-01-16): Enforce shared contract tests (Go + TypeScript + Python) as part of the integration verification surface (VP-3).
 - `v0.9` (2026-01-16): Enforce multi-language library coverage parity (Go + TypeScript + Python) at **>= 90%** as a rubric gate (VP-2).
 - `v0.8` (2026-01-16): Clarify and document multi-language rubric scope (Go + TypeScript + Python) and link to the verification parity matrix (`docs/development/planning/dynamorm-multilang-verification-parity-matrix.md`).
 - `v0.7` (2026-01-16): Enforce multi-language release alignment (Go + TypeScript share the repo version) by (1) requiring release automation to bump `ts/package.json` + `ts/package-lock.json` and (2) verifying TypeScript version alignment with the active release manifest during `make rubric`.
