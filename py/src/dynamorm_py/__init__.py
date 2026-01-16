@@ -4,6 +4,17 @@ import json
 import re
 from importlib.resources import files
 
+from .model import (
+    IndexDefinition,
+    IndexSpec,
+    ModelDefinition,
+    ModelDefinitionError,
+    Projection,
+    dynamorm_field,
+    gsi,
+    lsi,
+)
+
 
 def _read_repo_version() -> str:
     try:
@@ -25,4 +36,15 @@ def _normalize_repo_version(repo_version: str) -> str:
 __repo_version__ = _read_repo_version()
 __version__ = _normalize_repo_version(__repo_version__)
 
-__all__ = ["__repo_version__", "__version__"]
+__all__ = [
+    "IndexDefinition",
+    "IndexSpec",
+    "ModelDefinition",
+    "ModelDefinitionError",
+    "Projection",
+    "__repo_version__",
+    "__version__",
+    "dynamorm_field",
+    "gsi",
+    "lsi",
+]
