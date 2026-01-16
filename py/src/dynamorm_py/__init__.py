@@ -35,6 +35,8 @@ from .transaction import (
 )
 
 if TYPE_CHECKING:
+    from .streams import unmarshal_stream_image as unmarshal_stream_image
+    from .streams import unmarshal_stream_record as unmarshal_stream_record
     from .table import Table as Table
 
 
@@ -64,6 +66,14 @@ def __getattr__(name: str) -> Any:
         from .table import Table
 
         return Table
+    if name == "unmarshal_stream_image":
+        from .streams import unmarshal_stream_image
+
+        return unmarshal_stream_image
+    if name == "unmarshal_stream_record":
+        from .streams import unmarshal_stream_record
+
+        return unmarshal_stream_record
     raise AttributeError(name)
 
 
@@ -94,4 +104,6 @@ __all__ = [
     "dynamorm_field",
     "gsi",
     "lsi",
+    "unmarshal_stream_image",
+    "unmarshal_stream_record",
 ]
