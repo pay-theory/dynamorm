@@ -10,5 +10,11 @@ if [[ -f "ts/package.json" ]]; then
   npm --prefix ts run lint
 fi
 
-echo "lint: PASS"
+if [[ -f "py/pyproject.toml" ]]; then
+  if [[ ! -d "py/.venv" ]]; then
+    bash scripts/verify-python-deps.sh
+  fi
+  uv --directory py run ruff check .
+fi
 
+echo "lint: PASS"

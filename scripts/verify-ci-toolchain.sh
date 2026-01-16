@@ -39,6 +39,17 @@ while IFS= read -r wf; do
     fi
   fi
 
+  if grep -Eq '^[[:space:]]*uses:[[:space:]]*actions/setup-python@' "${wf}"; then
+    grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq 'python-version:[[:space:]]*"?3[.]14([.]x)?"?' || {
+      echo "${wf}: setup-python must pin python-version: 3.14"
+      failures=$((failures + 1))
+    }
+    if grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq 'python-version:[[:space:]]*latest'; then
+      echo "${wf}: setup-python python-version must not be 'latest'"
+      failures=$((failures + 1))
+    fi
+  fi
+
   # Reject @latest in workflows to avoid silent behavior drift.
   if grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq '@latest'; then
     echo "${wf}: contains @latest; pin versions"

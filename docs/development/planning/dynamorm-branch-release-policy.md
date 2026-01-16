@@ -36,10 +36,12 @@ Recommended approach: **release-please** (merge-driven versioning + changelog up
 
 ## Multi-language versioning (required)
 
-- **Single shared repo version:** Go and TypeScript use the same GitHub tag/release version.
-- **No registry publishing:** TypeScript is not published to npm; GitHub releases are the source of truth.
+- **Single shared repo version:** Go, TypeScript, and Python use the same GitHub tag/release version.
+- **No registry publishing:** TypeScript is not published to npm and Python is not published to PyPI; GitHub releases are the source of truth.
 - **Release automation must update TypeScript versions:** if `ts/package.json` exists, the prerelease/release workflows must
   update `ts/package.json` and `ts/package-lock.json` to match the repo version.
+- **Release automation must update Python versions:** if `py/pyproject.toml` exists, the prerelease/release workflows must
+  update `py/src/dynamorm_py/version.json` to match the repo version.
 
 ## Required workflow artifacts (Rubric COM-8)
 

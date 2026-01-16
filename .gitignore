@@ -109,6 +109,22 @@ jspm_packages/
 .fusebox/
 .dynamodb/ 
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+.venv/
+py/.venv/
+py/dist/
+py/.python-version
+*.egg-info/
+py/build/
+
 # Local notes (keep templates tracked)
 docs/development/notes/*
 !docs/development/notes/template-notes.md
