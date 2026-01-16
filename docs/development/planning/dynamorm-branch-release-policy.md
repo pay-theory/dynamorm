@@ -34,6 +34,13 @@ Recommended approach: **release-please** (merge-driven versioning + changelog up
 - prerelease workflow producing tags like `vX.Y.Z-rc.N` (or an agreed convention), and
 - release workflow producing stable `vX.Y.Z` tags and updating `CHANGELOG.md`.
 
+## Multi-language versioning (required)
+
+- **Single shared repo version:** Go and TypeScript use the same GitHub tag/release version.
+- **No registry publishing:** TypeScript is not published to npm; GitHub releases are the source of truth.
+- **Release automation must update TypeScript versions:** if `ts/package.json` exists, the prerelease/release workflows must
+  update `ts/package.json` and `ts/package-lock.json` to match the repo version.
+
 ## Required workflow artifacts (Rubric COM-8)
 
 These files are required to exist and be kept current:

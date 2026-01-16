@@ -33,7 +33,7 @@ Threat ID note:
 | Completeness | THR-6 | COM-5 | Coverage gate is not diluted | Coverage threshold is enforced at default | `bash scripts/verify-coverage-threshold.sh` | CI logs |
 | Completeness | THR-6 | COM-6 | CI enforces rubric | Workflow runs `make rubric` with pinned tooling and uploads artifacts | `bash scripts/verify-ci-rubric-enforced.sh` | `.github/workflows/quality-gates.yml` |
 | Completeness | THR-6 | COM-7 | Integration determinism | DynamoDB Local image is pinned (no `:latest`) | `bash scripts/verify-dynamodb-local-pin.sh` | `docker-compose.yml`, `Makefile` |
-| Completeness | THR-6 | COM-8 | Branch/release supply chain | Release automation exists and is aligned to `premain` (prerelease) + `main` (release); protections are documented | Artifact check (`.github/workflows/release.yml`, `.github/workflows/prerelease.yml`, `docs/development/planning/dynamorm-branch-release-policy.md`) | Repo files |
+| Completeness | THR-6 | COM-8 | Branch/release supply chain | Release automation exists and is aligned to `premain` (prerelease) + `main` (release); protections are documented | `bash scripts/verify-branch-release-supply-chain.sh` | Repo files |
 | Docs | THR-2 | DOC-1 | Security posture is reviewable | Threat model exists and is maintained | `bash scripts/verify-planning-docs.sh` | `docs/development/planning/dynamorm-threat-model.md` |
 | Docs | THR-6 | DOC-2 | Evidence is reproducible | Evidence plan exists and is maintained | `bash scripts/verify-planning-docs.sh` | `docs/development/planning/dynamorm-evidence-plan.md` |
 | Docs | THR-2 | DOC-4 | Docs integrity | No broken internal links; version claims match code | `bash scripts/verify-doc-integrity.sh` | CI logs |

@@ -6,12 +6,13 @@ It is designed for an **AI-generated codebase**: gates must be **versioned, meas
 
 ## Versioning (no moving goalposts)
 
-- **Rubric version:** `v0.6` (2026-01-16)
+- **Rubric version:** `v0.7` (2026-01-16)
 - **Comparability rule:** grades are only comparable within the same rubric version.
 - **Change rule:** rubric changes must bump the version and include a brief changelog entry (what changed + why).
 
 ### Changelog
 
+- `v0.7` (2026-01-16): Enforce multi-language release alignment (Go + TypeScript share the repo version) by (1) requiring release automation to bump `ts/package.json` + `ts/package-lock.json` and (2) verifying TypeScript version alignment with the active release manifest during `make rubric`.
 - `v0.6` (2026-01-16): Extend rubric enforcement to TypeScript (format, lint, typecheck/build, unit + integration tests, dependency scanning via `npm audit`, and TS file-size budget) while keeping all Go rubric gates unchanged.
 - `v0.5` (2026-01-11): Add explicit gates for (1) **public API/tag contract consistency** (including unmarshalling helpers), (2) **expression boundary hardening** (including list index updates), and (3) **branch/release supply-chain** controls (main releases, premain prereleases). Rebalance point weights accordingly.
 - `v0.4` (2026-01-10): Add **Maintainability** category gates (file-size budget, documented maintainability plan, and “one query implementation” pressure) and add **SEC-8** to require enforced semantics for `dynamorm:"encrypted"` (no metadata-only security tags).
@@ -68,14 +69,14 @@ Enforcement rule (to prevent “green by omission”):
 
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
-| COM-1 | 1 | All language builds compile (Go modules + TypeScript build) | `bash scripts/verify-builds.sh` |
+| COM-1 | 1 | All language builds compile and versions align (Go modules + TypeScript build + shared repo version) | `bash scripts/verify-builds.sh` |
 | COM-2 | 1 | CI toolchain aligns to repo expectations (Go + Node + pinned tool versions) | `bash scripts/verify-ci-toolchain.sh` |
 | COM-3 | 1 | Planning docs exist and are versioned | `bash scripts/verify-planning-docs.sh` |
 | COM-4 | 1 | Lint configuration is schema-valid for golangci-lint v2 | `golangci-lint config verify -c .golangci-v2.yml` |
 | COM-5 | 1 | Coverage gate configuration is not diluted (default threshold ≥ 90%) | `bash scripts/verify-coverage-threshold.sh` |
 | COM-6 | 2 | CI enforces rubric surface (runs `make rubric`, pinned tools, uploads artifacts) | `bash scripts/verify-ci-rubric-enforced.sh` |
 | COM-7 | 1 | DynamoDB Local image is pinned (no `:latest`) | `bash scripts/verify-dynamodb-local-pin.sh` |
-| COM-8 | 2 | Branch + release supply-chain is enforced (`main` releases, `premain` prereleases; automated tagging/changelog; protections documented) | Artifact check: `.github/workflows/release.yml`, `.github/workflows/prerelease.yml`, `docs/development/planning/dynamorm-branch-release-policy.md` |
+| COM-8 | 2 | Branch + release supply-chain is enforced (`main` releases, `premain` prereleases; automated tagging/changelog; protections documented) | `bash scripts/verify-branch-release-supply-chain.sh` |
 
 **10/10 definition:** COM-1 through COM-8 pass.
 
@@ -131,7 +132,7 @@ reliability and security risks because they make future changes harder to reason
 ## Recommended CI surface (keep grades stable)
 
 ```bash
-# NOTE (v0.6): This surface intentionally includes new verifiers that may not exist yet.
+# NOTE (v0.7): This surface intentionally includes new verifiers that may not exist yet.
 # Keep the rubric definition strict; land the verifiers/workflows in follow-up remediation PRs.
 
 bash scripts/verify-planning-docs.sh

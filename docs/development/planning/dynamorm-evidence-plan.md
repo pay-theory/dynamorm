@@ -25,7 +25,7 @@ report, or CI artifact is possible.
 - Maintainability roadmap: `docs/development/planning/dynamorm-maintainability-roadmap.md`
 - Threat model: `docs/development/planning/dynamorm-threat-model.md`
 
-## Rubric-to-evidence map (Rubric v0.6)
+## Rubric-to-evidence map (Rubric v0.7)
 
 | Rubric ID | Primary evidence | How to refresh |
 | --- | --- | --- |
@@ -44,7 +44,7 @@ report, or CI artifact is possible.
 | COM-5 | Coverage threshold verification output | `bash scripts/verify-coverage-threshold.sh` |
 | COM-6 | CI rubric enforcement verification output | `bash scripts/verify-ci-rubric-enforced.sh` |
 | COM-7 | DynamoDB Local pin verification output | `bash scripts/verify-dynamodb-local-pin.sh` |
-| COM-8 | Branch/release policy + automation artifacts | Artifact check (`.github/workflows/release.yml`, `.github/workflows/prerelease.yml`, `docs/development/planning/dynamorm-branch-release-policy.md`) |
+| COM-8 | Branch/release policy + automation artifacts | `bash scripts/verify-branch-release-supply-chain.sh` |
 | DOC-* | Planning docs verification output | `bash scripts/verify-planning-docs.sh` |
 | DOC-4 | Doc integrity verification output | `bash scripts/verify-doc-integrity.sh` |
 | DOC-5 | Threat-controls parity verification output | `bash scripts/verify-threat-controls-parity.sh` |
