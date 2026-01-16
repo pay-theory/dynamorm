@@ -38,7 +38,10 @@ case "${branch}" in
     manifest=".release-please-manifest.premain.json"
     ;;
   *)
-    if [[ -f ".release-please-manifest.premain.json" ]]; then
+    # Local runs won't have PR context (no `GITHUB_BASE_REF`). Infer intent from the TS version:
+    # - prereleases (e.g., `-rc.N`) validate against the premain manifest
+    # - stable versions validate against the main manifest
+    if [[ "${ts_version}" == *"-rc."* && -f ".release-please-manifest.premain.json" ]]; then
       manifest=".release-please-manifest.premain.json"
     else
       manifest=".release-please-manifest.json"
@@ -67,9 +70,10 @@ if [[ -z "${expected}" ]]; then
 fi
 
 if [[ "${ts_version}" != "${expected}" ]]; then
-  # When merging prerelease work into `main`, allow PR checks to validate against the `premain` prerelease manifest.
-  # This prevents false failures during promotion PRs; the subsequent main release PR will enforce stable alignment.
-  if [[ "${base_ref}" == "main" && "${ts_version}" == *"-rc."* && -f ".release-please-manifest.premain.json" ]]; then
+  # When merging prerelease work into `main`, allow checks to validate against the `premain` prerelease manifest.
+  # This prevents false failures during promotion PRs and the immediate post-merge push; the subsequent main
+  # release PR will enforce stable alignment.
+  if [[ "${branch}" == "main" && "${ts_version}" == *"-rc."* && -f ".release-please-manifest.premain.json" ]]; then
     expected="$(
       python3 - <<PY
 import json
