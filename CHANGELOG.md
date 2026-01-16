@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-rc.2](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc.1...v1.1.0-rc.2) (2026-01-16)
+
+
+### Features
+
+* **rubric:** enforce TypeScript quality gates ([808c275](https://github.com/pay-theory/dynamorm/commit/808c275f189f669a42778e41203ed718723341ee))
+* **ts:** TS-0 tooling and package skeleton ([6614aa9](https://github.com/pay-theory/dynamorm/commit/6614aa93b37d56ffd6f57bcd1699203faf09f7b5))
+* **ts:** TS-1 model schema and validation ([d7932f9](https://github.com/pay-theory/dynamorm/commit/d7932f9678b1889a550ce9dd900c8e3b6b6f9c46))
+* **ts:** TS-2 CRUD operations (P0) ([da0f25b](https://github.com/pay-theory/dynamorm/commit/da0f25bb1e4d646b31fde18089a7d10fc3b357ac))
+* **ts:** TS-3 query, scan, and cursor ([dafa93c](https://github.com/pay-theory/dynamorm/commit/dafa93cf42b64143ec6398f4eecfd21ee7220bea))
+* **ts:** TS-4 batch and transactions (P2) ([dc3df67](https://github.com/pay-theory/dynamorm/commit/dc3df67ba23141f80241bf71cad27c41288b27fe))
+* **ts:** TS-5 streams unmarshalling ([46fead1](https://github.com/pay-theory/dynamorm/commit/46fead1e673d3b0113b38acf04bd8db7aced46d5))
+* **ts:** TS-6 encrypted field semantics ([b16e03c](https://github.com/pay-theory/dynamorm/commit/b16e03c63f4376388e80cd3204af9560047f8e34))
+* **ts:** TS-7 docs and examples ([1fa4ecd](https://github.com/pay-theory/dynamorm/commit/1fa4ecd44621ec3f4370e69ee70cf6f00c25155f))
+* TypeScript DynamORM (Phase 1) + DMS v0.1 draft ([62513d4](https://github.com/pay-theory/dynamorm/commit/62513d41e0fd1fdd2fc98ce068a5d40978faa263))
+
 ## [1.1.0-rc.1](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc...v1.1.0-rc.1) (2026-01-11)
 
 
