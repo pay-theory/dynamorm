@@ -100,6 +100,7 @@ examples/*/*/main
 *.pid.lock
 node_modules/
 ts/coverage/
+cdk.out/
 .npm
 .nyc_output
 .grunt
