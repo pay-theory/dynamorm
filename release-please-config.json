@@ -2,7 +2,20 @@
   "release-type": "go",
   "include-v-in-tag": true,
   "packages": {
-    ".": {}
+    ".": {
+      "extra-files": [
+        { "type": "json", "path": "ts/package.json", "jsonpath": "$.version" },
+        {
+          "type": "json",
+          "path": "ts/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "ts/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        }
+      ]
+    }
   }
 }
-

@@ -1,11 +1,11 @@
-# DynamORM: 10/10 Roadmap (Rubric v0.6)
+# DynamORM: 10/10 Roadmap (Rubric v0.7)
 
 This roadmap is the execution plan for achieving and maintaining **10/10** across **Quality**, **Consistency**,
 **Completeness**, **Security**, **Maintainability**, and **Docs** as defined by:
 
 - `docs/development/planning/dynamorm-10of10-rubric.md` (source of truth; versioned)
 
-## Current scorecard (Rubric v0.6)
+## Current scorecard (Rubric v0.7)
 
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned toolchain, stable commands, and no “green by exclusion” shortcuts).
