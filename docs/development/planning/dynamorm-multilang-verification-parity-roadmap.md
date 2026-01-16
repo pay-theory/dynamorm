@@ -65,8 +65,8 @@ See also:
 
 **Evidence**
 - New scripts:
-  - `bash scripts/coverage-ts.sh` (or similar)
-  - `bash scripts/coverage-py.sh` (or similar)
+  - `bash scripts/coverage-ts.sh`
+  - `bash scripts/coverage-py.sh`
 - CI workflow logs show generated summaries and artifacts.
 
 ---

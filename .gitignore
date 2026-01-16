@@ -99,6 +99,7 @@ examples/*/*/main
 *.seed
 *.pid.lock
 node_modules/
+ts/coverage/
 .npm
 .nyc_output
 .grunt
@@ -126,6 +127,7 @@ py/.python-version
 py/build/
 py/.coverage
 py/coverage.xml
+py/coverage-*.txt
 
 # Local notes (keep templates tracked)
 docs/development/notes/*

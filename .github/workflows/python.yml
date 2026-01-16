@@ -42,8 +42,8 @@ jobs:
       - name: Build
         run: uv --directory py run python -m build
 
-      - name: Unit tests
-        run: uv --directory py run pytest -q tests/unit
+      - name: Unit tests + coverage (unit)
+        run: bash scripts/coverage-py.sh unit
 
       - name: Start DynamoDB Local (pinned)
         run: make docker-up
@@ -61,3 +61,12 @@ jobs:
         if: always()
         run: make docker-down
 
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: py_coverage
+          path: |
+            py/coverage.xml
+            py/coverage-unit.txt
+          if-no-files-found: ignore
