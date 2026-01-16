@@ -15,12 +15,12 @@ type Document struct {
 }
 
 type Model struct {
-	Name       string     `yaml:"name"`
-	Table      Table      `yaml:"table"`
-	Naming     Naming     `yaml:"naming"`
-	Keys       Keys       `yaml:"keys"`
+	Name       string      `yaml:"name"`
+	Table      Table       `yaml:"table"`
+	Naming     Naming      `yaml:"naming"`
+	Keys       Keys        `yaml:"keys"`
 	Attributes []Attribute `yaml:"attributes"`
-	Indexes    []Index    `yaml:"indexes"`
+	Indexes    []Index     `yaml:"indexes"`
 }
 
 type Table struct {
@@ -53,8 +53,8 @@ type Attribute struct {
 }
 
 type Index struct {
-	Name       string       `yaml:"name"`
-	Type       string       `yaml:"type"` // GSI | LSI
+	Name       string        `yaml:"name"`
+	Type       string        `yaml:"type"` // GSI | LSI
 	Partition  KeyAttribute  `yaml:"partition"`
 	Sort       *KeyAttribute `yaml:"sort"`
 	Projection Projection    `yaml:"projection"`
@@ -114,4 +114,3 @@ func (m Model) AttributeByName(attr string) *Attribute {
 	}
 	return nil
 }
-

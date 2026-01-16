@@ -419,25 +419,25 @@ func createTableInput(tableName string, model spec.Model) (*dynamodb.CreateTable
 
 		if idx.Type == "LSI" {
 			lsis = append(lsis, types.LocalSecondaryIndex{
-				IndexName: aws.String(idx.Name),
-				KeySchema: indexKeySchema,
+				IndexName:  aws.String(idx.Name),
+				KeySchema:  indexKeySchema,
 				Projection: &projection,
 			})
 			continue
 		}
 
 		gsis = append(gsis, types.GlobalSecondaryIndex{
-			IndexName: aws.String(idx.Name),
-			KeySchema: indexKeySchema,
+			IndexName:  aws.String(idx.Name),
+			KeySchema:  indexKeySchema,
 			Projection: &projection,
 		})
 	}
 
 	return &dynamodb.CreateTableInput{
-		TableName:             aws.String(tableName),
-		AttributeDefinitions:  attrs,
-		KeySchema:             keySchema,
-		BillingMode:           types.BillingModePayPerRequest,
+		TableName:              aws.String(tableName),
+		AttributeDefinitions:   attrs,
+		KeySchema:              keySchema,
+		BillingMode:            types.BillingModePayPerRequest,
 		GlobalSecondaryIndexes: gsis,
 		LocalSecondaryIndexes:  lsis,
 	}, nil

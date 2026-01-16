@@ -405,12 +405,16 @@ func TestMigrationBatchProcessing(t *testing.T) {
 		// Create multiple users to test batch processing
 		const numUsers = 50
 		for i := 0; i < numUsers; i++ {
+			status := "active"
+			if i%2 == 1 {
+				status = "inactive"
+			}
 			user := &UserV1{
 				ID:      fmt.Sprintf("user-%d", i),
 				Email:   fmt.Sprintf("user%d@example.com", i),
 				Name:    fmt.Sprintf("User %d", i),
 				Age:     20 + (i % 50),
-				Status:  []string{"active", "inactive"}[i%2],
+				Status:  status,
 				Version: 1,
 			}
 			err := testCtx.DB.Model(user).Create()

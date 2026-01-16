@@ -8,11 +8,11 @@ import (
 )
 
 type Scenario struct {
-	Name       string    `yaml:"name"`
-	DMSVersion string    `yaml:"dms_version"`
-	Model      string    `yaml:"model"`
-	Table      Table     `yaml:"table"`
-	Steps      []Step    `yaml:"steps"`
+	Name       string `yaml:"name"`
+	DMSVersion string `yaml:"dms_version"`
+	Model      string `yaml:"model"`
+	Table      Table  `yaml:"table"`
+	Steps      []Step `yaml:"steps"`
 }
 
 type Table struct {
@@ -20,14 +20,14 @@ type Table struct {
 }
 
 type Step struct {
-	Op          string           `yaml:"op"`
-	IfNotExists bool             `yaml:"if_not_exists"`
-	Fields      []string         `yaml:"fields"`
-	Item        map[string]any   `yaml:"item"`
-	Key         map[string]any   `yaml:"key"`
-	Ms          int              `yaml:"ms"`
+	Op          string            `yaml:"op"`
+	IfNotExists bool              `yaml:"if_not_exists"`
+	Fields      []string          `yaml:"fields"`
+	Item        map[string]any    `yaml:"item"`
+	Key         map[string]any    `yaml:"key"`
+	Ms          int               `yaml:"ms"`
 	Save        map[string]string `yaml:"save"`
-	Expect      Expectation      `yaml:"expect"`
+	Expect      Expectation       `yaml:"expect"`
 }
 
 type Expectation struct {
@@ -60,4 +60,3 @@ func LoadFile(path string) (*Scenario, error) {
 	}
 	return &s, nil
 }
-

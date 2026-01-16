@@ -436,13 +436,11 @@ func (o *QueryOptimizer) generatePlanID(q *Query) string {
 // generateStatsKey generates a key for storing query statistics
 func (o *QueryOptimizer) generateStatsKey(q *Query) string {
 	// Similar to plan ID but without specific values
-	parts := []string{
-		q.metadata.TableName(),
-		q.index,
-	}
+	parts := make([]string, 0, 3)
+	parts = append(parts, q.metadata.TableName(), q.index)
 
 	// Add condition fields only (not values)
-	condFields := []string{}
+	condFields := make([]string, 0, len(q.conditions))
 	for _, cond := range q.conditions {
 		condFields = append(condFields, cond.Field)
 	}

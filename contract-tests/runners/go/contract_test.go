@@ -52,4 +52,3 @@ func TestContract_P0(t *testing.T) {
 		})
 	}
 }
-

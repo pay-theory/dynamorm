@@ -215,11 +215,11 @@ func asInt64(v any) (int64, error) {
 
 // User matches the v0.1 DMS fixture under `contract-tests/dms/v0.1/models/user.yml`.
 type User struct {
-	PK       string   `dynamorm:"pk"`
-	SK       string   `dynamorm:"sk"`
-	EmailHash string  `dynamorm:"index:gsi-email,pk,omitempty"`
-	Nickname string   `dynamorm:"omitempty"`
-	Tags     []string `dynamorm:"set,omitempty"`
+	PK        string   `dynamorm:"pk"`
+	SK        string   `dynamorm:"sk"`
+	EmailHash string   `dynamorm:"index:gsi-email,pk,omitempty"`
+	Nickname  string   `dynamorm:"omitempty"`
+	Tags      []string `dynamorm:"set,omitempty"`
 
 	CreatedAt time.Time `dynamorm:"created_at"`
 	UpdatedAt time.Time `dynamorm:"updated_at"`
@@ -345,4 +345,3 @@ func normalizeOrder(o Order) map[string]any {
 	}
 	return out
 }
-
