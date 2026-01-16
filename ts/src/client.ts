@@ -1,13 +1,29 @@
 import {
   type AttributeValue,
+  BatchGetItemCommand,
+  BatchWriteItemCommand,
   ConditionalCheckFailedException,
   DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
+  TransactWriteItemsCommand,
+  TransactionCanceledException,
   UpdateItemCommand,
+  type ConditionCheck,
+  type Delete,
+  type Put,
+  type TransactWriteItem,
+  type WriteRequest,
 } from '@aws-sdk/client-dynamodb';
 
+import {
+  chunk,
+  sleep,
+  type BatchGetResult,
+  type BatchWriteResult,
+  type RetryOptions,
+} from './batch.js';
 import { DynamormError } from './errors.js';
 import type { Model } from './model.js';
 import {
@@ -19,6 +35,7 @@ import {
   unmarshalItem,
 } from './marshal.js';
 import { QueryBuilder, ScanBuilder } from './query.js';
+import type { TransactAction } from './transaction.js';
 
 export class DynamormClient {
   private readonly models = new Map<string, Model>();
@@ -217,6 +234,172 @@ export class DynamormClient {
     }
   }
 
+  async batchGet(
+    modelName: string,
+    keys: Array<Record<string, unknown>>,
+    opts: RetryOptions & { consistentRead?: boolean } = {},
+  ): Promise<BatchGetResult> {
+    const model = this.requireModel(modelName);
+
+    const maxAttempts = opts.maxAttempts ?? 5;
+    const baseDelayMs = opts.baseDelayMs ?? 25;
+    const consistentRead = opts.consistentRead ?? true;
+
+    const allItems: Array<Record<string, unknown>> = [];
+    const unprocessedKeys: Array<Record<string, AttributeValue>> = [];
+
+    for (const keyChunk of chunk(keys, 100)) {
+      let pending = keyChunk.map((k) => marshalKey(model, k));
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const resp = await this.ddb.send(
+          new BatchGetItemCommand({
+            RequestItems: {
+              [model.tableName]: {
+                Keys: pending,
+                ConsistentRead: consistentRead,
+              },
+            },
+          }),
+        );
+
+        const got = resp.Responses?.[model.tableName] ?? [];
+        allItems.push(...got.map((it) => unmarshalItem(model, it)));
+
+        const next = resp.UnprocessedKeys?.[model.tableName]?.Keys ?? [];
+        if (next.length === 0) {
+          pending = [];
+          break;
+        }
+
+        pending = next;
+        if (attempt < maxAttempts) {
+          await sleep(baseDelayMs * attempt);
+        }
+      }
+
+      unprocessedKeys.push(...pending);
+    }
+
+    return { items: allItems, unprocessedKeys };
+  }
+
+  async batchWrite(
+    modelName: string,
+    req: {
+      puts?: Array<Record<string, unknown>>;
+      deletes?: Array<Record<string, unknown>>;
+    },
+    opts: RetryOptions = {},
+  ): Promise<BatchWriteResult> {
+    const model = this.requireModel(modelName);
+
+    const maxAttempts = opts.maxAttempts ?? 5;
+    const baseDelayMs = opts.baseDelayMs ?? 25;
+
+    const now = nowRfc3339Nano();
+    const writeRequests: WriteRequest[] = [];
+
+    for (const item of req.puts ?? []) {
+      writeRequests.push({
+        PutRequest: {
+          Item: marshalPutItem(model, item, { now }),
+        },
+      });
+    }
+
+    for (const key of req.deletes ?? []) {
+      writeRequests.push({
+        DeleteRequest: {
+          Key: marshalKey(model, key),
+        },
+      });
+    }
+
+    const unprocessed: WriteRequest[] = [];
+
+    for (const requestChunk of chunk(writeRequests, 25)) {
+      let pending = requestChunk;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const resp = await this.ddb.send(
+          new BatchWriteItemCommand({
+            RequestItems: {
+              [model.tableName]: pending,
+            },
+          }),
+        );
+
+        const next = resp.UnprocessedItems?.[model.tableName] ?? [];
+        if (next.length === 0) {
+          pending = [];
+          break;
+        }
+
+        pending = next;
+        if (attempt < maxAttempts) {
+          await sleep(baseDelayMs * attempt);
+        }
+      }
+
+      unprocessed.push(...pending);
+    }
+
+    return { unprocessed };
+  }
+
+  async transactWrite(actions: TransactAction[]): Promise<void> {
+    const transactItems: TransactWriteItem[] = actions.map(
+      (a): TransactWriteItem => {
+        const model = this.requireModel(a.model);
+
+        switch (a.kind) {
+          case 'put': {
+            const put: Put = {
+              TableName: model.tableName,
+              Item: marshalPutItem(model, a.item),
+            };
+            if (a.ifNotExists) {
+              put.ConditionExpression = 'attribute_not_exists(#pk)';
+              put.ExpressionAttributeNames = { '#pk': model.roles.pk };
+            }
+            return { Put: put };
+          }
+          case 'delete':
+            return {
+              Delete: {
+                TableName: model.tableName,
+                Key: marshalKey(model, a.key),
+              } satisfies Delete,
+            };
+          case 'condition':
+            return {
+              ConditionCheck: {
+                TableName: model.tableName,
+                Key: marshalKey(model, a.key),
+                ConditionExpression: a.conditionExpression,
+                ExpressionAttributeNames: a.expressionAttributeNames,
+                ExpressionAttributeValues: a.expressionAttributeValues,
+              } satisfies ConditionCheck,
+            };
+          default:
+            throw new DynamormError(
+              'ErrInvalidOperator',
+              'Unknown transaction action',
+            );
+        }
+      },
+    );
+
+    try {
+      await this.ddb.send(
+        new TransactWriteItemsCommand({ TransactItems: transactItems }),
+      );
+    } catch (err) {
+      throw mapDynamoError(err);
+    }
+  }
+
   query(modelName: string): QueryBuilder {
     const model = this.requireModel(modelName);
     return new QueryBuilder(this.ddb, model);
@@ -237,10 +420,21 @@ function mapDynamoError(err: unknown): unknown {
     });
   }
 
+  if (err instanceof TransactionCanceledException) {
+    return new DynamormError('ErrConditionFailed', 'Transaction canceled', {
+      cause: err,
+    });
+  }
+
   if (typeof err === 'object' && err !== null && 'name' in err) {
     const name = (err as { name?: unknown }).name;
     if (name === 'ConditionalCheckFailedException') {
       return new DynamormError('ErrConditionFailed', 'Condition failed', {
+        cause: err,
+      });
+    }
+    if (name === 'TransactionCanceledException') {
+      return new DynamormError('ErrConditionFailed', 'Transaction canceled', {
         cause: err,
       });
     }

@@ -5,7 +5,12 @@ import {
   type AttributeValue,
 } from '@aws-sdk/client-dynamodb';
 
-import { decodeCursor, encodeCursor, type Cursor, type CursorSort } from './cursor.js';
+import {
+  decodeCursor,
+  encodeCursor,
+  type Cursor,
+  type CursorSort,
+} from './cursor.js';
 import { DynamormError } from './errors.js';
 import { marshalScalar, unmarshalItem } from './marshal.js';
 import type { AttributeSchema, IndexSchema, Model } from './model.js';
