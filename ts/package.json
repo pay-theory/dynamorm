@@ -22,7 +22,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "npm run test:unit && npm run test:integration",
-    "test:unit": "tsx test/unit.test.ts",
+    "test:unit": "tsx test/unit/basic.test.ts && tsx test/unit/model.test.ts",
     "test:integration": "tsx test/integration/dynamodb-local.test.ts"
   },
   "dependencies": {
