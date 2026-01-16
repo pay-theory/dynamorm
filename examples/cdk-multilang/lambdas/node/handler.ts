@@ -6,6 +6,8 @@ import {
   DynamormClient,
   DynamormError,
   defineModel,
+  getDmsModel,
+  parseDmsDocument,
 } from '../../../../ts/dist/index.js';
 
 const tableName = process.env.TABLE_NAME;
@@ -18,27 +20,15 @@ if (!kmsKeyArn) {
   throw new Error('KMS_KEY_ARN is required');
 }
 
-const Demo = defineModel({
-  name: 'DemoItem',
-  table: { name: tableName },
-  keys: {
-    partition: { attribute: 'PK', type: 'S' },
-    sort: { attribute: 'SK', type: 'S' },
-  },
-  attributes: [
-    { attribute: 'PK', type: 'S', roles: ['pk'] },
-    { attribute: 'SK', type: 'S', roles: ['sk'] },
-    { attribute: 'value', type: 'S', optional: true, omit_empty: true },
-    { attribute: 'lang', type: 'S', optional: true, omit_empty: true },
-    {
-      attribute: 'secret',
-      type: 'S',
-      optional: true,
-      omit_empty: true,
-      encryption: { v: 1 },
-    },
-  ],
-});
+const dmsB64 = process.env.DMS_MODEL_B64;
+if (!dmsB64) {
+  throw new Error('DMS_MODEL_B64 is required');
+}
+
+const dmsYaml = Buffer.from(dmsB64, 'base64').toString('utf8');
+const dmsDoc = parseDmsDocument(dmsYaml);
+const demoSchema = getDmsModel(dmsDoc, 'DemoItem');
+const Demo = defineModel({ ...demoSchema, table: { name: tableName } });
 
 const ddb = new DynamoDBClient({ region: process.env.AWS_REGION });
 const kms = new KMSClient({ region: process.env.AWS_REGION });

@@ -32,7 +32,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.758.0",
-    "@aws-sdk/client-kms": "^3.758.0"
+    "@aws-sdk/client-kms": "^3.758.0",
+    "yaml": "^2.8.0"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.26.0",

@@ -27,6 +27,7 @@ Versioning in a monorepo:
 ## Principles (non-negotiable)
 
 - **Single source of truth:** a model’s keys/indexes/attribute names should be defined once, not re-invented per service.
+- **First-class languages:** Go/TypeScript/Python are equal implementations; Go-only features must be explicitly scoped and tracked.
 - **Contract over convenience:** behavior is specified and tested; implementations must match the contract.
 - **Safe-by-default:** no “looks secure” metadata-only features; tags like `encrypted` must have enforced semantics.
 - **Serverless-first:** optimize for AWS Lambda cold start, bundle size, and minimal runtime overhead.
@@ -52,6 +53,12 @@ The spec should cover two things:
    - batch + transactions
    - streams unmarshalling
    - error taxonomy (typed errors, “fail closed” rules)
+
+Additionally, DMS must be a **language-neutral schema source-of-truth**:
+
+- Canonical authoring format: **YAML 1.2** restricted to the **JSON-compatible subset**
+- Equivalent interchange format: **JSON**
+- Rule: a DMS file must parse to the **same JSON object shape** in Go/TypeScript/Python
 
 Recommended: publish DMS as its own repo (or a dedicated folder) with:
 - a versioned schema (JSON Schema/YAML + examples)
@@ -111,11 +118,27 @@ Runnable outline (starting point):
   - GSI/LSI
   - lifecycle fields (`created_at`, `updated_at`, `version`, `ttl`)
   - `encrypted` constraints (not keys; not queryable; fail-closed when unconfigured)
+- DMS v0.1 specifies a **canonical language-neutral format** (YAML 1.2 JSON-subset, plus equivalent JSON).
+- A DMS schema validator exists (JSON Schema recommended) and is used in CI to validate DMS fixtures/examples.
 - A feature matrix exists: rows are features, columns are `go/ts/py`, with parity tiers (P0/P1/P2…)
 
 ---
 
-#### ML-2 — Shared contract tests (minimal)
+#### ML-2 — DMS loaders + validation (all languages)
+
+**Goal:** remove schema duplication as a drift vector by making DMS loadable everywhere.
+
+**Acceptance criteria**
+- Go/TS/Py each have a DMS loader that can read YAML/JSON and validate:
+  - required fields/types
+  - invariant rules (no encrypted keys/indexes, role uniqueness, etc)
+  - naming convention constraints
+- A repo-local command exists to validate all DMS fixtures (example: `bash scripts/verify-dms.sh`).
+- Contract tests and examples can consume the same DMS model definitions without hand-translating them per language.
+
+---
+
+#### ML-3 — Shared contract tests (minimal)
 
 **Goal:** prevent “same name, different semantics” across languages.
 
@@ -127,6 +150,7 @@ Runnable outline (starting point):
   - transactions + batch behavior (including partial failure semantics)
   - `encrypted` semantics (fail-closed + round-trip)
 - DynamoDB Local version is pinned for these tests.
+- Contract runners for Go/TS/Py load the same DMS + scenarios (no per-language re-definition of model shape).
 
 ### Phase 1 — TypeScript (`dynamorm-ts`) MVP
 
@@ -158,6 +182,7 @@ Runnable outline (starting point):
 
 **Acceptance criteria**
 - TS can define: PK/SK, attribute names, GSI/LSI, lifecycle fields, modifiers (`omitempty/set/json/binary/encrypted/-`).
+- Model definitions are losslessly representable as DMS v0.1 (YAML/JSON) and can be loaded from DMS for contract tests and examples.
 - The library can validate model definitions early (fail fast on invalid combinations).
 
 ---
@@ -264,6 +289,7 @@ Build `dynamorm-py` with the same contract-driven posture as Go and TypeScript.
 
 **Acceptance criteria**
 - Python can define: PK/SK, attribute names, GSI/LSI, lifecycle fields, modifiers (`omitempty/set/json/binary/encrypted/-`).
+- Model definitions are losslessly representable as DMS v0.1 (YAML/JSON) and can be loaded from DMS for contract tests and examples.
 - The library validates model definitions early (fail fast on invalid combinations).
 
 ---
@@ -334,9 +360,132 @@ Build `dynamorm-py` with the same contract-driven posture as Go and TypeScript.
 - Examples include local DynamoDB and AWS Lambda usage.
 - A parity statement exists: which tiers/features match Go/TS and which are intentionally missing.
 
+### Phase 3 — First-class parity (beyond P0–P4)
+
+Phase 1/2 target P0–P4 behavioral parity. Phase 3 expands the scope to cover the broader Go surface area that makes
+DynamORM “foundational” in real services: schema mgmt, full query/update DSL, runtime/ops helpers, security/hardening,
+extensibility, and public testkits.
+
+This phase is tracked by `docs/development/planning/dynamorm-multilang-feature-parity-matrix.md`.
+
+#### FC-0 — DMS-first schema workflow (author once)
+
+**Goal:** models are defined once in DMS and consumed across all runtimes.
+
+**Acceptance criteria**
+- Services can choose a DMS-first workflow:
+  - author schema in DMS (YAML/JSON)
+  - load it at runtime and/or generate language-specific artifacts (codegen)
+- A verifier ensures DMS fixtures are valid and used by:
+  - contract-tests scenarios
+  - at least one “real” deployable example (CDK stack)
+- “Code-first” definitions (Go tags / TS builder / Py dataclasses) may still exist, but MUST be provably equivalent to DMS
+  (either generated from DMS, or validated against DMS in CI).
+
+---
+
+#### FC-1 — Schema management parity (table helpers)
+
+**Goal:** schema/table utilities are not Go-only.
+
+**Acceptance criteria**
+- TypeScript and Python provide first-class equivalents of:
+  - create/ensure/delete/describe table
+  - optional dev-only auto-migrate semantics (or a clearly documented non-support decision + alternative)
+- Behaves consistently across DynamoDB Local and real AWS (idempotent and safe-by-default).
+
+---
+
+#### FC-2 — Query DSL parity (filters, groups, ordering, retries, parallel scan)
+
+**Goal:** match Go’s query expressiveness without raw-string footguns.
+
+**Acceptance criteria**
+- TypeScript and Python support:
+  - filter expressions and AND/OR filter groups
+  - ordering/projection helpers and deterministic pagination behavior
+  - eventual-consistency helpers (retry/backoff patterns) where relevant
+  - parallel scan semantics for large-table workflows
+- Contract + integration tests exist for drift-prone behaviors (filters/groups, projection escaping, cursor handoff).
+
+---
+
+#### FC-3 — Update DSL parity (UpdateBuilder)
+
+**Goal:** expose Go’s update-builder semantics in TS/Py with the same safety rules.
+
+**Acceptance criteria**
+- TypeScript and Python support the UpdateBuilder feature class:
+  - SET/REMOVE/ADD/DELETE, list ops (append/prepend/remove index/set element)
+  - conditional updates, version helpers, return values
+- Encrypted fields remain non-queryable and are rejected in update conditions consistently across languages.
+- Contract tests pin update-expression construction and reserved word escaping.
+
+---
+
+#### FC-4 — Runtime/ops parity (Lambda + multi-account)
+
+**Goal:** “serverless-first” ergonomics exist in all languages.
+
+**Acceptance criteria**
+- TypeScript and Python ship Lambda-focused defaults/helpers (connection reuse, timeouts, optional metrics).
+- Multi-account assume-role patterns are supported (wrapper or documented recipe) without ad-hoc per-service code.
+
+---
+
+#### FC-5 — Security/hardening parity (validation + protection)
+
+**Goal:** Go’s secure-by-default utilities are available across runtimes.
+
+**Acceptance criteria**
+- TypeScript and Python ship equivalents of Go’s:
+  - naming/attribute validation and injection hardening
+  - expression safety constraints (length/depth/operator allowlists)
+  - resource protection utilities (rate limiting, concurrency limits) where relevant to each runtime
+- Tests prove “fail closed” behavior for unsafe inputs and no sensitive data leakage in error messages.
+
+---
+
+#### FC-6 — Extensibility parity (custom converters + json/binary)
+
+**Goal:** downstream services can represent domain-specific types consistently.
+
+**Acceptance criteria**
+- Each language exposes a stable custom-conversion hook (marshal/unmarshal) for non-primitive types.
+- `json`/`binary` attribute modifiers are defined in DMS and implemented consistently across languages.
+
+---
+
+#### FC-7 — Public mocks/testkit parity (cheap testing for consumers)
+
+**Goal:** testing is easy and consistent across runtimes.
+
+**Acceptance criteria**
+- Each language exposes a public, supported testkit for mocking:
+  - DynamoDB calls used by DynamORM
+  - KMS (or deterministic encryption provider)
+  - time/clock and randomness sources (where applicable)
+- Coverage for these modules meets the same repo-wide >=90% gate and is rubric-enforced.
+
+---
+
+#### FC-8 — Advanced helpers parity (aggregates + optimization)
+
+**Goal:** keep “non-core but real-world” helpers from becoming Go-only drift points.
+
+**Acceptance criteria**
+- Aggregate helpers (sum/avg/min/max, group-by style helpers) exist in TS/Py with the same behavior class as Go.
+  - If a helper is intentionally not supported in a language, that decision is explicitly documented and tracked in the
+    feature parity matrix.
+- Query optimization/planning helpers (if present) must be:
+  - deterministic for a given query shape
+  - advisory-only (must not change query semantics/results)
+  - test-covered (unit + contract/integration where applicable)
+
 ## Key risks (and mitigations)
 
 - **Drift across implementations:** mitigated by DMS + shared contract tests + pinned infra/tooling.
 - **Type-system mismatch:** mitigate by defining what is runtime-validated vs compile-time-only per language.
 - **Lambda performance regressions (TS):** mitigate with bundle-size budgets and cold-start benchmarks in CI.
 - **Over-scoping parity:** mitigate with explicit parity tiers (ship P0/P1 first; expand only with tests).
+- **Go-only creep:** mitigate by tracking “first-class scope” explicitly and requiring an explicit decision for any Go-only feature.

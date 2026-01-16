@@ -18,6 +18,11 @@ export class MultilangDemoStack extends Stack {
     super(scope, id, props);
 
     const repoRoot = repoRootFrom(__dirname);
+    const demoDmsPath = path.join(repoRoot, 'examples/cdk-multilang/dms/demo.yml');
+    if (!fs.existsSync(demoDmsPath)) {
+      throw new Error(`Missing DMS fixture: ${demoDmsPath}`);
+    }
+    const demoDmsB64 = Buffer.from(fs.readFileSync(demoDmsPath, 'utf8'), 'utf8').toString('base64');
 
     const table = new dynamodb.Table(this, 'DemoTable', {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
@@ -71,6 +76,7 @@ export class MultilangDemoStack extends Stack {
       environment: {
         TABLE_NAME: table.tableName,
         KMS_KEY_ARN: key.keyArn,
+        DMS_MODEL_B64: demoDmsB64,
       },
     });
 
@@ -88,6 +94,7 @@ export class MultilangDemoStack extends Stack {
       environment: {
         TABLE_NAME: table.tableName,
         KMS_KEY_ARN: key.keyArn,
+        DMS_MODEL_B64: demoDmsB64,
       },
     });
 
@@ -137,6 +144,7 @@ export class MultilangDemoStack extends Stack {
       environment: {
         TABLE_NAME: table.tableName,
         KMS_KEY_ARN: key.keyArn,
+        DMS_MODEL_B64: demoDmsB64,
       },
     });
 

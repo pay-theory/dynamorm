@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from dataclasses import dataclass
@@ -7,7 +8,16 @@ from typing import Any
 
 import boto3
 
-from dynamorm_py import ModelDefinition, NotFoundError, Table, TransactPut, dynamorm_field
+from dynamorm_py import (
+    ModelDefinition,
+    NotFoundError,
+    Table,
+    TransactPut,
+    assert_model_definition_equivalent_to_dms,
+    dynamorm_field,
+    get_dms_model,
+    parse_dms_document,
+)
 
 
 @dataclass(frozen=True)
@@ -35,7 +45,16 @@ def _get_table() -> Table[DemoItem]:
     if not kms_key_arn:
         raise RuntimeError("KMS_KEY_ARN is required")
 
+    dms_b64 = (os.environ.get("DMS_MODEL_B64") or "").strip()
+    if not dms_b64:
+        raise RuntimeError("DMS_MODEL_B64 is required")
+
+    dms_yaml = base64.b64decode(dms_b64.encode("utf-8")).decode("utf-8")
+    dms_doc = parse_dms_document(dms_yaml)
+    dms_model = get_dms_model(dms_doc, "DemoItem")
+
     model = ModelDefinition.from_dataclass(DemoItem, table_name=table_name)
+    assert_model_definition_equivalent_to_dms(model, dms_model, ignore_table_name=True)
     client = boto3.client("dynamodb")
     _table = Table(model, client=client, kms_key_arn=kms_key_arn)
     return _table

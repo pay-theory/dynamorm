@@ -25,15 +25,34 @@ Related:
 - **P3 — Streams parity:** stream image unmarshalling helpers (Lambda events).
 - **P4 — Encryption parity:** `encrypted` semantics are real (KMS envelope, fail-closed, not queryable, not key/indexable).
 
+## First-class scope (all languages)
+
+The intention is that **every language is first-class**: not a minimal surface, not “best effort”.
+
+Therefore parity scope includes (in addition to P0–P4):
+
+- **Language-neutral schema source-of-truth:** a shared DynamORM Spec (DMS) document that all three implementations can
+  load/validate against (no “same name, different meaning”).
+- **Schema/table utilities:** dev/test table helpers (create/ensure/delete/describe), and optional local auto-migrate when
+  appropriate (DynamoDB Local workflows should not be Go-only).
+- **Full query/update surface:** filters (AND/OR groups), projections/select, pagination helpers, update-builder style ops,
+  and other ergonomic helpers that exist in Go today.
+- **Operational/runtime helpers:** Lambda-focused defaults and (where relevant) multi-account assume-role helpers.
+- **Security/hardening modules:** validation and resource-protection helpers that are part of Go’s “secure by default”
+  story (must be mapped into TS/Py with equivalent guarantees).
+- **Extensibility + testability:** custom type conversion hooks and public mocks/testkit utilities so downstream services
+  can test cheaply and consistently.
+
 ## Snapshot (current)
 
-This snapshot is intentionally blunt. “Partial” means there is known drift risk or missing contract tests.
+This snapshot is intentionally blunt. “Partial” means there is known drift risk, missing behavior, or missing contract
+tests. P0–P4 is the **behavioral** view; “first-class scope” items are tracked in the feature matrix below.
 
 | Language | P0 | P1 | P2 | P3 | P4 | Major known gaps |
 | --- | --- | --- | --- | --- | --- | --- |
 | Go | ✅ | ✅ | ✅ | ✅ | ✅ | (reference) |
-| TypeScript (`ts/`) | ✅ | ✅ | ✅ | ✅ | ⚠️ | Encryption provider not KMS-based by default; needs KMS+AAD contract parity |
-| Python (`py/`) | ⚠️ | ⚠️ | ✅ | ✅ | ✅ | Lifecycle automation missing; cursor format not contract-compatible with Go/TS |
+| TypeScript (`ts/`) | ✅ | ✅ | ✅ | ✅ | ⚠️ | KMS provider exists; still needs stronger “encrypted attribute” end-to-end coverage in CI |
+| Python (`py/`) | ⚠️ | ✅ | ✅ | ✅ | ✅ | Lifecycle automation missing (`created_at`/`updated_at`/`version`/`ttl`) |
 
 ## Parity matrix (features)
 
@@ -44,10 +63,14 @@ Legend:
 
 | Area | Feature | Go | TypeScript | Python | Contract tests | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| Spec | Language-neutral schema definition (DMS) used as the source-of-truth | **No** | **No** | **No** | N/A | DMS exists as a spec + fixtures, but libraries are not DMS-driven yet |
+| Spec | DMS loader (YAML/JSON) → runtime model schema | No | No | No | N/A | Required for first-class multi-language drift prevention |
 | Schema | PK/SK roles | Yes | Yes | Yes | No | Py uses dataclass metadata; TS uses `defineModel` schema |
 | Schema | GSI/LSI definitions | Yes | Yes | Yes | No | All languages can declare indexes |
 | Schema | Attribute naming determinism | Yes | Yes | Yes | No | DMS should be explicit-name first; avoid implicit drift |
-| Encoding | `omitempty` emptiness rules | Yes | Yes | Yes | No | Must be pinned by fixtures (empty sets, falsey values) |
+| Encoding | `omitempty` emptiness rules | Yes | Yes | Yes | No | Must be pinned by fixtures (falsey values, empty maps/lists) |
+| Encoding | Empty sets encode as `NULL` (never empty `SS/NS/BS`) | Yes | Yes | Yes | Yes | Contract tests pin this behavior |
+| Expressions | Reserved word escaping via `ExpressionAttributeNames` | Yes | Yes | Yes | Yes | Contract tests cover common reserved words (e.g., `size`) |
 | Lifecycle | `created_at` / `updated_at` auto-populate | Yes | Yes | **No** | No | Py needs parity (or DMS must mark as “optional feature”) |
 | Lifecycle | `version` optimistic locking | Yes | Yes | **No** | No | Py currently supports raw condition expressions but not automatic version semantics |
 | Lifecycle | `ttl` epoch seconds | Yes | Yes | **No** | No | Py currently treats attributes as explicit; no TTL role semantics yet |
@@ -56,17 +79,31 @@ Legend:
 | Errors | Typed errors taxonomy | Yes | Yes | Yes | No | Needs parity mapping doc + contract tests for common AWS codes |
 | Query | Query + key operators | Yes | Yes | Yes | No | Operators parity exists; must add cross-language fixtures |
 | Query | Scan | Yes | Yes | Yes | No | Py/TS support basic scan + cursor |
-| Pagination | Cursor encoding/decoding | Yes | Yes | **Partial** | **Partial** | TS cursor is contract-tested vs golden; Py cursor needs alignment to DMS cursor spec |
+| Pagination | Cursor encoding/decoding | Yes | Yes | Yes | Yes | Golden cursor fixture enforced in Go/TS/Py contract runners |
 | Index | Index selection (table vs GSI/LSI) | Yes | Yes | Yes | No | Both TS and Py support index selection |
 | Consistency | ConsistentRead rules | Yes | Yes | Yes | No | Must enforce “no consistent read on GSI” across languages |
 | Batch | BatchGet + retry semantics | Yes | Yes | Yes | No | Needs explicit, shared “unprocessed” semantics fixtures |
 | Batch | BatchWrite + retry semantics | Yes | Yes | Yes | No | Same as above |
 | Tx | TransactWrite + error surfacing | Yes | Yes | Yes | No | TS/Py need parity on condition failures vs mixed cancellations |
 | Streams | Unmarshal stream image | Yes | Yes | Yes | No | Py/TS implement Lambda stream helpers; add fixtures for map/list/binary |
-| Encryption | Envelope format (`v`,`edk`,`nonce`,`ct`) | Yes | Yes | Yes | No | All languages use envelope map shape; KMS/AAD parity must be proven |
+| Encryption | Envelope format (`v`,`edk`,`nonce`,`ct`) | Yes | Yes | Yes | Yes | Contract tests pin envelope shape across languages |
 | Encryption | Fail-closed when unconfigured | Yes | Yes | Yes | No | TS requires encryption provider; Py requires `kms_key_arn` |
-| Encryption | AAD binding to attribute name | Yes | **Partial** | Yes | No | TS provider is user-defined; provide official KMS provider + contract tests |
-| Infra | Table create/migrate helpers | Yes | No | No | No | Keep “runtime only” unless we decide otherwise |
+| Encryption | AAD binding to attribute name | Yes | Yes | Yes | Yes | Contract tests pin AAD binding failure behavior (attribute swap must fail) |
+| Schema mgmt | Create/Ensure/Delete/Describe table helpers | Yes | No | No | No | Present in Go; required for first-class dev/test ergonomics |
+| Schema mgmt | AutoMigrate (dev/local) | Yes | No | No | No | Go provides; TS/Py should add or explicitly scope as not supported |
+| Query DSL | Filter expressions + AND/OR filter groups | Yes | No | No | No | Go supports; TS/Py should map (safe expression builder) |
+| Query DSL | OrderBy + Select/projection helpers | Yes | **Partial** | **Partial** | No | TS/Py support projections; Go has broader DSL; define standard behavior |
+| Query DSL | Offset (skip N items) | Yes | No | No | No | Go supports; must define portable semantics (DynamoDB has no native offset) |
+| Scan | ParallelScan / ScanAllSegments | Yes | No | No | No | Go supports; needed for large-table scan parity |
+| Update DSL | Fluent UpdateBuilder (SET/REMOVE/ADD/DELETE/list ops) | Yes | No | **Partial** | No | Py supports basic SET/REMOVE; lacks list/set ops and version helper |
+| Aggregates | Sum/Avg/Min/Max + GroupBy helpers | Yes | No | No | No | Go-only today; decide whether this is in-scope for multi-lang v1 |
+| Optimization | Query optimizer/plan cache | Yes | No | No | No | Go-only today; ensure it never changes semantics (only hints) |
+| Runtime | Lambda-optimized DB wrapper + cold-start helpers | Yes | No | No | No | Go has `LambdaDB`; TS/Py should ship equivalents for Lambda DX |
+| Runtime | Multi-account assume-role wrapper | Yes | No | No | No | Go has `MultiAccountDB`; add equivalent helpers or document alternatives |
+| Security | Field/operator/expression validation & injection hardening | Yes | No | No | No | Go has `pkg/validation`; TS/Py must add equivalent hardening |
+| Security | Resource protection (rate limiting, concurrency, memory monitor) | Yes | No | No | No | Go has `pkg/protection`; TS/Py parity required for “secure by default” |
+| Extensibility | Custom type converters / pluggable marshaling | Yes | No | No | No | Go supports custom converters; TS/Py should define equivalent hooks |
+| Testing | Public mocks/testkit for DynamoDB + KMS | Yes | Yes | **Partial** | No | TS has `ts/src/testkit`; Py has mocks but needs parity + tests/coverage |
 
 ## What “parity complete” means (acceptance criteria)
 
@@ -81,10 +118,9 @@ A feature is “at parity” only when:
 
 ## Highest-risk drift points (prioritize next)
 
-- **Cursor compatibility:** Py must adopt the canonical cursor format used by Go/TS (or DMS must standardize a new one).
+- **DMS-first schema:** without a shared schema source-of-truth, semantic drift is always possible (even with good tests).
 - **Lifecycle parity:** decide whether lifecycle roles are required in all languages; if yes, implement in Py with tests.
-- **Encryption parity:** publish an official KMS-based TS `EncryptionProvider` that matches Go/Py envelope+AAD rules and is
-  verified by fixtures.
-- **Mocks/testkit parity:** every language should ship a public, supported mocking surface for DynamoDB + KMS to make
-  application testing cheap and consistent.
-
+- **Full query/update DSL parity:** filters/groups and update-builder semantics are large drift surfaces without shared fixtures.
+- **Schema mgmt parity:** dev/test workflows should not be Go-only (CDK isn’t always available in unit tests).
+- **Mocks/testkit parity:** every language should ship a public, supported mocking surface for DynamoDB + KMS so downstream
+  services can test cheaply and consistently.

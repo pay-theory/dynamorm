@@ -8,26 +8,18 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"github.com/pay-theory/dynamorm"
+	demomodel "github.com/pay-theory/dynamorm/examples/cdk-multilang/lambdas/go/demo"
+	"github.com/pay-theory/dynamorm/pkg/dms"
 	customerrors "github.com/pay-theory/dynamorm/pkg/errors"
+	"github.com/pay-theory/dynamorm/pkg/model"
 	"github.com/pay-theory/dynamorm/pkg/session"
 )
-
-type DemoItem struct {
-	PK     string `dynamorm:"pk,attr:PK" json:"PK"`
-	SK     string `dynamorm:"sk,attr:SK" json:"SK"`
-	Value  string `dynamorm:"attr:value" json:"value"`
-	Lang   string `dynamorm:"attr:lang" json:"lang"`
-	Secret string `dynamorm:"encrypted,attr:secret" json:"secret,omitempty"`
-}
-
-func (DemoItem) TableName() string {
-	return os.Getenv("TABLE_NAME")
-}
 
 type request struct {
 	PK       string `json:"pk"`
@@ -88,7 +80,66 @@ func parseRequest(event events.LambdaFunctionURLRequest) request {
 	return req
 }
 
+var dmsValidateOnce sync.Once
+var dmsValidateErr error
+
+func validateDMS() error {
+	dmsValidateOnce.Do(func() {
+		b64 := os.Getenv("DMS_MODEL_B64")
+		if b64 == "" {
+			dmsValidateErr = fmt.Errorf("DMS_MODEL_B64 is required")
+			return
+		}
+
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			dmsValidateErr = fmt.Errorf("decode DMS_MODEL_B64: %w", err)
+			return
+		}
+
+		doc, err := dms.ParseDocument(raw)
+		if err != nil {
+			dmsValidateErr = fmt.Errorf("parse DMS document: %w", err)
+			return
+		}
+
+		want, ok := dms.FindModel(doc, "DemoItem")
+		if !ok {
+			dmsValidateErr = fmt.Errorf("DMS document missing model DemoItem")
+			return
+		}
+
+		reg := model.NewRegistry()
+		if err := reg.Register(demomodel.DemoItem{}); err != nil {
+			dmsValidateErr = fmt.Errorf("register DemoItem: %w", err)
+			return
+		}
+		meta, err := reg.GetMetadata(demomodel.DemoItem{})
+		if err != nil {
+			dmsValidateErr = fmt.Errorf("get DemoItem metadata: %w", err)
+			return
+		}
+
+		got, err := dms.FromMetadata(meta)
+		if err != nil {
+			dmsValidateErr = fmt.Errorf("convert DemoItem metadata to DMS: %w", err)
+			return
+		}
+
+		if err := dms.AssertModelsEquivalent(got, *want, dms.CompareOptions{IgnoreTableName: true}); err != nil {
+			dmsValidateErr = fmt.Errorf("DMS mismatch: %w", err)
+			return
+		}
+	})
+
+	return dmsValidateErr
+}
+
 func handler(ctx context.Context, event events.LambdaFunctionURLRequest) (events.LambdaFunctionURLResponse, error) {
+	if err := validateDMS(); err != nil {
+		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
 	db, err := dynamorm.New(session.Config{
 		Region:    os.Getenv("AWS_REGION"),
 		KMSKeyARN: os.Getenv("KMS_KEY_ARN"),
@@ -130,7 +181,7 @@ func handler(ctx context.Context, event events.LambdaFunctionURLRequest) (events
 		keys := make([]any, 0, count)
 		for i := 1; i <= count; i++ {
 			sk := fmt.Sprintf("%s%d", prefix, i)
-			putItems = append(putItems, &DemoItem{
+			putItems = append(putItems, &demomodel.DemoItem{
 				PK:     req.PK,
 				SK:     sk,
 				Value:  req.Value,
@@ -140,12 +191,12 @@ func handler(ctx context.Context, event events.LambdaFunctionURLRequest) (events
 			keys = append(keys, map[string]any{"PK": req.PK, "SK": sk})
 		}
 
-		q := db.Model(&DemoItem{})
+		q := db.Model(&demomodel.DemoItem{})
 		if err := q.BatchWrite(putItems, nil); err != nil {
 			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		var out []DemoItem
+		var out []demomodel.DemoItem
 		if err := q.BatchGet(keys, &out); err != nil {
 			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
@@ -166,15 +217,15 @@ func handler(ctx context.Context, event events.LambdaFunctionURLRequest) (events
 			prefix = "TX#"
 		}
 
-		item1 := &DemoItem{PK: req.PK, SK: prefix + "1", Value: req.Value, Lang: "go", Secret: req.Secret}
-		item2 := &DemoItem{PK: req.PK, SK: prefix + "2", Value: req.Value, Lang: "go", Secret: req.Secret}
+		item1 := &demomodel.DemoItem{PK: req.PK, SK: prefix + "1", Value: req.Value, Lang: "go", Secret: req.Secret}
+		item2 := &demomodel.DemoItem{PK: req.PK, SK: prefix + "2", Value: req.Value, Lang: "go", Secret: req.Secret}
 
 		if err := db.Transact().WithContext(ctx).Put(item1).Put(item2).Execute(); err != nil {
 			return jsonResponse(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		}
 
-		var out []DemoItem
-		if err := db.Model(&DemoItem{}).BatchGet(
+		var out []demomodel.DemoItem
+		if err := db.Model(&demomodel.DemoItem{}).BatchGet(
 			[]any{
 				map[string]any{"PK": req.PK, "SK": item1.SK},
 				map[string]any{"PK": req.PK, "SK": item2.SK},
@@ -196,8 +247,8 @@ func handler(ctx context.Context, event events.LambdaFunctionURLRequest) (events
 			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "pk and sk are required"})
 		}
 
-		var out DemoItem
-		err := db.Model(&DemoItem{PK: req.PK, SK: req.SK}).First(&out)
+		var out demomodel.DemoItem
+		err := db.Model(&demomodel.DemoItem{PK: req.PK, SK: req.SK}).First(&out)
 		if err != nil {
 			if errors.Is(err, customerrors.ErrItemNotFound) {
 				return jsonResponse(http.StatusNotFound, map[string]string{"error": "not found"})
@@ -212,7 +263,7 @@ func handler(ctx context.Context, event events.LambdaFunctionURLRequest) (events
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "pk and sk are required"})
 	}
 
-	item := &DemoItem{
+	item := &demomodel.DemoItem{
 		PK:     req.PK,
 		SK:     req.SK,
 		Value:  req.Value,

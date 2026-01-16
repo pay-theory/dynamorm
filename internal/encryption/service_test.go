@@ -75,6 +75,14 @@ func newTestService(t *testing.T) *Service {
 	return svc
 }
 
+func TestNewServiceFromAWSConfig(t *testing.T) {
+	svc := NewServiceFromAWSConfig("arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000", aws.Config{})
+	require.NotNil(t, svc)
+	require.NotNil(t, svc.kms)
+	require.NotNil(t, svc.rand)
+	require.Equal(t, "arn:aws:kms:us-east-1:123456789012:key/00000000-0000-0000-0000-000000000000", svc.keyARN)
+}
+
 func TestService_EncryptDecrypt_RoundTrip_String(t *testing.T) {
 	svc := newTestService(t)
 

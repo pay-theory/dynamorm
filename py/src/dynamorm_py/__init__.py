@@ -35,6 +35,11 @@ from .transaction import (
 )
 
 if TYPE_CHECKING:
+    from .dms import (
+        assert_model_definition_equivalent_to_dms as assert_model_definition_equivalent_to_dms,
+    )
+    from .dms import get_dms_model as get_dms_model
+    from .dms import parse_dms_document as parse_dms_document
     from .streams import unmarshal_stream_image as unmarshal_stream_image
     from .streams import unmarshal_stream_record as unmarshal_stream_record
     from .table import Table as Table
@@ -62,6 +67,10 @@ __version__ = _normalize_repo_version(__repo_version__)
 
 
 def __getattr__(name: str) -> Any:
+    if name in {"parse_dms_document", "get_dms_model", "assert_model_definition_equivalent_to_dms"}:
+        from . import dms
+
+        return getattr(dms, name)
     if name == "Table":
         from .table import Table
 
@@ -79,10 +88,12 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "AwsError",
+    "assert_model_definition_equivalent_to_dms",
     "BatchRetryExceededError",
     "ConditionFailedError",
     "DynamormPyError",
     "EncryptionNotConfiguredError",
+    "get_dms_model",
     "IndexDefinition",
     "IndexSpec",
     "ModelDefinition",
@@ -104,6 +115,7 @@ __all__ = [
     "dynamorm_field",
     "gsi",
     "lsi",
+    "parse_dms_document",
     "unmarshal_stream_image",
     "unmarshal_stream_record",
 ]

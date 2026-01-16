@@ -14,8 +14,9 @@ Related planning artifacts:
 ## Goals (v0.1)
 
 - Define a **language-agnostic** representation of DynamORM model schemas (keys, indexes, attribute names, lifecycle fields).
+- Define a single **language-neutral schema source-of-truth** (DMS) that all implementations can load/validate against.
 - Define the **runtime semantics** that prevent drift (encoding rules, cursor format, versioning behavior, encryption rules).
-- Enable a shared **contract test suite** that can be run against Go and TypeScript implementations.
+- Enable a shared **contract test suite** that can be run against Go, TypeScript, and Python implementations.
 
 ## Non-goals (v0.1)
 
@@ -35,7 +36,16 @@ Related planning artifacts:
 
 ## DMS file format (proposed)
 
-DMS is a versioned YAML/JSON document. v0.1 is intentionally minimal and focused on what’s required for Go↔TS parity.
+DMS is a versioned, language-neutral document. v0.1 is intentionally minimal and focused on high-drift behavior.
+
+### Canonical format (v0.1)
+
+To make DMS predictable across languages and safe to parse:
+
+- **Canonical authoring format:** **YAML 1.2** restricted to the **JSON-compatible subset** (no anchors/aliases, no merge
+  keys, no custom tags, no timestamps/implicit type magic).
+- **Equivalent interchange format:** **JSON** (same object model after parsing).
+- **Rule:** a DMS file MUST parse to the same JSON object shape in Go/TypeScript/Python.
 
 ### Top-level shape
 

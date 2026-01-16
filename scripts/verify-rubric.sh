@@ -11,6 +11,8 @@ bash scripts/verify-typescript-deps.sh
 # Install Python deps once for all Python verifiers.
 bash scripts/verify-python-deps.sh
 
+bash scripts/verify-dms-first-workflow.sh
+
 bash scripts/verify-formatting.sh
 golangci-lint config verify -c .golangci-v2.yml
 bash scripts/verify-lint.sh
