@@ -40,6 +40,11 @@ if TYPE_CHECKING:
     )
     from .dms import get_dms_model as get_dms_model
     from .dms import parse_dms_document as parse_dms_document
+    from .schema import build_create_table_request as build_create_table_request
+    from .schema import create_table as create_table
+    from .schema import delete_table as delete_table
+    from .schema import describe_table as describe_table
+    from .schema import ensure_table as ensure_table
     from .streams import unmarshal_stream_image as unmarshal_stream_image
     from .streams import unmarshal_stream_record as unmarshal_stream_record
     from .table import Table as Table
@@ -71,6 +76,16 @@ def __getattr__(name: str) -> Any:
         from . import dms
 
         return getattr(dms, name)
+    if name in {
+        "build_create_table_request",
+        "create_table",
+        "delete_table",
+        "describe_table",
+        "ensure_table",
+    }:
+        from . import schema
+
+        return getattr(schema, name)
     if name == "Table":
         from .table import Table
 
@@ -90,9 +105,14 @@ __all__ = [
     "AwsError",
     "assert_model_definition_equivalent_to_dms",
     "BatchRetryExceededError",
+    "build_create_table_request",
     "ConditionFailedError",
+    "create_table",
+    "delete_table",
     "DynamormPyError",
+    "describe_table",
     "EncryptionNotConfiguredError",
+    "ensure_table",
     "get_dms_model",
     "IndexDefinition",
     "IndexSpec",

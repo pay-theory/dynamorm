@@ -12,3 +12,4 @@ await import('./unit/encryption.test.js');
 await import('./unit/encryption-avjson.test.js');
 await import('./unit/encryption-kms.test.js');
 await import('./unit/testkit.test.js');
+await import('./unit/schema.test.js');

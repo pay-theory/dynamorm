@@ -9,3 +9,4 @@ export * from './transaction.js';
 export * from './streams.js';
 export * from './encryption.js';
 export * from './encryption-kms.js';
+export * from './schema.js';

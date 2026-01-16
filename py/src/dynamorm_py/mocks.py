@@ -112,6 +112,15 @@ class FakeDynamoDBClient:
     def transact_write_items(self, **kwargs: Any) -> Mapping[str, Any]:
         return self._handle("transact_write_items", kwargs)
 
+    def create_table(self, **kwargs: Any) -> Mapping[str, Any]:
+        return self._handle("create_table", kwargs)
+
+    def delete_table(self, **kwargs: Any) -> Mapping[str, Any]:
+        return self._handle("delete_table", kwargs)
+
+    def describe_table(self, **kwargs: Any) -> Mapping[str, Any]:
+        return self._handle("describe_table", kwargs)
+
 
 class FakeKmsClient:
     def __init__(self, *, plaintext_key: bytes, ciphertext_blob: bytes) -> None:
