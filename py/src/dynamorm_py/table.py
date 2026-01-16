@@ -114,7 +114,13 @@ def _chunked[T](items: Sequence[T], size: int) -> Sequence[Sequence[T]]:
 
 class Table[T]:
     def __init__(
-        self, model: ModelDefinition[T], *, client: Any | None = None, table_name: str | None = None
+        self,
+        model: ModelDefinition[T],
+        *,
+        client: Any | None = None,
+        table_name: str | None = None,
+        kms_key_arn: str | None = None,
+        kms_client: Any | None = None,
     ) -> None:
         if table_name is None:
             table_name = model.table_name
@@ -124,8 +130,17 @@ class Table[T]:
         self._model = model
         self._table_name = table_name
         self._client: Any = client or boto3.client("dynamodb")
+        self._kms_key_arn = (kms_key_arn or "").strip() or None
+        self._kms_client: Any | None = kms_client
         self._serializer = TypeSerializer()
         self._deserializer = TypeDeserializer()
+
+        if any(attr.encrypted for attr in self._model.attributes.values()):
+            if not self._kms_key_arn:
+                raise EncryptionNotConfiguredError(
+                    "model has encrypted fields but kms_key_arn is not configured"
+                )
+            self._kms_client = self._kms_client or boto3.client("kms")
 
     def query(
         self,
@@ -588,13 +603,27 @@ class Table[T]:
         return out
 
     def _serialize_attr_value(self, attr_def: AttributeDefinition, value: Any) -> Any:
-        if attr_def.encrypted:
-            raise EncryptionNotConfiguredError(f"encrypted field requires encryption: {attr_def.python_name}")
-
         if attr_def.json and value is not None:
             value = json.dumps(value, separators=(",", ":"), sort_keys=True)
 
-        return self._serializer.serialize(value)
+        av = self._serializer.serialize(value)
+
+        if attr_def.encrypted:
+            if not self._kms_key_arn or self._kms_client is None:
+                raise EncryptionNotConfiguredError(
+                    f"encrypted field requires kms_key_arn: {attr_def.python_name}"
+                )
+            from .encryption import encrypt_attribute_value
+
+            envelope = encrypt_attribute_value(
+                av,
+                attr_name=attr_def.attribute_name,
+                kms_key_arn=self._kms_key_arn,
+                kms_client=self._kms_client,
+            )
+            return self._serializer.serialize(envelope)
+
+        return av
 
     def _to_item(self, item: T) -> dict[str, Any]:
         if not is_dataclass(item):
@@ -640,7 +669,27 @@ class Table[T]:
             if attr_def.attribute_name not in item:
                 continue
 
-            raw = self._deserializer.deserialize(item[attr_def.attribute_name])
+            if attr_def.encrypted:
+                if not self._kms_key_arn or self._kms_client is None:
+                    raise EncryptionNotConfiguredError(
+                        f"encrypted field requires kms_key_arn: {attr_def.python_name}"
+                    )
+
+                from .encryption import decrypt_attribute_value
+
+                envelope = self._deserializer.deserialize(item[attr_def.attribute_name])
+                if not isinstance(envelope, dict):
+                    raise ValidationError(f"encrypted envelope must be a map: {attr_def.python_name}")
+
+                decrypted_av = decrypt_attribute_value(
+                    envelope,
+                    attr_name=attr_def.attribute_name,
+                    kms_key_arn=self._kms_key_arn,
+                    kms_client=self._kms_client,
+                )
+                raw = self._deserializer.deserialize(cast(Any, decrypted_av))
+            else:
+                raw = self._deserializer.deserialize(item[attr_def.attribute_name])
             if attr_def.json and isinstance(raw, str):
                 raw = json.loads(raw)
 
