@@ -18,6 +18,7 @@ import {
   nowRfc3339Nano,
   unmarshalItem,
 } from './marshal.js';
+import { QueryBuilder, ScanBuilder } from './query.js';
 
 export class DynamormClient {
   private readonly models = new Map<string, Model>();
@@ -214,6 +215,16 @@ export class DynamormClient {
     } catch (err) {
       throw mapDynamoError(err);
     }
+  }
+
+  query(modelName: string): QueryBuilder {
+    const model = this.requireModel(modelName);
+    return new QueryBuilder(this.ddb, model);
+  }
+
+  scan(modelName: string): ScanBuilder {
+    const model = this.requireModel(modelName);
+    return new ScanBuilder(this.ddb, model);
   }
 }
 

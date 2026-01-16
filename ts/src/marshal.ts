@@ -143,7 +143,7 @@ export function unmarshalItem(
 }
 
 export function marshalScalar(
-  schema: AttributeSchema,
+  schema: Readonly<AttributeSchema>,
   value: unknown,
 ): AttributeValue {
   switch (schema.type) {
@@ -199,7 +199,7 @@ export function marshalScalar(
 }
 
 export function unmarshalScalar(
-  schema: AttributeSchema,
+  schema: Readonly<AttributeSchema>,
   av: AttributeValue,
 ): unknown {
   if ('S' in av && av.S !== undefined) return av.S;
