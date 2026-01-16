@@ -6,12 +6,13 @@ It is designed for an **AI-generated codebase**: gates must be **versioned, meas
 
 ## Versioning (no moving goalposts)
 
-- **Rubric version:** `v0.8` (2026-01-16)
+- **Rubric version:** `v0.9` (2026-01-16)
 - **Comparability rule:** grades are only comparable within the same rubric version.
 - **Change rule:** rubric changes must bump the version and include a brief changelog entry (what changed + why).
 
 ### Changelog
 
+- `v0.9` (2026-01-16): Enforce multi-language library coverage parity (Go + TypeScript + Python) at **>= 90%** as a rubric gate (VP-2).
 - `v0.8` (2026-01-16): Clarify and document multi-language rubric scope (Go + TypeScript + Python) and link to the verification parity matrix (`docs/development/planning/dynamorm-multilang-verification-parity-matrix.md`).
 - `v0.7` (2026-01-16): Enforce multi-language release alignment (Go + TypeScript share the repo version) by (1) requiring release automation to bump `ts/package.json` + `ts/package-lock.json` and (2) verifying TypeScript version alignment with the active release manifest during `make rubric`.
 - `v0.6` (2026-01-16): Extend rubric enforcement to TypeScript (format, lint, typecheck/build, unit + integration tests, dependency scanning via `npm audit`, and TS file-size budget) while keeping all Go rubric gates unchanged.
@@ -77,7 +78,7 @@ Multi-language scope:
 | COM-2 | 1 | CI toolchain aligns to repo expectations (Go + Node + pinned tool versions) | `bash scripts/verify-ci-toolchain.sh` |
 | COM-3 | 1 | Planning docs exist and are versioned | `bash scripts/verify-planning-docs.sh` |
 | COM-4 | 1 | Lint configuration is schema-valid for golangci-lint v2 | `golangci-lint config verify -c .golangci-v2.yml` |
-| COM-5 | 1 | Coverage gate configuration is not diluted (default threshold ≥ 90%) | `bash scripts/verify-coverage-threshold.sh` |
+| COM-5 | 1 | Coverage gate configuration is not diluted (default threshold ≥ 90% across Go/TypeScript/Python) | `bash scripts/verify-coverage-threshold.sh` |
 | COM-6 | 2 | CI enforces rubric surface (runs `make rubric`, pinned tools, uploads artifacts) | `bash scripts/verify-ci-rubric-enforced.sh` |
 | COM-7 | 1 | DynamoDB Local image is pinned (no `:latest`) | `bash scripts/verify-dynamodb-local-pin.sh` |
 | COM-8 | 2 | Branch + release supply-chain is enforced (`main` releases, `premain` prereleases; automated tagging/changelog; protections documented) | `bash scripts/verify-branch-release-supply-chain.sh` |
@@ -136,8 +137,7 @@ reliability and security risks because they make future changes harder to reason
 ## Recommended CI surface (keep grades stable)
 
 ```bash
-# NOTE (v0.8): This surface intentionally includes new verifiers that may not exist yet.
-# Keep the rubric definition strict; land the verifiers/workflows in follow-up remediation PRs.
+# NOTE (v0.9): Keep the rubric definition strict; land missing verifiers/workflows in follow-up remediation PRs.
 
 bash scripts/verify-planning-docs.sh
 bash scripts/verify-threat-controls-parity.sh

@@ -79,6 +79,14 @@ grep -q 'coverage_lib.out' "${wf}" || {
   echo "ci-rubric: ${wf}: must upload coverage_lib.out"
   failures=$((failures + 1))
 }
+grep -q 'ts/coverage' "${wf}" || {
+  echo "ci-rubric: ${wf}: must upload ts/coverage"
+  failures=$((failures + 1))
+}
+grep -q 'py/coverage.xml' "${wf}" || {
+  echo "ci-rubric: ${wf}: must upload py/coverage.xml"
+  failures=$((failures + 1))
+}
 grep -q 'gosec.sarif' "${wf}" || {
   echo "ci-rubric: ${wf}: must upload gosec.sarif"
   failures=$((failures + 1))

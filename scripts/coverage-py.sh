@@ -20,6 +20,7 @@ export DYNAMODB_ENDPOINT="${DYNAMODB_ENDPOINT:-http://localhost:8000}"
 
 outdir="py"
 log="${outdir}/coverage-${suite}.txt"
+summary_json="${outdir}/coverage-${suite}.json"
 
 tests=(tests/unit)
 if [[ "${suite}" == "all" ]]; then
@@ -39,5 +40,29 @@ uv --directory py run pytest -q "${tests[@]}" \
   --cov-report=term \
   --cov-report=xml:coverage.xml | tee "${log}"
 
-echo "coverage-py: PASS (${suite})"
+if [[ ! -f "py/coverage.xml" ]]; then
+  echo "coverage-py: FAIL (missing py/coverage.xml)"
+  exit 1
+fi
 
+total="$(
+  python3 - <<'PY'
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+root = ET.fromstring(Path("py/coverage.xml").read_text(encoding="utf-8", errors="replace"))
+rate = root.attrib.get("line-rate")
+if not rate:
+    raise SystemExit(2)
+print(f"{float(rate) * 100.0:.2f}")
+PY
+)"
+
+cat >"${summary_json}" <<JSON
+{
+  "suite": "${suite}",
+  "lines": ${total}
+}
+JSON
+
+echo "coverage-py: PASS (${suite}; lines ${total}%)"

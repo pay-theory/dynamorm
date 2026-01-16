@@ -33,7 +33,7 @@ These definitions are intentionally explicit to prevent denominator games and â€
 - **Unit tests:** `npm --prefix ts run test:unit` (no DynamoDB Local).
 - **Integration tests:** `npm --prefix ts run test:integration` (DynamoDB Local; `DYNAMODB_ENDPOINT`).
 - **Coverage metrics:** line/branch/function (Node.js test coverage).
-- **Coverage minimum (target):** **90% line coverage** of `ts/src/**` (rubric-enforced in VP-2).
+- **Coverage minimum:** **90% line coverage** of `ts/src/**` enforced by `bash scripts/verify-typescript-coverage.sh` (via `bash scripts/verify-coverage.sh`).
 
 ### Python (`py/`)
 
@@ -41,7 +41,7 @@ These definitions are intentionally explicit to prevent denominator games and â€
 - **Unit tests:** `uv --directory py run pytest -q tests/unit` (no DynamoDB Local).
 - **Integration tests:** `uv --directory py run pytest -q tests/integration` (DynamoDB Local; `DYNAMODB_ENDPOINT`).
 - **Coverage metric:** line coverage via `coverage.py` / `pytest-cov`.
-- **Coverage minimum (target):** **90% line coverage** of `py/src/dynamorm_py/**` (rubric-enforced in VP-2).
+- **Coverage minimum:** **90% line coverage** of `py/src/dynamorm_py/**` enforced by `bash scripts/verify-python-coverage.sh` (via `bash scripts/verify-coverage.sh`).
 
 ## Rubric gates â†’ language matrix (current)
 
@@ -56,7 +56,7 @@ Legend:
 | --- | --- | --- | --- | --- | --- |
 | QUA-1 | `bash scripts/verify-unit-tests.sh` | Enforced | Enforced | Enforced | Unit tests are â€œno Dockerâ€ across languages |
 | QUA-2 | `bash scripts/verify-integration-tests.sh` | Enforced | Enforced | Enforced | Must be strict-by-default (no silent skips) |
-| QUA-3 | `bash scripts/verify-coverage.sh` | Enforced | Planned (VP-2) | Planned (VP-2) | VP-1 measures TS/Py coverage artifacts |
+| QUA-3 | `bash scripts/verify-coverage.sh` | Enforced | Enforced | Enforced | Go: statements; TS/Py: line coverage (>= 90%) |
 | QUA-4 | `bash scripts/verify-validation-parity.sh` | Enforced | Planned | Planned | Currently Go-only validator/converter parity |
 | QUA-5 | `bash scripts/fuzz-smoke.sh` | Enforced | Planned | Planned | Current fuzz harness is Go-only |
 | CON-1 | `bash scripts/verify-formatting.sh` | Enforced | Enforced | Enforced | Go `gofmt`, TS `prettier`, Py `ruff format` |
@@ -66,7 +66,7 @@ Legend:
 | COM-2 | `bash scripts/verify-ci-toolchain.sh` | Enforced | Enforced | Enforced | Enforces Go toolchain pin + Node 24 + Python 3.14 pins in workflows |
 | COM-3 | `bash scripts/verify-planning-docs.sh` | Enforced | Enforced | Enforced | Repo-wide |
 | COM-4 | `golangci-lint config verify -c .golangci-v2.yml` | Enforced | N/A | N/A | Go-only config validation |
-| COM-5 | `bash scripts/verify-coverage-threshold.sh` | Enforced | N/A | N/A | Go-only (ensures default >= 90%) |
+| COM-5 | `bash scripts/verify-coverage-threshold.sh` | Enforced | Enforced | Enforced | Ensures default thresholds stay >= 90% (raise-only) |
 | COM-6 | `bash scripts/verify-ci-rubric-enforced.sh` | Enforced | Enforced | Enforced | Ensures CI runs `make rubric` and pins toolchains |
 | COM-7 | `bash scripts/verify-dynamodb-local-pin.sh` | Enforced | Enforced | Enforced | Repo-wide |
 | COM-8 | `bash scripts/verify-branch-release-supply-chain.sh` | Enforced | Enforced | Enforced | Repo-wide |
@@ -89,8 +89,7 @@ Legend:
 
 ## Immediate parity gaps (what VP-1 and VP-2 fix)
 
-- **Coverage parity:** Go is enforced; TS/Py must be at least measured (VP-1), then gated >= 90% (VP-2).
+- **Coverage parity:** enforced >= 90% for Go/TypeScript/Python (VP-2 complete).
 - **Go-only security verifiers:** several SEC/QUA gates are Go-only (panic bans, fuzz, expression hardening). We should
   either (a) define equivalents for TS/Py or (b) explicitly scope them as Go-only and add compensating controls for other
   runtimes.
-

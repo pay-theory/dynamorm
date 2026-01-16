@@ -20,3 +20,11 @@ awk -v total="${total_pct}" -v threshold="${threshold}" 'BEGIN { exit !(total+0 
 }
 
 echo "coverage: PASS (${total_pct}% >= ${threshold}%)"
+
+# Enforce TypeScript + Python library coverage parity in the same gate.
+# These scripts are raise-only and default to 90% as well.
+export TS_COVERAGE_THRESHOLD="${TS_COVERAGE_THRESHOLD:-${threshold}}"
+export PY_COVERAGE_THRESHOLD="${PY_COVERAGE_THRESHOLD:-${threshold}}"
+
+bash scripts/verify-typescript-coverage.sh
+bash scripts/verify-python-coverage.sh

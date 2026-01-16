@@ -128,6 +128,7 @@ py/build/
 py/.coverage
 py/coverage.xml
 py/coverage-*.txt
+py/coverage-*.json
 
 # Local notes (keep templates tracked)
 docs/development/notes/*

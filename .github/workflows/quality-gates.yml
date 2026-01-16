@@ -68,4 +68,7 @@ jobs:
           name: rubric_artifacts
           path: |
             coverage_lib.out
+            ts/coverage
+            py/coverage.xml
+            py/coverage-*.json
             gosec.sarif
