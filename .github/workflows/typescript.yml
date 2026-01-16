@@ -39,6 +39,9 @@ jobs:
       - name: Build
         run: npm --prefix ts run build
 
+      - name: Unit tests
+        run: npm --prefix ts run test:unit
+
       - name: Start DynamoDB Local (pinned)
         run: make docker-up
 
@@ -54,4 +57,3 @@ jobs:
       - name: Stop DynamoDB Local
         if: always()
         run: make docker-down
-
