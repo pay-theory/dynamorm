@@ -124,6 +124,8 @@ py/dist/
 py/.python-version
 *.egg-info/
 py/build/
+py/.coverage
+py/coverage.xml
 
 # Local notes (keep templates tracked)
 docs/development/notes/*
