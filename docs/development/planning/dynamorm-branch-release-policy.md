@@ -34,6 +34,13 @@ Recommended approach: **release-please** (merge-driven versioning + changelog up
 - prerelease workflow producing tags like `vX.Y.Z-rc.N` (or an agreed convention), and
 - release workflow producing stable `vX.Y.Z` tags and updating `CHANGELOG.md`.
 
+### Release assets (required)
+
+GitHub Releases must attach build artifacts for the non-Go SDKs:
+
+- **TypeScript:** `npm pack` output from `ts/` (tarball)
+- **Python:** wheel + sdist from `py/` (`python -m build`)
+
 ## Multi-language versioning (required)
 
 - **Single shared repo version:** Go, TypeScript, and Python use the same GitHub tag/release version.

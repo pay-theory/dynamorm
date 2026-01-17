@@ -47,6 +47,24 @@ if [[ -f ".github/workflows/prerelease.yml" ]]; then
     echo "branch-release: prerelease workflow must reference .release-please-manifest.premain.json"
     failures=$((failures + 1))
   }
+
+  # Ensure prereleases attach multi-language release artifacts.
+  grep -Eq 'release_created' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must use release-please outputs (release_created)"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'npm --prefix ts pack' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must attach TypeScript npm pack artifact"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'python -m build' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must attach Python wheel/sdist artifacts"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'gh release upload' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must upload release assets to GitHub release"
+    failures=$((failures + 1))
+  }
 fi
 
 if [[ -f ".github/workflows/release.yml" ]]; then
@@ -68,6 +86,24 @@ if [[ -f ".github/workflows/release.yml" ]]; then
   }
   grep -Eq 'manifest-file:\s*\.release-please-manifest\.json' ".github/workflows/release.yml" || {
     echo "branch-release: release workflow must reference .release-please-manifest.json"
+    failures=$((failures + 1))
+  }
+
+  # Ensure stable releases attach multi-language release artifacts.
+  grep -Eq 'release_created' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must use release-please outputs (release_created)"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'npm --prefix ts pack' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must attach TypeScript npm pack artifact"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'python -m build' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must attach Python wheel/sdist artifacts"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'gh release upload' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must upload release assets to GitHub release"
     failures=$((failures + 1))
   }
 fi
