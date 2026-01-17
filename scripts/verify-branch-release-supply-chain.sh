@@ -53,11 +53,15 @@ if [[ -f ".github/workflows/prerelease.yml" ]]; then
     echo "branch-release: prerelease workflow must use release-please outputs (release_created)"
     failures=$((failures + 1))
   }
-  grep -Eq 'npm --prefix ts pack' ".github/workflows/prerelease.yml" || {
+  grep -Eq 'pushd ts' ".github/workflows/prerelease.yml" || {
+    echo "branch-release: prerelease workflow must package TypeScript from ts/ (pushd ts)"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'npm pack --pack-destination \.\./release-assets' ".github/workflows/prerelease.yml" || {
     echo "branch-release: prerelease workflow must attach TypeScript npm pack artifact"
     failures=$((failures + 1))
   }
-  grep -Eq 'python -m build' ".github/workflows/prerelease.yml" || {
+  grep -Eq 'python -m build --outdir \.\./release-assets' ".github/workflows/prerelease.yml" || {
     echo "branch-release: prerelease workflow must attach Python wheel/sdist artifacts"
     failures=$((failures + 1))
   }
@@ -94,11 +98,15 @@ if [[ -f ".github/workflows/release.yml" ]]; then
     echo "branch-release: release workflow must use release-please outputs (release_created)"
     failures=$((failures + 1))
   }
-  grep -Eq 'npm --prefix ts pack' ".github/workflows/release.yml" || {
+  grep -Eq 'pushd ts' ".github/workflows/release.yml" || {
+    echo "branch-release: release workflow must package TypeScript from ts/ (pushd ts)"
+    failures=$((failures + 1))
+  }
+  grep -Eq 'npm pack --pack-destination \.\./release-assets' ".github/workflows/release.yml" || {
     echo "branch-release: release workflow must attach TypeScript npm pack artifact"
     failures=$((failures + 1))
   }
-  grep -Eq 'python -m build' ".github/workflows/release.yml" || {
+  grep -Eq 'python -m build --outdir \.\./release-assets' ".github/workflows/release.yml" || {
     echo "branch-release: release workflow must attach Python wheel/sdist artifacts"
     failures=$((failures + 1))
   }

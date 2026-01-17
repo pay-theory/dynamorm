@@ -52,9 +52,9 @@ case "${branch}" in
     ;;
   *)
     # Local runs won't have PR context (no `GITHUB_BASE_REF`). Infer intent from the observed package version:
-    # - prereleases (e.g., `-rc.N`) validate against the premain manifest
+    # - prereleases (e.g., `-rc` or `-rc.N`) validate against the premain manifest
     # - stable versions validate against the main manifest
-    if [[ "${observed_version}" == *"-rc."* && -f ".release-please-manifest.premain.json" ]]; then
+    if [[ "${observed_version}" == *"-rc"* && -f ".release-please-manifest.premain.json" ]]; then
       manifest=".release-please-manifest.premain.json"
     else
       manifest=".release-please-manifest.json"
@@ -86,7 +86,7 @@ if [[ "${observed_version}" != "${expected}" ]]; then
   # When merging prerelease work into `main`, allow checks to validate against the `premain` prerelease manifest.
   # This prevents false failures during promotion PRs and the immediate post-merge push; the subsequent main
   # release PR will enforce stable alignment.
-  if [[ "${branch}" == "main" && "${observed_version}" == *"-rc."* && -f ".release-please-manifest.premain.json" ]]; then
+  if [[ "${branch}" == "main" && "${observed_version}" == *"-rc"* && -f ".release-please-manifest.premain.json" ]]; then
     expected="$(
       python3 - <<PY
 import json
