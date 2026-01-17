@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-rc.5](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc.4...v1.1.0-rc.5) (2026-01-17)
+
+
+### Bug Fixes
+
+* **security:** resolve CodeQL alert + toolchain/deps ([9159519](https://github.com/pay-theory/dynamorm/commit/9159519ff22490377ea406ad5fa6e2cafe5b203d))
+* **security:** resolve CodeQL alert and toolchain drift ([8687fa7](https://github.com/pay-theory/dynamorm/commit/8687fa73185681be0509997fbcf3422926ac016f))
+
 ## [1.1.0-rc.4](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc.3...v1.1.0-rc.4) (2026-01-17)
 
 
