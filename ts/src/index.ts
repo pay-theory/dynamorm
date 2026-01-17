@@ -7,6 +7,8 @@ export * from './query.js';
 export * from './batch.js';
 export * from './transaction.js';
 export * from './streams.js';
+export * from './aggregates.js';
+export * from './optimizer.js';
 export * from './encryption.js';
 export * from './encryption-kms.js';
 export * from './schema.js';

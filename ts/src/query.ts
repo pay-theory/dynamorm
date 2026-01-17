@@ -6,6 +6,16 @@ import {
 } from '@aws-sdk/client-dynamodb';
 
 import { sleep } from './batch.js';
+import type { AggregateResult } from './aggregates.js';
+import {
+  aggregateField,
+  averageField,
+  countDistinct,
+  GroupByQuery,
+  maxField,
+  minField,
+  sumField,
+} from './aggregates.js';
 import {
   decodeCursor,
   encodeCursor,
@@ -20,6 +30,7 @@ import {
 } from './encryption.js';
 import { marshalScalar, unmarshalItem } from './marshal.js';
 import type { AttributeSchema, IndexSchema, Model } from './model.js';
+import type { BuilderShape } from './optimizer.js';
 import type { SendOptions } from './send-options.js';
 
 export interface Page<T = Record<string, unknown>> {
@@ -291,7 +302,7 @@ export class QueryBuilder {
   private limitCount?: number;
   private projectionFields?: string[];
   private consistentReadEnabled = false;
-  private cursorToken?: string;
+  private cursorToken: string | undefined;
   private sortDir: CursorSort = 'ASC';
   private readonly filters: FilterExpressionBuilder;
 
@@ -376,7 +387,7 @@ export class QueryBuilder {
         'partitionKey() is required',
       );
 
-    if (this.indexName && this.consistentReadEnabled) {
+    if (index?.type === 'GSI' && this.consistentReadEnabled) {
       throw new DynamormError(
         'ErrInvalidOperator',
         'Consistent reads are not supported on GSIs',
@@ -530,6 +541,75 @@ export class QueryBuilder {
     return page;
   }
 
+  async all(): Promise<Array<Record<string, unknown>>> {
+    const original = this.cursorToken;
+    try {
+      const out: Array<Record<string, unknown>> = [];
+      let cursor = original;
+
+      for (;;) {
+        this.cursorToken = cursor;
+        const page = await this.page();
+        out.push(...page.items);
+        if (!page.cursor) break;
+        cursor = page.cursor;
+      }
+
+      return out;
+    } finally {
+      this.cursorToken = original;
+    }
+  }
+
+  async sum(field: string): Promise<number> {
+    return sumField(await this.all(), field);
+  }
+
+  async average(field: string): Promise<number> {
+    return averageField(await this.all(), field);
+  }
+
+  async min(field: string): Promise<unknown> {
+    return minField(await this.all(), field);
+  }
+
+  async max(field: string): Promise<unknown> {
+    return maxField(await this.all(), field);
+  }
+
+  async aggregate(...fields: string[]): Promise<AggregateResult> {
+    return aggregateField(await this.all(), fields[0]);
+  }
+
+  async countDistinct(field: string): Promise<number> {
+    return countDistinct(await this.all(), field);
+  }
+
+  groupBy(field: string): GroupByQuery<Record<string, unknown>> {
+    return new GroupByQuery(() => this.all(), field);
+  }
+
+  describe(): BuilderShape {
+    const { skName, index } = this.resolveKeySchema();
+    const filters = this.filters.build();
+    return {
+      kind: 'query',
+      modelName: this.model.name,
+      tableName: this.model.tableName,
+      ...(index?.name ? { indexName: index.name } : {}),
+      ...(index?.type ? { indexType: index.type } : {}),
+      hasPartitionKey: this.pkValue !== undefined,
+      hasSortKey: skName !== undefined,
+      hasSortKeyCondition: this.skCondition !== undefined,
+      hasFilters: Boolean(filters.expression),
+      ...(this.projectionFields
+        ? { projections: this.projectionFields.slice() }
+        : {}),
+      consistentRead: this.consistentReadEnabled,
+      sort: this.sortDir,
+    };
+  }
+
   async pageWithRetry(opts: QueryRetryOptions = {}): Promise<Page> {
     const maxAttempts = opts.maxAttempts ?? 5;
     if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) {
@@ -652,7 +732,7 @@ export class ScanBuilder {
   private limitCount?: number;
   private projectionFields?: string[];
   private consistentReadEnabled = false;
-  private cursorToken?: string;
+  private cursorToken: string | undefined;
   private readonly filters: FilterExpressionBuilder;
   private segment?: number;
   private totalSegments?: number;
@@ -739,7 +819,10 @@ export class ScanBuilder {
     totalSegments: number,
     opts: { concurrency?: number } = {},
   ): Promise<Array<Record<string, unknown>>> {
-    if (this.indexName && this.consistentReadEnabled) {
+    const index = this.indexName
+      ? this.model.indexes.get(this.indexName)
+      : undefined;
+    if (index?.type === 'GSI' && this.consistentReadEnabled) {
       throw new DynamormError(
         'ErrInvalidOperator',
         'Consistent reads are not supported on GSIs',
@@ -844,8 +927,83 @@ export class ScanBuilder {
     return out;
   }
 
+  async all(): Promise<Array<Record<string, unknown>>> {
+    const original = this.cursorToken;
+    try {
+      const out: Array<Record<string, unknown>> = [];
+      let cursor = original;
+
+      for (;;) {
+        this.cursorToken = cursor;
+        const page = await this.page();
+        out.push(...page.items);
+        if (!page.cursor) break;
+        cursor = page.cursor;
+      }
+
+      return out;
+    } finally {
+      this.cursorToken = original;
+    }
+  }
+
+  async sum(field: string): Promise<number> {
+    return sumField(await this.all(), field);
+  }
+
+  async average(field: string): Promise<number> {
+    return averageField(await this.all(), field);
+  }
+
+  async min(field: string): Promise<unknown> {
+    return minField(await this.all(), field);
+  }
+
+  async max(field: string): Promise<unknown> {
+    return maxField(await this.all(), field);
+  }
+
+  async aggregate(...fields: string[]): Promise<AggregateResult> {
+    return aggregateField(await this.all(), fields[0]);
+  }
+
+  async countDistinct(field: string): Promise<number> {
+    return countDistinct(await this.all(), field);
+  }
+
+  groupBy(field: string): GroupByQuery<Record<string, unknown>> {
+    return new GroupByQuery(() => this.all(), field);
+  }
+
+  describe(): BuilderShape {
+    const index = this.indexName
+      ? this.model.indexes.get(this.indexName)
+      : undefined;
+    const filters = this.filters.build();
+    return {
+      kind: 'scan',
+      modelName: this.model.name,
+      tableName: this.model.tableName,
+      ...(this.indexName ? { indexName: this.indexName } : {}),
+      ...(index?.type ? { indexType: index.type } : {}),
+      hasFilters: Boolean(filters.expression),
+      ...(this.projectionFields
+        ? { projections: this.projectionFields.slice() }
+        : {}),
+      consistentRead: this.consistentReadEnabled,
+      parallelScanConfigured:
+        this.segment !== undefined || this.totalSegments !== undefined,
+      ...(this.totalSegments !== undefined
+        ? { totalSegments: this.totalSegments }
+        : {}),
+    };
+  }
+
   async page(): Promise<Page> {
-    if (this.indexName && this.consistentReadEnabled) {
+    const index = this.indexName
+      ? this.model.indexes.get(this.indexName)
+      : undefined;
+    if (index?.type === 'GSI' && this.consistentReadEnabled) {
       throw new DynamormError(
         'ErrInvalidOperator',
         'Consistent reads are not supported on GSIs',

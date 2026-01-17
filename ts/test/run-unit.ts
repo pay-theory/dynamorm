@@ -9,6 +9,8 @@ await import('./unit/client.test.js');
 await import('./unit/query-builder.test.js');
 await import('./unit/update-builder.test.js');
 await import('./unit/streams.test.js');
+await import('./unit/aggregates.test.js');
+await import('./unit/optimizer.test.js');
 await import('./unit/encryption.test.js');
 await import('./unit/encryption-avjson.test.js');
 await import('./unit/encryption-kms.test.js');

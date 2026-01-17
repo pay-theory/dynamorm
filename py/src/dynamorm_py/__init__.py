@@ -36,8 +36,21 @@ from .transaction import (
 )
 
 if TYPE_CHECKING:
+    from .aggregates import (
+        AggregateResult,
+        GroupByQuery,
+        GroupedResult,
+        aggregate_field,
+        average_field,
+        count_distinct,
+        group_by,
+        max_field,
+        min_field,
+        sum_field,
+    )
     from .dms import assert_model_definition_equivalent_to_dms, get_dms_model, parse_dms_document
     from .multiaccount import AccountConfig, MultiAccountSessions
+    from .optimizer import QueryOptimizer, QueryPlan, QueryShape, ScanShape
     from .protection import ConcurrencyLimiter, SimpleLimiter
     from .runtime import (
         AwsCallMetric,
@@ -107,6 +120,25 @@ def __getattr__(name: str) -> Any:
         from .table import Table
 
         return Table
+    if name in {
+        "AggregateResult",
+        "GroupByQuery",
+        "GroupedResult",
+        "aggregate_field",
+        "average_field",
+        "count_distinct",
+        "group_by",
+        "max_field",
+        "min_field",
+        "sum_field",
+    }:
+        from . import aggregates
+
+        return getattr(aggregates, name)
+    if name in {"QueryOptimizer", "QueryPlan", "QueryShape", "ScanShape"}:
+        from . import optimizer
+
+        return getattr(optimizer, name)
     if name == "unmarshal_stream_image":
         from .streams import unmarshal_stream_image
 
@@ -162,15 +194,22 @@ __all__ = [
     "AwsError",
     "AwsCallMetric",
     "assert_model_definition_equivalent_to_dms",
+    "AggregateResult",
+    "aggregate_field",
     "AttributeConverter",
+    "average_field",
     "BatchRetryExceededError",
     "build_create_table_request",
     "ConditionFailedError",
+    "count_distinct",
     "create_lambda_boto3_config",
     "create_table",
     "delete_table",
     "DynamormPyError",
     "describe_table",
+    "group_by",
+    "GroupByQuery",
+    "GroupedResult",
     "EncryptionNotConfiguredError",
     "ensure_table",
     "get_dms_model",
@@ -196,9 +235,16 @@ __all__ = [
     "AccountConfig",
     "MultiAccountSessions",
     "Page",
+    "QueryOptimizer",
+    "QueryPlan",
+    "QueryShape",
     "SecurityValidationError",
     "SimpleLimiter",
     "SortKeyCondition",
+    "ScanShape",
+    "sum_field",
+    "max_field",
+    "min_field",
     "TransactConditionCheck",
     "TransactDelete",
     "TransactPut",

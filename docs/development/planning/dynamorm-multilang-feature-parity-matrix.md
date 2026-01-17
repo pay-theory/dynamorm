@@ -63,8 +63,8 @@ Legend:
 
 | Area | Feature | Go | TypeScript | Python | Contract tests | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| Spec | Language-neutral schema definition (DMS) used as the source-of-truth | **No** | **No** | **No** | N/A | DMS exists as a spec + fixtures, but libraries are not DMS-driven yet |
-| Spec | DMS loader (YAML/JSON) → runtime model schema | No | No | No | N/A | Required for first-class multi-language drift prevention |
+| Spec | Language-neutral schema definition (DMS) used as the source-of-truth | **Partial** | **Partial** | **Partial** | N/A | DMS-first workflow exists; full “DMS is the only source-of-truth” enforcement is still in progress |
+| Spec | DMS loader (YAML/JSON) → runtime model schema | Yes | Yes | Yes | N/A | Go: `pkg/dms`; TS: `ts/src/dms.ts`; Py: `py/src/dynamorm_py/dms.py` |
 | Schema | PK/SK roles | Yes | Yes | Yes | No | Py uses dataclass metadata; TS uses `defineModel` schema |
 | Schema | GSI/LSI definitions | Yes | Yes | Yes | No | All languages can declare indexes |
 | Schema | Attribute naming determinism | Yes | Yes | Yes | No | DMS should be explicit-name first; avoid implicit drift |
@@ -89,21 +89,21 @@ Legend:
 | Encryption | Envelope format (`v`,`edk`,`nonce`,`ct`) | Yes | Yes | Yes | Yes | Contract tests pin envelope shape across languages |
 | Encryption | Fail-closed when unconfigured | Yes | Yes | Yes | No | TS requires encryption provider; Py requires `kms_key_arn` |
 | Encryption | AAD binding to attribute name | Yes | Yes | Yes | Yes | Contract tests pin AAD binding failure behavior (attribute swap must fail) |
-| Schema mgmt | Create/Ensure/Delete/Describe table helpers | Yes | No | No | No | Present in Go; required for first-class dev/test ergonomics |
+| Schema mgmt | Create/Ensure/Delete/Describe table helpers | Yes | Yes | Yes | No | TS: `ts/src/schema.ts`; Py: `py/src/dynamorm_py/schema.py` |
 | Schema mgmt | AutoMigrate (dev/local) | Yes | No | No | No | Go provides; TS/Py should add or explicitly scope as not supported |
-| Query DSL | Filter expressions + AND/OR filter groups | Yes | No | No | No | Go supports; TS/Py should map (safe expression builder) |
+| Query DSL | Filter expressions + AND/OR filter groups | Yes | Yes | Yes | No | TS: `FilterExpressionBuilder`; Py: `FilterCondition`/`FilterGroup` + Table filter builder |
 | Query DSL | OrderBy + Select/projection helpers | Yes | **Partial** | **Partial** | No | TS/Py support projections; Go has broader DSL; define standard behavior |
 | Query DSL | Offset (skip N items) | Yes | No | No | No | Go supports; must define portable semantics (DynamoDB has no native offset) |
-| Scan | ParallelScan / ScanAllSegments | Yes | No | No | No | Go supports; needed for large-table scan parity |
-| Update DSL | Fluent UpdateBuilder (SET/REMOVE/ADD/DELETE/list ops) | Yes | No | **Partial** | No | Py supports basic SET/REMOVE; lacks list/set ops and version helper |
-| Aggregates | Sum/Avg/Min/Max + GroupBy helpers | Yes | No | No | No | Go-only today; decide whether this is in-scope for multi-lang v1 |
-| Optimization | Query optimizer/plan cache | Yes | No | No | No | Go-only today; ensure it never changes semantics (only hints) |
-| Runtime | Lambda-optimized DB wrapper + cold-start helpers | Yes | No | No | No | Go has `LambdaDB`; TS/Py should ship equivalents for Lambda DX |
-| Runtime | Multi-account assume-role wrapper | Yes | No | No | No | Go has `MultiAccountDB`; add equivalent helpers or document alternatives |
-| Security | Field/operator/expression validation & injection hardening | Yes | No | No | No | Go has `pkg/validation`; TS/Py must add equivalent hardening |
-| Security | Resource protection (rate limiting, concurrency, memory monitor) | Yes | No | No | No | Go has `pkg/protection`; TS/Py parity required for “secure by default” |
-| Extensibility | Custom type converters / pluggable marshaling | Yes | No | No | No | Go supports custom converters; TS/Py should define equivalent hooks |
-| Testing | Public mocks/testkit for DynamoDB + KMS | Yes | Yes | **Partial** | No | TS has `ts/src/testkit`; Py has mocks but needs parity + tests/coverage |
+| Scan | ParallelScan / ScanAllSegments | Yes | Yes | Yes | No | TS: `ScanBuilder.scanAllSegments`; Py: `Table.scan_all_segments` |
+| Update DSL | Fluent UpdateBuilder (SET/REMOVE/ADD/DELETE/list ops) | Yes | Yes | Yes | No | TS: `ts/src/update-builder.ts`; Py: `UpdateBuilder` in `py/src/dynamorm_py/table.py` |
+| Aggregates | Sum/Avg/Min/Max + GroupBy helpers | Yes | Yes | Yes | No | In-memory helpers; TS: `ts/src/aggregates.ts`; Py: `py/src/dynamorm_py/aggregates.py` |
+| Optimization | Query optimizer/plan cache | Yes | Yes | Yes | No | Advisory-only hints; TS: `ts/src/optimizer.ts`; Py: `py/src/dynamorm_py/optimizer.py` |
+| Runtime | Lambda-optimized DB wrapper + cold-start helpers | Yes | Yes | Yes | No | TS: `ts/src/lambda.ts`; Py: `py/src/dynamorm_py/runtime.py` |
+| Runtime | Multi-account assume-role wrapper | Yes | Yes | Yes | No | TS: `ts/src/multiaccount.ts`; Py: `py/src/dynamorm_py/multiaccount.py` |
+| Security | Field/operator/expression validation & injection hardening | Yes | Yes | Yes | No | TS: `ts/src/validation.ts`; Py: `py/src/dynamorm_py/validation.py` |
+| Security | Resource protection (rate limiting, concurrency, memory monitor) | Yes | Yes | Yes | No | TS: `ts/src/protection.ts`; Py: `py/src/dynamorm_py/protection.py` |
+| Extensibility | Custom type converters / pluggable marshaling | Yes | Yes | Yes | No | TS: `ValueConverter`; Py: `AttributeConverter` |
+| Testing | Public mocks/testkit for DynamoDB + KMS | Yes | Yes | Yes | No | TS: `ts/src/testkit`; Py: `py/src/dynamorm_py/testkit.py` |
 
 ## What “parity complete” means (acceptance criteria)
 
