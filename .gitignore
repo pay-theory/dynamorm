@@ -24,6 +24,10 @@ bin/
 dist/
 build/
 
+# CDK examples intentionally use `bin/` for app entrypoints.
+!examples/cdk-multilang/bin/
+!examples/cdk-multilang/bin/**
+
 # IDE specific files
 .idea/
 *.iml
