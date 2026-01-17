@@ -87,12 +87,12 @@ try {
   );
   await dynamorm.create(
     'User',
-    { PK: pk, SK: 'B', emailHash: 'hash_email' },
+    { PK: pk, SK: 'B', emailHash: 'hash_email', nickname: 'Alice' },
     { ifNotExists: true },
   );
   await dynamorm.create(
     'User',
-    { PK: pk, SK: 'C', emailHash: 'hash_email' },
+    { PK: pk, SK: 'C', emailHash: 'hash_email', nickname: 'Bob' },
     { ifNotExists: true },
   );
 
@@ -147,6 +147,38 @@ try {
     () =>
       dynamorm.query('User').partitionKey(pk).cursor(byEmail.cursor!).page(),
     (err) => err instanceof DynamormError && err.code === 'ErrInvalidOperator',
+  );
+
+  const filtered0 = await dynamorm
+    .query('User')
+    .partitionKey(pk)
+    .filter('nickname', 'EXISTS')
+    .limit(1)
+    .page();
+  assert.equal(filtered0.items.length, 0);
+  assert.ok(filtered0.cursor);
+
+  const filtered1 = await dynamorm
+    .query('User')
+    .partitionKey(pk)
+    .filter('nickname', 'EXISTS')
+    .limit(1)
+    .cursor(filtered0.cursor!)
+    .page();
+  assert.equal(filtered1.items.length, 1);
+  assert.equal(filtered1.items[0]!.SK, 'B');
+  assert.ok(filtered1.cursor);
+
+  const filtered2 = await dynamorm
+    .query('User')
+    .partitionKey(pk)
+    .filterGroup((f) =>
+      f.filter('nickname', '=', 'Alice').orFilter('nickname', '=', 'Bob'),
+    )
+    .page();
+  assert.deepEqual(
+    filtered2.items.map((i) => i.SK),
+    ['B', 'C'],
   );
 } finally {
   ddb.destroy();

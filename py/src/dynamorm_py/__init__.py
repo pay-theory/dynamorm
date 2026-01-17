@@ -25,7 +25,7 @@ from .model import (
     gsi,
     lsi,
 )
-from .query import Page, SortKeyCondition
+from .query import FilterCondition, FilterGroup, Page, SortKeyCondition
 from .transaction import (
     TransactConditionCheck,
     TransactDelete,
@@ -120,6 +120,8 @@ __all__ = [
     "ModelDefinitionError",
     "NotFoundError",
     "Projection",
+    "FilterCondition",
+    "FilterGroup",
     "Page",
     "SortKeyCondition",
     "TransactConditionCheck",

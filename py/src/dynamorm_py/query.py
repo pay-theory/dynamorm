@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,81 @@ class SortKeyCondition:
 class Page[T]:
     items: list[T]
     next_cursor: str | None
+
+
+type LogicalOp = Literal["AND", "OR"]
+
+
+@dataclass(frozen=True)
+class FilterCondition:
+    field: str
+    op: str
+    values: tuple[Any, ...] = ()
+
+    @staticmethod
+    def eq(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="=", values=(value,))
+
+    @staticmethod
+    def ne(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="!=", values=(value,))
+
+    @staticmethod
+    def lt(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="<", values=(value,))
+
+    @staticmethod
+    def lte(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="<=", values=(value,))
+
+    @staticmethod
+    def gt(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op=">", values=(value,))
+
+    @staticmethod
+    def gte(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op=">=", values=(value,))
+
+    @staticmethod
+    def between(field: str, low: Any, high: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="between", values=(low, high))
+
+    @staticmethod
+    def begins_with(field: str, prefix: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="begins_with", values=(prefix,))
+
+    @staticmethod
+    def contains(field: str, value: Any) -> FilterCondition:
+        return FilterCondition(field=field, op="contains", values=(value,))
+
+    @staticmethod
+    def in_(field: str, values: list[Any]) -> FilterCondition:
+        return FilterCondition(field=field, op="in", values=(list(values),))
+
+    @staticmethod
+    def exists(field: str) -> FilterCondition:
+        return FilterCondition(field=field, op="exists")
+
+    @staticmethod
+    def not_exists(field: str) -> FilterCondition:
+        return FilterCondition(field=field, op="not_exists")
+
+
+@dataclass(frozen=True)
+class FilterGroup:
+    op: LogicalOp
+    filters: tuple[FilterExpression, ...]
+
+    @staticmethod
+    def and_(*filters: FilterExpression) -> FilterGroup:
+        return FilterGroup(op="AND", filters=tuple(filters))
+
+    @staticmethod
+    def or_(*filters: FilterExpression) -> FilterGroup:
+        return FilterGroup(op="OR", filters=tuple(filters))
+
+
+type FilterExpression = FilterCondition | FilterGroup
 
 
 @dataclass(frozen=True)

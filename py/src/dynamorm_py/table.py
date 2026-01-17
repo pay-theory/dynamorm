@@ -22,7 +22,15 @@ from .errors import (
     ValidationError,
 )
 from .model import AttributeDefinition, ModelDefinition
-from .query import Page, SortKeyCondition, decode_cursor, encode_cursor
+from .query import (
+    FilterCondition,
+    FilterExpression,
+    FilterGroup,
+    Page,
+    SortKeyCondition,
+    decode_cursor,
+    encode_cursor,
+)
 from .transaction import (
     TransactConditionCheck,
     TransactDelete,
@@ -156,6 +164,7 @@ class Table[T]:
         scan_forward: bool = True,
         consistent_read: bool = False,
         projection: list[str] | None = None,
+        filter: FilterExpression | None = None,
     ) -> Page[T]:
         partition_attr, sort_attr, index_type = self._resolve_index(index_name)
         if index_type == "GSI" and consistent_read:
@@ -204,6 +213,8 @@ class Table[T]:
             req["ProjectionExpression"] = self._projection_expression(
                 projection, req["ExpressionAttributeNames"]
             )
+        if filter is not None:
+            req["FilterExpression"] = self._filter_expression(filter, names, values)
 
         try:
             resp = self._client.query(**req)
@@ -221,6 +232,66 @@ class Table[T]:
             ),
         )
 
+    def query_with_retry(
+        self,
+        partition: Any,
+        *,
+        sort: SortKeyCondition | None = None,
+        index_name: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        scan_forward: bool = True,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+        filter: FilterExpression | None = None,
+        max_retries: int = 5,
+        initial_delay_seconds: float = 0.1,
+        max_delay_seconds: float = 5.0,
+        backoff_factor: float = 2.0,
+        retry_on_empty: bool = True,
+        retry_on_error: bool = True,
+        verify: Callable[[Page[T]], bool] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Page[T]:
+        if max_retries < 0:
+            raise ValidationError("max_retries must be >= 0")
+
+        delay = initial_delay_seconds
+        last_page: Page[T] | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                page = self.query(
+                    partition,
+                    sort=sort,
+                    index_name=index_name,
+                    limit=limit,
+                    cursor=cursor,
+                    scan_forward=scan_forward,
+                    consistent_read=consistent_read,
+                    projection=projection,
+                    filter=filter,
+                )
+                last_page = page
+
+                if verify is not None:
+                    if verify(page):
+                        return page
+                elif not retry_on_empty or page.items:
+                    return page
+            except Exception:
+                if not retry_on_error or attempt == max_retries:
+                    raise
+
+            if attempt < max_retries:
+                if delay > 0:
+                    sleep(delay)
+                delay = min(max_delay_seconds, delay * backoff_factor)
+
+        if last_page is None:
+            raise ValidationError("retry exhausted without results")
+        return last_page
+
     def scan(
         self,
         *,
@@ -229,6 +300,9 @@ class Table[T]:
         cursor: str | None = None,
         consistent_read: bool = False,
         projection: list[str] | None = None,
+        filter: FilterExpression | None = None,
+        segment: int | None = None,
+        total_segments: int | None = None,
     ) -> Page[T]:
         _, _, index_type = self._resolve_index(index_name)
         if index_type == "GSI" and consistent_read:
@@ -238,6 +312,8 @@ class Table[T]:
             raise ValidationError("limit must be > 0")
 
         req: dict[str, Any] = {"TableName": self._table_name, "ConsistentRead": consistent_read}
+        names: dict[str, str] = {}
+        values: dict[str, Any] = {}
         if index_name is not None:
             req["IndexName"] = index_name
         if limit is not None:
@@ -251,10 +327,22 @@ class Table[T]:
                 raise ValidationError("cursor index does not match scan")
             req["ExclusiveStartKey"] = decoded.last_key
         if projection is not None:
-            req["ExpressionAttributeNames"] = {}
-            req["ProjectionExpression"] = self._projection_expression(
-                projection, req["ExpressionAttributeNames"]
-            )
+            req["ProjectionExpression"] = self._projection_expression(projection, names)
+        if filter is not None:
+            req["FilterExpression"] = self._filter_expression(filter, names, values)
+
+        if (segment is None) != (total_segments is None):
+            raise ValidationError("segment and total_segments must be provided together")
+        if segment is not None and total_segments is not None:
+            if segment < 0 or total_segments <= 0 or segment >= total_segments:
+                raise ValidationError("invalid segment/total_segments")
+            req["Segment"] = segment
+            req["TotalSegments"] = total_segments
+
+        if names:
+            req["ExpressionAttributeNames"] = names
+        if values:
+            req["ExpressionAttributeValues"] = values
 
         try:
             resp = self._client.scan(**req)
@@ -264,6 +352,120 @@ class Table[T]:
         items = [self._from_item(item) for item in resp.get("Items", [])]
         last = resp.get("LastEvaluatedKey")
         return Page(items=items, next_cursor=encode_cursor(last, index=index_name) if last else None)
+
+    def scan_with_retry(
+        self,
+        *,
+        index_name: str | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+        filter: FilterExpression | None = None,
+        max_retries: int = 5,
+        initial_delay_seconds: float = 0.1,
+        max_delay_seconds: float = 5.0,
+        backoff_factor: float = 2.0,
+        retry_on_empty: bool = True,
+        retry_on_error: bool = True,
+        verify: Callable[[Page[T]], bool] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Page[T]:
+        if max_retries < 0:
+            raise ValidationError("max_retries must be >= 0")
+
+        delay = initial_delay_seconds
+        last_page: Page[T] | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                page = self.scan(
+                    index_name=index_name,
+                    limit=limit,
+                    cursor=cursor,
+                    consistent_read=consistent_read,
+                    projection=projection,
+                    filter=filter,
+                )
+                last_page = page
+
+                if verify is not None:
+                    if verify(page):
+                        return page
+                elif not retry_on_empty or page.items:
+                    return page
+            except Exception:
+                if not retry_on_error or attempt == max_retries:
+                    raise
+
+            if attempt < max_retries:
+                if delay > 0:
+                    sleep(delay)
+                delay = min(max_delay_seconds, delay * backoff_factor)
+
+        if last_page is None:
+            raise ValidationError("retry exhausted without results")
+        return last_page
+
+    def scan_all_segments(
+        self,
+        *,
+        total_segments: int,
+        index_name: str | None = None,
+        limit: int | None = None,
+        consistent_read: bool = False,
+        projection: list[str] | None = None,
+        filter: FilterExpression | None = None,
+        max_workers: int | None = None,
+    ) -> list[T]:
+        if total_segments <= 0:
+            raise ValidationError("total_segments must be > 0")
+
+        if max_workers is None:
+            max_workers = total_segments
+        if max_workers <= 0:
+            raise ValidationError("max_workers must be > 0")
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def scan_segment(segment: int) -> list[T]:
+            table: Table[T] = Table(
+                self._model,
+                client=self._client,
+                table_name=self._table_name,
+                kms_key_arn=self._kms_key_arn,
+                kms_client=self._kms_client,
+                rand_bytes=self._rand_bytes,
+            )
+            cursor: str | None = None
+            out: list[T] = []
+            while True:
+                page = table.scan(
+                    index_name=index_name,
+                    limit=limit,
+                    cursor=cursor,
+                    consistent_read=consistent_read,
+                    projection=projection,
+                    filter=filter,
+                    segment=segment,
+                    total_segments=total_segments,
+                )
+                out.extend(page.items)
+                cursor = page.next_cursor
+                if cursor is None:
+                    break
+            return out
+
+        results: list[list[T]] = [[] for _ in range(total_segments)]
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(scan_segment, seg): seg for seg in range(total_segments)}
+            for fut, seg in futures.items():
+                results[seg] = fut.result()
+
+        out: list[T] = []
+        for seg_items in results:
+            out.extend(seg_items)
+        return out
 
     def batch_get(
         self,
@@ -756,6 +958,127 @@ class Table[T]:
             values[":sk"] = self._serializer.serialize(cond.values[0])
             return f"{prefix} AND begins_with(#sk, :sk)"
         raise ValidationError(f"unsupported sort key operator: {op}")
+
+    def _filter_expression(
+        self,
+        expr: FilterExpression,
+        names: dict[str, str],
+        values: dict[str, Any],
+    ) -> str:
+        counter = 0
+
+        def name_ref(field_name: str) -> tuple[str, AttributeDefinition]:
+            if field_name not in self._model.attributes:
+                raise ValidationError(f"unknown field: {field_name}")
+
+            attr_def = self._model.attributes[field_name]
+            if attr_def.encrypted:
+                raise ValidationError(f"encrypted fields cannot be filtered: {field_name}")
+
+            ref = f"#f_{field_name}"
+            existing = names.get(ref)
+            if existing is not None and existing != attr_def.attribute_name:
+                raise ValidationError(f"expression attribute name collision: {ref}")
+            names[ref] = attr_def.attribute_name
+            return ref, attr_def
+
+        def value_ref(attr_def: AttributeDefinition, value: Any) -> str:
+            nonlocal counter
+            counter += 1
+            ref = f":f{counter}"
+            if ref in values:
+                raise ValidationError(f"expression attribute value collision: {ref}")
+            values[ref] = self._serialize_attr_value(attr_def, value)
+            return ref
+
+        def build(node: FilterExpression) -> str:
+            if isinstance(node, FilterGroup):
+                parts = [build(f) for f in node.filters]
+                parts = [p for p in parts if p]
+                if not parts:
+                    return ""
+                return "(" + f" {node.op} ".join(parts) + ")"
+
+            if not isinstance(node, FilterCondition):
+                raise ValidationError("invalid filter expression")
+
+            name, attr_def = name_ref(node.field)
+            op = node.op.upper()
+            vals = node.values
+
+            if op in {"=", "EQ"}:
+                if len(vals) != 1:
+                    raise ValidationError(f"{node.op} requires one value")
+                return f"{name} = {value_ref(attr_def, vals[0])}"
+
+            if op in {"!=", "<>", "NE"}:
+                if len(vals) != 1:
+                    raise ValidationError(f"{node.op} requires one value")
+                return f"{name} <> {value_ref(attr_def, vals[0])}"
+
+            if op in {"<", "LT"}:
+                if len(vals) != 1:
+                    raise ValidationError(f"{node.op} requires one value")
+                return f"{name} < {value_ref(attr_def, vals[0])}"
+
+            if op in {"<=", "LE"}:
+                if len(vals) != 1:
+                    raise ValidationError(f"{node.op} requires one value")
+                return f"{name} <= {value_ref(attr_def, vals[0])}"
+
+            if op in {">", "GT"}:
+                if len(vals) != 1:
+                    raise ValidationError(f"{node.op} requires one value")
+                return f"{name} > {value_ref(attr_def, vals[0])}"
+
+            if op in {">=", "GE"}:
+                if len(vals) != 1:
+                    raise ValidationError(f"{node.op} requires one value")
+                return f"{name} >= {value_ref(attr_def, vals[0])}"
+
+            if op == "BETWEEN":
+                if len(vals) != 2:
+                    raise ValidationError("BETWEEN requires two values")
+                left = value_ref(attr_def, vals[0])
+                right = value_ref(attr_def, vals[1])
+                return f"{name} BETWEEN {left} AND {right}"
+
+            if op == "IN":
+                if len(vals) != 1:
+                    raise ValidationError("IN requires a single sequence")
+                in_values = vals[0]
+                if not isinstance(in_values, Sequence) or isinstance(
+                    in_values, (str, bytes, bytearray, dict)
+                ):
+                    raise ValidationError("IN requires a sequence of values")
+                if len(in_values) > 100:
+                    raise ValidationError("IN supports maximum 100 values")
+                refs = [value_ref(attr_def, v) for v in in_values]
+                return f"{name} IN (" + ", ".join(refs) + ")"
+
+            if op == "BEGINS_WITH":
+                if len(vals) != 1:
+                    raise ValidationError("BEGINS_WITH requires one value")
+                return f"begins_with({name}, {value_ref(attr_def, vals[0])})"
+
+            if op == "CONTAINS":
+                if len(vals) != 1:
+                    raise ValidationError("CONTAINS requires one value")
+                return f"contains({name}, {value_ref(attr_def, vals[0])})"
+
+            if op in {"EXISTS", "ATTRIBUTE_EXISTS"}:
+                if vals:
+                    raise ValidationError("EXISTS does not take a value")
+                return f"attribute_exists({name})"
+
+            if op in {"NOT_EXISTS", "ATTRIBUTE_NOT_EXISTS"}:
+                if vals:
+                    raise ValidationError("NOT_EXISTS does not take a value")
+                return f"attribute_not_exists({name})"
+
+            raise ValidationError(f"unsupported filter operator: {node.op}")
+
+        return build(expr)
 
     def _projection_expression(self, projection: list[str], names: dict[str, str]) -> str:
         required = self._required_fields()

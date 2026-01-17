@@ -7,7 +7,17 @@ from dataclasses import dataclass
 import boto3
 import pytest
 
-from dynamorm_py import ModelDefinition, SortKeyCondition, Table, ValidationError, dynamorm_field, gsi, lsi
+from dynamorm_py import (
+    FilterCondition,
+    FilterGroup,
+    ModelDefinition,
+    SortKeyCondition,
+    Table,
+    ValidationError,
+    dynamorm_field,
+    gsi,
+    lsi,
+)
 
 
 def _dynamodb_endpoint() -> str:
@@ -32,6 +42,7 @@ class Record:
     gsi_pk: str = dynamorm_field()
     gsi_sk: str = dynamorm_field()
     lsi_sk: str = dynamorm_field()
+    tag: str | None = dynamorm_field(omitempty=True, default=None)
     note: str = dynamorm_field(default="")
 
 
@@ -89,6 +100,11 @@ def test_table_query_scan_indexes_and_pagination() -> None:
             ("101", "E", "Y101"),
         ]
         for sk, lsi_sk, gsi_sk in pk_items:
+            tag = None
+            if sk == "001":
+                tag = "A"
+            if sk == "100":
+                tag = "B"
             table.put(
                 Record(
                     pk="P1",
@@ -97,6 +113,7 @@ def test_table_query_scan_indexes_and_pagination() -> None:
                     gsi_pk="G1",
                     gsi_sk=gsi_sk,
                     lsi_sk=lsi_sk,
+                    tag=tag,
                     note=f"note-{sk}",
                 )
             )
@@ -145,6 +162,19 @@ def test_table_query_scan_indexes_and_pagination() -> None:
         )
         assert all(r.note == "" for r in page.items)
 
+        filtered0 = table.query("P1", limit=1, filter=FilterCondition.exists("tag"))
+        assert filtered0.items == []
+        assert filtered0.next_cursor
+
+        filtered1 = table.query(
+            "P1",
+            limit=1,
+            cursor=filtered0.next_cursor,
+            filter=FilterGroup.or_(FilterCondition.eq("tag", "A"), FilterCondition.eq("tag", "B")),
+        )
+        assert [r.tag for r in filtered1.items] == ["A"]
+        assert filtered1.next_cursor
+
         scan_keys: set[tuple[str, str]] = set()
         cursor = None
         while True:
@@ -163,5 +193,8 @@ def test_table_query_scan_indexes_and_pagination() -> None:
             ("P1", "101"),
             ("P2", "200"),
         }
+
+        parallel = table.scan_all_segments(total_segments=2, max_workers=2)
+        assert {(r.pk, r.sk) for r in parallel} == scan_keys
     finally:
         client.delete_table(TableName=table_name)
