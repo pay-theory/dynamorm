@@ -114,6 +114,8 @@ Use conventional commit format:
 
 Example: `feat: add support for conditional updates`
 
+**Release automation note:** this repo uses `release-please`; PRs that update **dependencies** or other release artifacts should use a release-eligible type (recommended: `fix(deps): ...`) so a new rc/release is generated.
+
 ### PR Description Template
 
 ```markdown
