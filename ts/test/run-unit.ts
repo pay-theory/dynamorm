@@ -16,3 +16,5 @@ await import('./unit/testkit.test.js');
 await import('./unit/schema.test.js');
 await import('./unit/lambda.test.js');
 await import('./unit/multiaccount.test.js');
+await import('./unit/validation.test.js');
+await import('./unit/protection.test.js');

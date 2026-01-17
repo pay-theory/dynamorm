@@ -14,3 +14,5 @@ export * from './update-builder.js';
 export * from './lambda.js';
 export * from './multiaccount.js';
 export * from './send-options.js';
+export * from './validation.js';
+export * from './protection.js';

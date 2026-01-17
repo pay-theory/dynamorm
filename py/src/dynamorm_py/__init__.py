@@ -37,6 +37,7 @@ from .transaction import (
 if TYPE_CHECKING:
     from .dms import assert_model_definition_equivalent_to_dms, get_dms_model, parse_dms_document
     from .multiaccount import AccountConfig, MultiAccountSessions
+    from .protection import ConcurrencyLimiter, SimpleLimiter
     from .runtime import (
         AwsCallMetric,
         create_lambda_boto3_config,
@@ -49,6 +50,20 @@ if TYPE_CHECKING:
     from .schema import build_create_table_request, create_table, delete_table, describe_table, ensure_table
     from .streams import unmarshal_stream_image, unmarshal_stream_record
     from .table import Table
+    from .validation import (
+        MaxExpressionLength,
+        MaxFieldNameLength,
+        MaxNestedDepth,
+        MaxOperatorLength,
+        MaxValueStringLength,
+        SecurityValidationError,
+        validate_expression,
+        validate_field_name,
+        validate_index_name,
+        validate_operator,
+        validate_table_name,
+        validate_value,
+    )
 
 
 def _read_repo_version() -> str:
@@ -115,6 +130,30 @@ def __getattr__(name: str) -> Any:
         from . import multiaccount
 
         return getattr(multiaccount, name)
+    if name in {
+        "ConcurrencyLimiter",
+        "SimpleLimiter",
+    }:
+        from . import protection
+
+        return getattr(protection, name)
+    if name in {
+        "MaxExpressionLength",
+        "MaxFieldNameLength",
+        "MaxNestedDepth",
+        "MaxOperatorLength",
+        "MaxValueStringLength",
+        "SecurityValidationError",
+        "validate_expression",
+        "validate_field_name",
+        "validate_index_name",
+        "validate_operator",
+        "validate_table_name",
+        "validate_value",
+    }:
+        from . import validation
+
+        return getattr(validation, name)
     raise AttributeError(name)
 
 
@@ -144,11 +183,19 @@ __all__ = [
     "Projection",
     "FilterCondition",
     "FilterGroup",
+    "ConcurrencyLimiter",
+    "MaxExpressionLength",
+    "MaxFieldNameLength",
+    "MaxNestedDepth",
+    "MaxOperatorLength",
+    "MaxValueStringLength",
     "instrument_boto3_client",
     "is_lambda_environment",
     "AccountConfig",
     "MultiAccountSessions",
     "Page",
+    "SecurityValidationError",
+    "SimpleLimiter",
     "SortKeyCondition",
     "TransactConditionCheck",
     "TransactDelete",
@@ -166,4 +213,10 @@ __all__ = [
     "parse_dms_document",
     "unmarshal_stream_image",
     "unmarshal_stream_record",
+    "validate_expression",
+    "validate_field_name",
+    "validate_index_name",
+    "validate_operator",
+    "validate_table_name",
+    "validate_value",
 ]
