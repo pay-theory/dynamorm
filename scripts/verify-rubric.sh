@@ -27,6 +27,7 @@ bash scripts/verify-coverage.sh
 bash scripts/verify-ci-toolchain.sh
 bash scripts/verify-ci-rubric-enforced.sh
 bash scripts/verify-branch-release-supply-chain.sh
+bash scripts/verify-branch-version-sync.sh
 bash scripts/verify-dynamodb-local-pin.sh
 
 bash scripts/verify-no-panics.sh
