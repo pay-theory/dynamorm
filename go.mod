@@ -2,7 +2,7 @@ module github.com/pay-theory/dynamorm
 
 go 1.25
 
-toolchain go1.25.3
+toolchain go1.25.6
 
 require (
 	github.com/aws/aws-lambda-go v1.52.0
@@ -17,6 +17,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/kr/pty v1.1.1 => github.com/kr/pty v1.1.8
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect
@@ -35,6 +37,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.13 // indirect
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect

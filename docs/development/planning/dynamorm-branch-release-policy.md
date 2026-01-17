@@ -34,6 +34,19 @@ Recommended approach: **release-please** (merge-driven versioning + changelog up
 - prerelease workflow producing tags like `vX.Y.Z-rc.N` (or an agreed convention), and
 - release workflow producing stable `vX.Y.Z` tags and updating `CHANGELOG.md`.
 
+### Release triggers (required)
+
+`release-please` only cuts a new rc/release when there is at least one **release-eligible** (user-facing) commit since the previous tag. As a result:
+
+- **Dependency/platform updates must use a release-eligible conventional commit type** (recommended: `fix(deps): ...`) so they produce an rc/release.
+- Pure `chore(...)` commits may be treated as non-user-facing and can be skipped by `release-please`.
+
+**Recommendation:** use squash-merge and set the squash title to a conventional commit that matches the intended version bump:
+
+- Patch: `fix(deps): update multi-language dependencies`
+- Minor: `feat: ...`
+- Major: `feat!: ...` or include `BREAKING CHANGE:` in the body
+
 ### Release assets (required)
 
 GitHub Releases must attach build artifacts for the non-Go SDKs:
