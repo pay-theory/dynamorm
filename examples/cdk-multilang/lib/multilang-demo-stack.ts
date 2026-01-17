@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
@@ -11,6 +11,15 @@ import { Construct } from 'constructs';
 
 function repoRootFrom(stackFileDir: string): string {
   return path.resolve(stackFileDir, '../../..');
+}
+
+function isMissingCommandError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  );
 }
 
 export class MultilangDemoStack extends Stack {
@@ -57,18 +66,33 @@ export class MultilangDemoStack extends Stack {
           ],
           local: {
             tryBundle(outputDir: string): boolean {
-              execSync(
-                [
-                  'GOOS=linux',
-                  'GOARCH=amd64',
-                  'CGO_ENABLED=0',
-                  'go build',
-                  `-o ${path.join(outputDir, 'bootstrap')}`,
-                  './examples/cdk-multilang/lambdas/go',
-                ].join(' '),
-                { cwd: repoRoot, stdio: 'inherit' },
-              );
-              return true;
+              try {
+                execFileSync(
+                  'go',
+                  [
+                    'build',
+                    '-o',
+                    path.join(outputDir, 'bootstrap'),
+                    './examples/cdk-multilang/lambdas/go',
+                  ],
+                  {
+                    cwd: repoRoot,
+                    env: {
+                      ...process.env,
+                      GOOS: 'linux',
+                      GOARCH: 'amd64',
+                      CGO_ENABLED: '0',
+                    },
+                    stdio: 'inherit',
+                  },
+                );
+                return true;
+              } catch (error) {
+                if (isMissingCommandError(error)) {
+                  return false;
+                }
+                throw error;
+              }
             },
           },
         },
@@ -125,17 +149,27 @@ export class MultilangDemoStack extends Stack {
               fs.cpSync(dynamormPySrc, path.join(outputDir, 'dynamorm_py'), {
                 recursive: true,
               });
-              execSync(
-                [
+              try {
+                execFileSync(
                   'python3.14',
-                  '-m pip',
-                  'install',
-                  `-r ${path.join(pyHandlerDir, 'requirements.txt')}`,
-                  `-t ${outputDir}`,
-                ].join(' '),
-                { stdio: 'inherit' },
-              );
-              return true;
+                  [
+                    '-m',
+                    'pip',
+                    'install',
+                    '-r',
+                    path.join(pyHandlerDir, 'requirements.txt'),
+                    '-t',
+                    outputDir,
+                  ],
+                  { stdio: 'inherit' },
+                );
+                return true;
+              } catch (error) {
+                if (isMissingCommandError(error)) {
+                  return false;
+                }
+                throw error;
+              }
             },
           },
           volumes: [{ hostPath: dynamormPySrc, containerPath: '/dynamorm_py' }],

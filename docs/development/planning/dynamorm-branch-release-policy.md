@@ -13,6 +13,16 @@ This document defines the intended branch strategy and release automation for Dy
 - A release is cut by merging `premain` into `main` (via PR).
 - Hotfixes may merge directly into `main` (then backported to `premain`).
 
+## Post-release sync (required)
+
+After a stable release is cut on `main`, immediately back-merge `main` into `premain` (via PR) so:
+
+- `premain` carries the latest `.release-please-manifest.json` stable version, and
+- prereleases do not remain on an older major/minor track.
+
+If `.release-please-manifest.premain.json` is behind the latest stable version, reset it to the latest stable version
+to start the next prerelease cycle from the correct baseline.
+
 ## Protections (required)
 
 Protect both `premain` and `main`:
@@ -33,6 +43,19 @@ Recommended approach: **release-please** (merge-driven versioning + changelog up
 
 - prerelease workflow producing tags like `vX.Y.Z-rc.N` (or an agreed convention), and
 - release workflow producing stable `vX.Y.Z` tags and updating `CHANGELOG.md`.
+
+### Release triggers (required)
+
+`release-please` only cuts a new rc/release when there is at least one **release-eligible** (user-facing) commit since the previous tag. As a result:
+
+- **Dependency/platform updates must use a release-eligible conventional commit type** (recommended: `fix(deps): ...`) so they produce an rc/release.
+- Pure `chore(...)` commits may be treated as non-user-facing and can be skipped by `release-please`.
+
+**Recommendation:** use squash-merge and set the squash title to a conventional commit that matches the intended version bump:
+
+- Patch: `fix(deps): update multi-language dependencies`
+- Minor: `feat: ...`
+- Major: `feat!: ...` or include `BREAKING CHANGE:` in the body
 
 ### Release assets (required)
 

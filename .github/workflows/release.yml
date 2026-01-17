@@ -53,12 +53,16 @@ jobs:
           rm -rf release-assets
           mkdir -p release-assets
 
-          npm --prefix ts ci
-          npm --prefix ts run build
-          npm --prefix ts pack --pack-destination ../release-assets
+          pushd ts
+          npm ci
+          npm run build
+          npm pack --pack-destination ../release-assets
+          popd
 
-          uv --directory py sync --frozen --all-extras
-          uv --directory py run python -m build --outdir ../release-assets
+          pushd py
+          uv sync --frozen --all-extras
+          uv run python -m build --outdir ../release-assets
+          popd
 
           ls -la release-assets
 
