@@ -2,6 +2,11 @@
 
 This guide assists in migrating existing Go applications to use DynamORM, focusing on transitions from raw AWS SDK calls or other ORMs.
 
+Multi-language migration guides:
+
+- TypeScript: [ts/docs/migration-guide.md](../ts/docs/migration-guide.md)
+- Python: [py/docs/migration-guide.md](../py/docs/migration-guide.md)
+
 ## From Raw AWS SDK for Go (v2)
 
 **Problem:** Directly using the AWS SDK for Go v2 for DynamoDB operations often leads to verbose code, manual attribute marshaling, and lacks type safety. It also requires explicit context management for every call.
@@ -96,11 +101,12 @@ func main() {
 ```
 
 ### Benefits of Migrating to DynamORM
--   **Reduced Boilerplate**: Significantly less code required for common CRUD operations.
--   **Type Safety**: Compile-time checks prevent common runtime errors related to attribute names and types.
--   **Automatic Marshaling**: Handles conversion between Go structs and DynamoDB `AttributeValue` maps.
--   **Lambda Optimization**: Built-in features for cold-start reduction and connection reuse in serverless environments.
--   **Fluent API**: Chainable methods make queries and transactions more readable and maintainable.
+
+- **Reduced Boilerplate**: Significantly less code required for common CRUD operations.
+- **Type Safety**: Compile-time checks prevent common runtime errors related to attribute names and types.
+- **Automatic Marshaling**: Handles conversion between Go structs and DynamoDB `AttributeValue` maps.
+- **Lambda Optimization**: Built-in features for cold-start reduction and connection reuse in serverless environments.
+- **Fluent API**: Chainable methods make queries and transactions more readable and maintainable.
 
 ## From Other ORMs (e.g., GORM for SQL)
 
@@ -111,8 +117,8 @@ func main() {
 ### Key Differences and Adaptations
 
 1.  **Data Modeling**: Think about Partition Keys (PK) and Sort Keys (SK) for efficient access patterns, not just primary keys.
-    -   **SQL**: `id INT PRIMARY KEY`, `name VARCHAR(255)`
-    -   **DynamoDB (DynamORM)**: `ID string `dynamorm:"pk"`, `SK string `dynamorm:"sk"`
+    - **SQL**: `id INT PRIMARY KEY`, `name VARCHAR(255)`
+    - **DynamoDB (DynamORM)**: `ID string `dynamorm:"pk"`, `SK string `dynamorm:"sk"`
 
 2.  **Joins**: DynamoDB does not support joins. Denormalize data or use multiple `BatchGet` calls.
 
