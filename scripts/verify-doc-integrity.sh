@@ -26,8 +26,18 @@ def iter_md_files(repo_root: Path) -> list[Path]:
     readme = repo_root / "README.md"
     if readme.exists():
         files.append(readme)
-    docs_dir = repo_root / "docs"
-    if docs_dir.exists():
+    # Monorepo support: validate docs in the repo-level `docs/` directory and per-SDK docs
+    # directories like `ts/docs/` and `py/docs/`.
+    docs_dirs: list[Path] = []
+    root_docs = repo_root / "docs"
+    if root_docs.exists():
+        docs_dirs.append(root_docs)
+
+    for candidate in repo_root.glob("*/docs"):
+        if candidate.is_dir():
+            docs_dirs.append(candidate)
+
+    for docs_dir in docs_dirs:
         files.extend(sorted(docs_dir.rglob("*.md")))
     return files
 

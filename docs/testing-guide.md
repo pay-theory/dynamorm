@@ -2,6 +2,12 @@
 
 This guide explains how to write unit and integration tests for applications using DynamORM.
 
+## Quick Links (by SDK)
+
+- Go: this document (mocks in `pkg/mocks`)
+- TypeScript: [TypeScript Testing Guide](../ts/docs/testing-guide.md)
+- Python: [Python Testing Guide](../py/docs/testing-guide.md)
+
 ## Unit Testing with Mocks
 
 To write unit tests without connecting to DynamoDB, use the `core.DB` interface and the provided mocks.
@@ -37,17 +43,17 @@ func TestCreateUser(t *testing.T) {
     // Setup Mocks
     mockDB := new(mocks.MockDB)
     mockQuery := new(mocks.MockQuery)
-    
+
     // Expect Model() to be called, return mock query
     mockDB.On("Model", mock.Anything).Return(mockQuery)
-    
+
     // Expect Create() to be called
     mockQuery.On("Create").Return(nil)
-    
+
     // Test Service
     service := NewUserService(mockDB)
     err := service.CreateUser("john")
-    
+
     // Assertions
     if err != nil {
         t.Errorf("Expected no error, got %v", err)
@@ -98,14 +104,19 @@ func TestEncryptedWrites(t *testing.T) {
 Use `@pay-theory/dynamorm-ts/testkit` for a strict AWS SDK v3 `send()` mock and deterministic helpers:
 
 ```ts
-import { PutItemCommand } from '@aws-sdk/client-dynamodb';
-import { DynamormClient } from '@pay-theory/dynamorm-ts';
-import { createMockDynamoDBClient, fixedNow } from '@pay-theory/dynamorm-ts/testkit';
+import { PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamormClient } from "@pay-theory/dynamorm-ts";
+import {
+  createMockDynamoDBClient,
+  fixedNow,
+} from "@pay-theory/dynamorm-ts/testkit";
 
 const mock = createMockDynamoDBClient();
 mock.when(PutItemCommand, async () => ({}));
 
-const db = new DynamormClient(mock.client, { now: fixedNow('2026-01-16T00:00:00.000000000Z') });
+const db = new DynamormClient(mock.client, {
+  now: fixedNow("2026-01-16T00:00:00.000000000Z"),
+});
 ```
 
 ## Python unit testing
@@ -126,6 +137,22 @@ table = Table(model, client=fake_ddb, kms_key_arn="arn:aws:kms:...", kms_client=
 
 For integration tests, connect to a real DynamoDB instance or DynamoDB Local.
 
+### TypeScript integration tests
+
+```bash
+make docker-up
+npm --prefix ts run test:integration
+```
+
+### Python integration tests
+
+```bash
+make docker-up
+uv --directory py run pytest -q
+```
+
+### Go integration tests
+
 ```go
 func TestIntegration(t *testing.T) {
     // Connect to DynamoDB Local
@@ -133,10 +160,10 @@ func TestIntegration(t *testing.T) {
         Endpoint: "http://localhost:8000",
         Region:   "us-east-1",
     })
-    
+
     // Create Table
     db.CreateTable(&User{})
-    
+
     // Run Test
     err := db.Model(&User{ID: "1"}).Create()
     if err != nil {

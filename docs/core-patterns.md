@@ -1,6 +1,11 @@
 # Core Patterns
 
-This guide documents the canonical usage patterns for DynamORM, designed to be copy-pasted into your application.
+This guide documents canonical usage patterns for the **Go** DynamORM SDK, designed to be copy-pasted into your application.
+
+Multi-language core patterns:
+
+- TypeScript: [ts/docs/core-patterns.md](../ts/docs/core-patterns.md)
+- Python: [py/docs/core-patterns.md](../py/docs/core-patterns.md)
 
 ## Lambda Optimization
 
@@ -48,20 +53,20 @@ for {
     var page []User
     // Configure query
     q := db.Model(&User{}).Limit(50)
-    
+
     // Apply cursor if continuing
     if lastEvaluatedKey != "" {
         q.Cursor(lastEvaluatedKey)
     }
-    
+
     // Fetch page
     result, err := q.AllPaginated(&page)
     if err != nil {
         log.Fatal(err)
     }
-    
+
     allUsers = append(allUsers, page...)
-    
+
     // Check if more pages exist
     if !result.HasMore {
         break
@@ -76,6 +81,7 @@ for {
 **Solution:** Use a version field and `AtVersion` condition.
 
 1. **Model Setup:** Add a version field.
+
 ```go
 type Document struct {
     ID      string `dynamorm:"pk"`
@@ -85,6 +91,7 @@ type Document struct {
 ```
 
 2. **Update Logic:**
+
 ```go
 // ✅ CORRECT: Guarded Update
 doc := &Document{ID: "doc_1", Content: "New Content", Version: 5}
@@ -154,10 +161,10 @@ err := db.TransactWrite(ctx, func(tx core.TransactionBuilder) error {
 
     // 2. Add to Receiver
     tx.Update(receiver, []string{"Balance"})
-    
+
     // 3. Record Audit Log
     tx.Put(auditLog)
-    
+
     return nil
 })
 // If ANY operation fails, EVERYTHING is rolled back.
@@ -201,31 +208,31 @@ DynamORM is designed to provide significant business value by improving develope
 
 ### Developer Efficiency & Team Velocity
 
--   **Reduced Boilerplate:** DynamORM eliminates approximately **80% of the boilerplate code** typically required for DynamoDB interactions with the raw AWS SDK. This frees developers to focus on business logic.
--   **Type Safety:** Compile-time type safety with Go generics prevents common runtime errors, leading to fewer bugs and faster development cycles.
--   **Intuitive API:** The fluent, chainable API makes code more readable and easier to maintain, reducing the learning curve for new team members.
+- **Reduced Boilerplate:** DynamORM eliminates approximately **80% of the boilerplate code** typically required for DynamoDB interactions with the raw AWS SDK. This frees developers to focus on business logic.
+- **Type Safety:** Compile-time type safety with Go generics prevents common runtime errors, leading to fewer bugs and faster development cycles.
+- **Intuitive API:** The fluent, chainable API makes code more readable and easier to maintain, reducing the learning curve for new team members.
 
 ### Performance & Reliability
 
--   **Sub-15ms Cold Starts:** With Lambda-optimized initialization (`NewLambdaOptimized`, `LambdaInit`), DynamORM achieves **91% faster cold starts** compared to raw AWS SDK usage, crucial for responsive serverless applications.
--   **Optimized Memory Usage:** DynamORM uses **57% less memory** in Lambda environments, contributing to lower execution costs and fewer memory-related issues.
--   **Production-Ready Patterns:** Built-in support for transactions, conditional writes, and retry logic helps build robust and fault-tolerant applications.
+- **Sub-15ms Cold Starts:** With Lambda-optimized initialization (`NewLambdaOptimized`, `LambdaInit`), DynamORM achieves **91% faster cold starts** compared to raw AWS SDK usage, crucial for responsive serverless applications.
+- **Optimized Memory Usage:** DynamORM uses **57% less memory** in Lambda environments, contributing to lower execution costs and fewer memory-related issues.
+- **Production-Ready Patterns:** Built-in support for transactions, conditional writes, and retry logic helps build robust and fault-tolerant applications.
 
 ### Cost Optimization
 
--   **Reduced RCUs/WCUs:** By promoting efficient querying (avoiding scans, using indexes correctly) and batch operations, DynamORM helps minimize consumed Read Capacity Units (RCUs) and Write Capacity Units (WCUs), directly lowering DynamoDB costs.
--   **Lower Lambda Costs:** Faster cold starts and reduced memory footprint mean Lambda functions run for shorter durations and require less memory, leading to lower compute costs.
--   **Faster Development = Lower Project Costs:** Increased team velocity translates to projects delivered faster and with fewer resources.
+- **Reduced RCUs/WCUs:** By promoting efficient querying (avoiding scans, using indexes correctly) and batch operations, DynamORM helps minimize consumed Read Capacity Units (RCUs) and Write Capacity Units (WCUs), directly lowering DynamoDB costs.
+- **Lower Lambda Costs:** Faster cold starts and reduced memory footprint mean Lambda functions run for shorter durations and require less memory, leading to lower compute costs.
+- **Faster Development = Lower Project Costs:** Increased team velocity translates to projects delivered faster and with fewer resources.
 
 ### Primary Use Cases
 
 DynamORM is ideal for:
 
--   **Serverless Backends:** Building highly scalable and performant APIs with AWS Lambda and API Gateway.
--   **Event-Driven Architectures:** Processing DynamoDB Streams with type-safe model transformations.
--   **High-Throughput Microservices:** Services requiring fast, efficient interactions with DynamoDB.
--   **Financial & Critical Systems:** Leveraging atomic transactions for data consistency.
--   **Real-time Data Processing:** Applications needing low-latency access to DynamoDB data.
+- **Serverless Backends:** Building highly scalable and performant APIs with AWS Lambda and API Gateway.
+- **Event-Driven Architectures:** Processing DynamoDB Streams with type-safe model transformations.
+- **High-Throughput Microservices:** Services requiring fast, efficient interactions with DynamoDB.
+- **Financial & Critical Systems:** Leveraging atomic transactions for data consistency.
+- **Real-time Data Processing:** Applications needing low-latency access to DynamoDB data.
 
 ---
 
@@ -236,14 +243,15 @@ DynamORM is ideal for:
 
 ### Lambda Memory Sizing
 
-**Principle:** Higher Lambda memory often means more CPU, faster execution, and lower overall cost for compute-bound tasks, despite a higher *per-GB-second* price.
+**Principle:** Higher Lambda memory often means more CPU, faster execution, and lower overall cost for compute-bound tasks, despite a higher _per-GB-second_ price.
 
 - **Recommendation:** Start with 512MB-1GB for most DynamORM-based Lambda functions. Monitor CPU time and memory usage (using `LambdaDB.GetMemoryStats()`) to fine-tune.
 - **Impact:**
-    - **Memory <= 256MB:** May incur higher cold starts due to limited CPU.
-    - **Memory >= 1024MB:** Generally provides optimal performance for typical workloads.
+  - **Memory <= 256MB:** May incur higher cold starts due to limited CPU.
+  - **Memory >= 1024MB:** Generally provides optimal performance for typical workloads.
 
 **Example (Monitoring Memory Usage):**
+
 ```go
 // ✅ CORRECT: Logging memory stats for optimization
 func handler(ctx context.Context) error {
@@ -266,6 +274,7 @@ func handler(ctx context.Context) error {
 - **Details:** DynamORM's `LambdaDB` manages an optimized `http.Client` with appropriate `MaxIdleConns` and `IdleConnTimeout` settings for Lambda's execution model.
 
 **Example:**
+
 ```go
 // ✅ CORRECT: Global init ensures connection pooling
 var db *dynamorm.LambdaDB
@@ -281,12 +290,13 @@ func init() {
 **Principle:** Minimize consumed capacity by avoiding full table scans and using efficient access patterns.
 
 - **Recommendation:**
-    - **Avoid Scans:** Unless absolutely necessary for infrequent analytics on small tables, never use `Scan()` for primary access patterns. Always prefer `Query()` with appropriate Partition and Sort Key conditions.
-    - **Batch Operations:** Use `BatchGet`, `BatchCreate`, `BatchDelete` for multiple items to reduce network overhead and potentially consumed capacity compared to individual operations.
-    - **Consistent Reads:** Only enable `ConsistentRead()` when strong consistency is strictly required, as it consumes 2x RCUs.
-    - **GSI Projection:** Use `KEYS_ONLY` or `INCLUDE` projections on GSIs to reduce the size of items read from the index, minimizing RCU consumption.
+  - **Avoid Scans:** Unless absolutely necessary for infrequent analytics on small tables, never use `Scan()` for primary access patterns. Always prefer `Query()` with appropriate Partition and Sort Key conditions.
+  - **Batch Operations:** Use `BatchGet`, `BatchCreate`, `BatchDelete` for multiple items to reduce network overhead and potentially consumed capacity compared to individual operations.
+  - **Consistent Reads:** Only enable `ConsistentRead()` when strong consistency is strictly required, as it consumes 2x RCUs.
+  - **GSI Projection:** Use `KEYS_ONLY` or `INCLUDE` projections on GSIs to reduce the size of items read from the index, minimizing RCU consumption.
 
 **Example (Efficient Query vs. Scan):**
+
 ```go
 // ❌ INCORRECT: Expensive full table scan
 // Will consume RCU proportional to table size, not result size
@@ -296,7 +306,6 @@ db.Model(&Product{}).Where("Category", "=", "electronics").All(&products)
 // Assumes a GSI 'category-index' with Category as its PK
 db.Model(&Product{}).Index("category-index").Where("Category", "=", "electronics").All(&products)
 ```
-
 
 **Problem:** Prevent overwriting data if it already exists (idempotency).
 **Solution:** Use `.IfNotExists()` or `.Where()` conditions on writes.
