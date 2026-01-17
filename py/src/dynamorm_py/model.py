@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
-from typing import Any, cast, overload
+from typing import Any, Protocol, cast, overload
 
 
 class ModelDefinitionError(ValueError):
     pass
+
+
+class AttributeConverter(Protocol):
+    def to_dynamodb(self, value: Any) -> Any: ...
+
+    def from_dynamodb(self, value: Any) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -19,6 +25,7 @@ class AttributeDefinition:
     json: bool
     binary: bool
     encrypted: bool
+    converter: AttributeConverter | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,7 @@ def dynamorm_field(
     json: bool = False,
     binary: bool = False,
     encrypted: bool = False,
+    converter: AttributeConverter | None = None,
     ignore: bool = False,
 ) -> Any: ...
 
@@ -81,6 +89,7 @@ def dynamorm_field(
     json: bool = False,
     binary: bool = False,
     encrypted: bool = False,
+    converter: AttributeConverter | None = None,
     ignore: bool = False,
     default: Any,
 ) -> Any: ...
@@ -96,6 +105,7 @@ def dynamorm_field(
     json: bool = False,
     binary: bool = False,
     encrypted: bool = False,
+    converter: AttributeConverter | None = None,
     ignore: bool = False,
     default_factory: Any,
 ) -> Any: ...
@@ -110,6 +120,7 @@ def dynamorm_field(
     json: bool = False,
     binary: bool = False,
     encrypted: bool = False,
+    converter: AttributeConverter | None = None,
     ignore: bool = False,
     default: Any = MISSING,
     default_factory: Any = MISSING,
@@ -123,6 +134,7 @@ def dynamorm_field(
         "json": json,
         "binary": binary,
         "encrypted": encrypted,
+        "converter": converter,
         "ignore": ignore,
     }
     if name is not None:
@@ -195,6 +207,7 @@ class ModelDefinition[T]:
                     if role.startswith("index_pk:") or role.startswith("index_sk:"):
                         raise ModelDefinitionError(f"encrypted field cannot be indexed: {dc_field.name}")
 
+            converter = cast(AttributeConverter | None, opts.get("converter"))
             attribute_name = cast(str, opts.get("name", dc_field.name))
             attributes[dc_field.name] = AttributeDefinition(
                 python_name=dc_field.name,
@@ -205,6 +218,7 @@ class ModelDefinition[T]:
                 json=bool(opts.get("json", False)),
                 binary=bool(opts.get("binary", False)),
                 encrypted=encrypted,
+                converter=converter,
             )
 
         if len(pk_fields) != 1:

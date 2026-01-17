@@ -827,6 +827,9 @@ class Table[T]:
         return out
 
     def _serialize_attr_value(self, attr_def: AttributeDefinition, value: Any) -> Any:
+        if attr_def.converter is not None and value is not None:
+            value = attr_def.converter.to_dynamodb(value)
+
         if attr_def.set and isinstance(value, set) and len(value) == 0:
             return self._serializer.serialize(None)
 
@@ -879,9 +882,9 @@ class Table[T]:
         if self._model.sk is not None and sk is None:
             raise ValidationError("sk is required")
 
-        key: dict[str, Any] = {self._model.pk.attribute_name: self._serializer.serialize(pk)}
+        key: dict[str, Any] = {self._model.pk.attribute_name: self._serialize_attr_value(self._model.pk, pk)}
         if self._model.sk is not None:
-            key[self._model.sk.attribute_name] = self._serializer.serialize(sk)
+            key[self._model.sk.attribute_name] = self._serialize_attr_value(self._model.sk, sk)
         return key
 
     def _from_item(self, item: Mapping[str, Any]) -> T:
@@ -920,6 +923,8 @@ class Table[T]:
                 raw = self._deserializer.deserialize(item[attr_def.attribute_name])
             if attr_def.json and isinstance(raw, str):
                 raw = json.loads(raw)
+            if attr_def.converter is not None and raw is not None:
+                raw = attr_def.converter.from_dynamodb(raw)
 
             kwargs[dc_field.name] = _coerce_value(raw, model_annotations.get(dc_field.name, Any))
 

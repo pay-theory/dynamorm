@@ -58,6 +58,9 @@ type Attribute struct {
 	Required  bool `yaml:"required" json:"required"`
 	Optional  bool `yaml:"optional" json:"optional"`
 	OmitEmpty bool `yaml:"omit_empty" json:"omit_empty"`
+
+	JSON   bool `yaml:"json" json:"json"`
+	Binary bool `yaml:"binary" json:"binary"`
 }
 
 type Index struct {
@@ -171,6 +174,8 @@ func FromMetadata(meta *model.Metadata) (Model, error) {
 			Required:  field.IsPK || field.IsSK,
 			Optional:  !field.IsPK && !field.IsSK,
 			OmitEmpty: field.OmitEmpty,
+			JSON:      hasModifierTag(field.Tags, "json"),
+			Binary:    hasModifierTag(field.Tags, "binary"),
 			Encryption: func() any {
 				if field.IsEncrypted {
 					return map[string]any{"v": 1}
@@ -271,6 +276,8 @@ type normalizedAttr struct {
 	Required  bool     `json:"required,omitempty"`
 	Optional  bool     `json:"optional,omitempty"`
 	Encrypted bool     `json:"encrypted,omitempty"`
+	JSON      bool     `json:"json,omitempty"`
+	Binary    bool     `json:"binary,omitempty"`
 }
 
 type normalizedIndex struct {
@@ -307,6 +314,8 @@ func normalizeForCompare(m Model, opts CompareOptions) normalizedModel {
 			Required:  a.Required,
 			Optional:  a.Optional,
 			Encrypted: a.Encryption != nil,
+			JSON:      a.JSON,
+			Binary:    a.Binary,
 		})
 	}
 	sort.Slice(out.Attributes, func(i, j int) bool { return out.Attributes[i].Attribute < out.Attributes[j].Attribute })
@@ -413,6 +422,14 @@ func attributeTypeFromTags(tags map[string]string) (string, bool) {
 	return "", false
 }
 
+func hasModifierTag(tags map[string]string, key string) bool {
+	if tags == nil {
+		return false
+	}
+	_, ok := tags[key]
+	return ok
+}
+
 func attributeTypeFromSetField(t reflect.Type) (string, error) {
 	if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
 		return "", fmt.Errorf("set fields must be slice/array (got %s)", t.Kind())
@@ -508,6 +525,15 @@ func validateModelAttributes(m Model) (map[string]struct{}, error) {
 		}
 		if a.Required && a.Optional {
 			return nil, fmt.Errorf("DMS model %s: attribute %s cannot be both required and optional", m.Name, a.Attribute)
+		}
+		if a.JSON && a.Type != "S" {
+			return nil, fmt.Errorf("DMS model %s: attribute %s json requires type S (got %s)", m.Name, a.Attribute, a.Type)
+		}
+		if a.Binary && a.Type != "B" {
+			return nil, fmt.Errorf("DMS model %s: attribute %s binary requires type B (got %s)", m.Name, a.Attribute, a.Type)
+		}
+		if a.JSON && a.Binary {
+			return nil, fmt.Errorf("DMS model %s: attribute %s cannot be both json and binary", m.Name, a.Attribute)
 		}
 		seen[a.Attribute] = struct{}{}
 	}

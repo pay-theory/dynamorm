@@ -146,37 +146,59 @@ export function marshalScalar(
   schema: Readonly<AttributeSchema>,
   value: unknown,
 ): AttributeValue {
+  const converted =
+    schema.converter !== undefined
+      ? schema.converter.toDynamoValue(value)
+      : value;
+
+  if (schema.json) {
+    if (schema.type !== 'S') {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `json attributes must be type S: ${schema.attribute}`,
+      );
+    }
+    if (converted === undefined) {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        'Undefined values are not supported',
+      );
+    }
+    if (converted === null) return { NULL: true };
+    return { S: stableJsonStringify(converted, schema.attribute) };
+  }
+
   switch (schema.type) {
     case 'S':
-      if (typeof value !== 'string')
+      if (typeof converted !== 'string')
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected string for ${schema.attribute}`,
         );
-      return { S: value };
+      return { S: converted };
     case 'N':
-      if (typeof value === 'number') return { N: String(value) };
-      if (typeof value === 'bigint') return { N: value.toString() };
-      if (typeof value === 'string') return { N: value };
+      if (typeof converted === 'number') return { N: String(converted) };
+      if (typeof converted === 'bigint') return { N: converted.toString() };
+      if (typeof converted === 'string') return { N: converted };
       throw new DynamormError(
         'ErrInvalidModel',
         `Expected number for ${schema.attribute}`,
       );
     case 'B': {
-      if (value instanceof Uint8Array) return { B: value };
+      if (converted instanceof Uint8Array) return { B: converted };
       throw new DynamormError(
         'ErrInvalidModel',
         `Expected Uint8Array for ${schema.attribute}`,
       );
     }
     case 'SS': {
-      if (!Array.isArray(value)) {
+      if (!Array.isArray(converted)) {
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected string[] for ${schema.attribute}`,
         );
       }
-      const ss = value.map((v) => {
+      const ss = converted.map((v) => {
         if (typeof v !== 'string') {
           throw new DynamormError(
             'ErrInvalidModel',
@@ -189,13 +211,13 @@ export function marshalScalar(
       return { SS: ss };
     }
     case 'NS': {
-      if (!Array.isArray(value)) {
+      if (!Array.isArray(converted)) {
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected number[] for ${schema.attribute}`,
         );
       }
-      const ns = value.map((v) => {
+      const ns = converted.map((v) => {
         if (typeof v === 'number') return String(v);
         if (typeof v === 'bigint') return v.toString();
         if (typeof v === 'string') return v;
@@ -208,13 +230,13 @@ export function marshalScalar(
       return { NS: ns };
     }
     case 'BS': {
-      if (!Array.isArray(value)) {
+      if (!Array.isArray(converted)) {
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected Uint8Array[] for ${schema.attribute}`,
         );
       }
-      const bs = value.map((v) => {
+      const bs = converted.map((v) => {
         if (v instanceof Uint8Array) return v;
         throw new DynamormError(
           'ErrInvalidModel',
@@ -225,32 +247,38 @@ export function marshalScalar(
       return { BS: bs };
     }
     case 'BOOL':
-      if (typeof value !== 'boolean')
+      if (typeof converted !== 'boolean')
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected boolean for ${schema.attribute}`,
         );
-      return { BOOL: value };
+      return { BOOL: converted };
     case 'NULL':
       return { NULL: true };
     case 'L': {
-      if (!Array.isArray(value)) {
+      if (!Array.isArray(converted)) {
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected array for ${schema.attribute}`,
         );
       }
-      return { L: value.map(marshalDocumentValue) };
+      return { L: converted.map(marshalDocumentValue) };
     }
     case 'M': {
-      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      if (
+        converted === null ||
+        typeof converted !== 'object' ||
+        Array.isArray(converted)
+      ) {
         throw new DynamormError(
           'ErrInvalidModel',
           `Expected object for ${schema.attribute}`,
         );
       }
       const out: Record<string, AttributeValue> = {};
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      for (const [k, v] of Object.entries(
+        converted as Record<string, unknown>,
+      )) {
         out[k] = marshalDocumentValue(v);
       }
       return { M: out };
@@ -267,38 +295,75 @@ export function unmarshalScalar(
   schema: Readonly<AttributeSchema>,
   av: AttributeValue,
 ): unknown {
+  const applyConverter = (value: unknown): unknown =>
+    schema.converter !== undefined
+      ? schema.converter.fromDynamoValue(value)
+      : value;
+
+  if (schema.json) {
+    if (schema.type !== 'S') {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `json attributes must be type S: ${schema.attribute}`,
+      );
+    }
+
+    if ('NULL' in av && av.NULL) return applyConverter(null);
+
+    if ('S' in av && av.S !== undefined) {
+      const raw = av.S;
+      try {
+        return applyConverter(JSON.parse(raw));
+      } catch (err) {
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Invalid JSON value for ${schema.attribute}`,
+          { cause: err },
+        );
+      }
+    }
+
+    throw new DynamormError(
+      'ErrInvalidModel',
+      `Unsupported AttributeValue for ${schema.attribute}`,
+    );
+  }
+
   switch (schema.type) {
     case 'S':
-      if ('S' in av && av.S !== undefined) return av.S;
+      if ('S' in av && av.S !== undefined) return applyConverter(av.S);
       break;
     case 'N':
-      if ('N' in av && av.N !== undefined) return Number(av.N);
+      if ('N' in av && av.N !== undefined) return applyConverter(Number(av.N));
       break;
     case 'B':
-      if ('B' in av && av.B !== undefined) return Buffer.from(av.B);
+      if ('B' in av && av.B !== undefined)
+        return applyConverter(Buffer.from(av.B));
       break;
     case 'SS':
-      if ('SS' in av && av.SS !== undefined) return av.SS.slice();
-      if ('NULL' in av && av.NULL) return [];
+      if ('SS' in av && av.SS !== undefined)
+        return applyConverter(av.SS.slice());
+      if ('NULL' in av && av.NULL) return applyConverter([]);
       break;
     case 'NS':
-      if ('NS' in av && av.NS !== undefined) return av.NS.map((n) => Number(n));
-      if ('NULL' in av && av.NULL) return [];
+      if ('NS' in av && av.NS !== undefined)
+        return applyConverter(av.NS.map((n) => Number(n)));
+      if ('NULL' in av && av.NULL) return applyConverter([]);
       break;
     case 'BS':
       if ('BS' in av && av.BS !== undefined)
-        return av.BS.map((b) => Buffer.from(b));
-      if ('NULL' in av && av.NULL) return [];
+        return applyConverter(av.BS.map((b) => Buffer.from(b)));
+      if ('NULL' in av && av.NULL) return applyConverter([]);
       break;
     case 'BOOL':
-      if ('BOOL' in av && av.BOOL !== undefined) return av.BOOL;
+      if ('BOOL' in av && av.BOOL !== undefined) return applyConverter(av.BOOL);
       break;
     case 'NULL':
-      if ('NULL' in av && av.NULL) return null;
+      if ('NULL' in av && av.NULL) return applyConverter(null);
       break;
     case 'L':
       if ('L' in av && av.L !== undefined)
-        return av.L.map(unmarshalDocumentValue);
+        return applyConverter(av.L.map(unmarshalDocumentValue));
       break;
     case 'M':
       if ('M' in av && av.M !== undefined) {
@@ -311,7 +376,7 @@ export function unmarshalScalar(
             );
           out[k] = unmarshalDocumentValue(v);
         }
-        return out;
+        return applyConverter(out);
       }
       break;
     default:
@@ -325,6 +390,68 @@ export function unmarshalScalar(
     'ErrInvalidModel',
     `Unsupported AttributeValue for ${schema.attribute}`,
   );
+}
+
+function stableJsonStringify(value: unknown, label: string): string {
+  const normalized = normalizeJsonValue(value, label);
+  return JSON.stringify(normalized);
+}
+
+function normalizeJsonValue(value: unknown, path: string): unknown {
+  if (value === undefined) {
+    throw new DynamormError(
+      'ErrInvalidModel',
+      'Undefined values are not supported',
+    );
+  }
+  if (value === null) return null;
+
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `Non-finite number in JSON value at ${path}`,
+      );
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((v, idx) => normalizeJsonValue(v, `${path}[${idx}]`));
+  }
+
+  if (!isPlainObject(value)) {
+    const kind =
+      typeof value === 'object' && value !== null
+        ? String(
+            (value as { constructor?: { name?: unknown } }).constructor?.name ??
+              'Object',
+          )
+        : typeof value;
+    throw new DynamormError(
+      'ErrInvalidModel',
+      `Non-JSON value at ${path} (${kind})`,
+    );
+  }
+
+  const out: Record<string, unknown> = {};
+  const keys = Object.keys(value).sort();
+  for (const key of keys) {
+    out[key] = normalizeJsonValue(
+      (value as Record<string, unknown>)[key],
+      `${path}.${key}`,
+    );
+  }
+
+  return out;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 export function marshalDocumentValue(value: unknown): AttributeValue {

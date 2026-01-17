@@ -34,6 +34,19 @@ assert.deepEqual(marshalScalar({ attribute: 'N', type: 'N' }, 1), { N: '1' });
 assert.deepEqual(marshalScalar({ attribute: 'N', type: 'N' }, 1n), { N: '1' });
 assert.deepEqual(marshalScalar({ attribute: 'N', type: 'N' }, '1'), { N: '1' });
 assert.deepEqual(
+  marshalScalar(
+    { attribute: 'payload', type: 'S', json: true },
+    { b: 2, a: 1 },
+  ),
+  { S: '{"a":1,"b":2}' },
+);
+assert.deepEqual(
+  marshalScalar({ attribute: 'payload', type: 'S', json: true }, null),
+  {
+    NULL: true,
+  },
+);
+assert.deepEqual(
   marshalScalar({ attribute: 'B', type: 'B' }, Buffer.from('a')),
   {
     B: Buffer.from('a'),
@@ -101,6 +114,20 @@ assert.throws(() => marshalScalar({ attribute: 'X', type: 'X' as never }, 'x'));
 assert.equal(unmarshalScalar({ attribute: 'S', type: 'S' }, { S: 'x' }), 'x');
 assert.equal(unmarshalScalar({ attribute: 'N', type: 'N' }, { N: '1' }), 1);
 assert.deepEqual(
+  unmarshalScalar(
+    { attribute: 'payload', type: 'S', json: true },
+    { S: '{"a":1,"b":2}' },
+  ),
+  { a: 1, b: 2 },
+);
+assert.equal(
+  unmarshalScalar(
+    { attribute: 'payload', type: 'S', json: true },
+    { NULL: true },
+  ),
+  null,
+);
+assert.deepEqual(
   unmarshalScalar({ attribute: 'B', type: 'B' }, { B: Buffer.from('a') }),
   Buffer.from('a'),
 );
@@ -150,6 +177,38 @@ assert.equal(
 assert.throws(() =>
   unmarshalScalar({ attribute: 'S', type: 'S' }, { NS: ['1'] } as never),
 );
+assert.throws(() =>
+  marshalScalar({ attribute: 'payload', type: 'S', json: true }, {
+    x: undefined,
+  } as never),
+);
+assert.throws(() =>
+  unmarshalScalar({ attribute: 'payload', type: 'S', json: true }, {
+    S: '{',
+  } as never),
+);
+
+{
+  class ID {
+    constructor(readonly raw: string) {}
+  }
+  const schema = {
+    attribute: 'id',
+    type: 'S',
+    converter: {
+      toDynamoValue: (value: unknown): unknown => {
+        assert.ok(value instanceof ID);
+        return value.raw;
+      },
+      fromDynamoValue: (value: unknown): unknown => new ID(String(value)),
+    },
+  } as const;
+
+  assert.deepEqual(marshalScalar(schema, new ID('abc')), { S: 'abc' });
+  const out = unmarshalScalar(schema, { S: 'abc' });
+  assert.ok(out instanceof ID);
+  assert.equal(out.raw, 'abc');
+}
 
 assert.throws(() => marshalDocumentValue(undefined as never));
 assert.deepEqual(unmarshalDocumentValue({ NULL: true }), null);

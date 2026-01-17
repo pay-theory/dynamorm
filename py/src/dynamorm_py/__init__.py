@@ -16,6 +16,7 @@ from .errors import (
     ValidationError,
 )
 from .model import (
+    AttributeConverter,
     IndexDefinition,
     IndexSpec,
     ModelDefinition,
@@ -161,6 +162,7 @@ __all__ = [
     "AwsError",
     "AwsCallMetric",
     "assert_model_definition_equivalent_to_dms",
+    "AttributeConverter",
     "BatchRetryExceededError",
     "build_create_table_request",
     "ConditionFailedError",

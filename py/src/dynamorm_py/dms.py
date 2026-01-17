@@ -143,6 +143,19 @@ def _normalize_dms_model(model: Mapping[str, Any], *, ignore_table_name: bool) -
         if isinstance(roles, list):
             roles_out = sorted([r for r in roles if isinstance(r, str) and r])
 
+        json_flag = bool(attr.get("json", False))
+        binary_flag = bool(attr.get("binary", False))
+        if json_flag and attr_type != "S":
+            raise ValidationError(
+                f"DMS model {name}: attribute {attr_name}: json requires type S (got {attr_type})"
+            )
+        if binary_flag and attr_type != "B":
+            raise ValidationError(
+                f"DMS model {name}: attribute {attr_name}: binary requires type B (got {attr_type})"
+            )
+        if json_flag and binary_flag:
+            raise ValidationError(f"DMS model {name}: attribute {attr_name}: cannot be both json and binary")
+
         attrs.append(
             {
                 "attribute": attr_name,
@@ -152,6 +165,8 @@ def _normalize_dms_model(model: Mapping[str, Any], *, ignore_table_name: bool) -
                 "optional": bool(attr.get("optional", False)),
                 "roles": roles_out,
                 "encrypted": bool(attr.get("encryption") is not None),
+                "json": json_flag,
+                "binary": binary_flag,
             }
         )
 
@@ -229,6 +244,8 @@ def _model_definition_to_dms_model(model: ModelDefinition[Any]) -> dict[str, Any
                 "optional": not required,
                 "omit_empty": attr.omitempty,
                 "roles": roles,
+                "json": attr.json,
+                "binary": attr.binary,
                 "encryption": {"v": 1} if attr.encrypted else None,
             }
         )

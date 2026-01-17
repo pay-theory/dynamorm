@@ -393,6 +393,60 @@ func TestAttributeTypeFromField_TagsAndKinds(t *testing.T) {
 	require.Equal(t, "S", tp)
 }
 
+type jsonBinaryTagModel struct {
+	PK      string            `dynamorm:"pk,attr:PK"`
+	Payload map[string]string `dynamorm:"json,attr:payload,omitempty"`
+	Blob    string            `dynamorm:"binary,attr:blob,omitempty"`
+}
+
+func (jsonBinaryTagModel) TableName() string { return "tbl" }
+
+func TestFromMetadata_JsonAndBinaryTags(t *testing.T) {
+	t.Parallel()
+
+	reg := model.NewRegistry()
+	require.NoError(t, reg.Register(jsonBinaryTagModel{}))
+	meta, err := reg.GetMetadata(jsonBinaryTagModel{})
+	require.NoError(t, err)
+
+	got, err := FromMetadata(meta)
+	require.NoError(t, err)
+
+	attrByName := make(map[string]Attribute, len(got.Attributes))
+	for _, a := range got.Attributes {
+		attrByName[a.Attribute] = a
+	}
+
+	require.True(t, attrByName["payload"].JSON)
+	require.Equal(t, "S", attrByName["payload"].Type)
+
+	require.True(t, attrByName["blob"].Binary)
+	require.Equal(t, "B", attrByName["blob"].Type)
+}
+
+func TestParseDocumentRejectsInvalidJsonBinaryModifiers(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseDocument([]byte(`
+dms_version: "0.1"
+models:
+  - name: "Demo"
+    table: { name: "tbl" }
+    keys:
+      partition: { attribute: "PK", type: "S" }
+    attributes:
+      - attribute: "PK"
+        type: "S"
+        required: true
+        roles: ["pk"]
+      - attribute: "bad_json"
+        type: "N"
+        optional: true
+        json: true
+`))
+	require.Error(t, err)
+}
+
 func TestAssertModelsEquivalent_ReturnsDiff(t *testing.T) {
 	t.Parallel()
 

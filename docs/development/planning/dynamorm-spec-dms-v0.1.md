@@ -112,6 +112,12 @@ Every `attributes[]` entry supports:
   - `rfc3339nano` (timestamps)
   - `unix_seconds` (TTL)
   - `int` (version)
+- `json` (bool, default false): store a JSON-compatible value as a DynamoDB `S` JSON blob.
+  - Requires `type: "S"`.
+  - Serialization MUST be deterministic (no insignificant whitespace; object keys sorted recursively).
+  - `null` values MUST be stored as DynamoDB `NULL` (not as the string `"null"`).
+- `binary` (bool, default false): indicates the attribute is treated as a binary blob.
+  - Requires `type: "B"`.
 - `encryption` (object, optional): indicates the attribute is stored as an encrypted envelope (see below).
 - `tags` (object, optional): extension metadata; must not change core semantics without a spec update.
 
@@ -248,5 +254,4 @@ Implementations MUST expose typed errors (or stable error codes) for these cases
 
 - TTL field types: should convenience timestamp types be allowed everywhere (Go `time.Time`, TS `Date`) while always
   storing epoch seconds?
-- `json` / `binary` tags: should these become first-class DMS features, or remain custom-converter territory?
 - Projection behavior: do we standardize projection expressions and “include fields” semantics in v0.2?
