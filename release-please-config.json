@@ -4,6 +4,11 @@
   "packages": {
     ".": {
       "extra-files": [
+        {
+          "type": "json",
+          "path": "py/src/dynamorm_py/version.json",
+          "jsonpath": "$.version"
+        },
         { "type": "json", "path": "ts/package.json", "jsonpath": "$.version" },
         {
           "type": "json",

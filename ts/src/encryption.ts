@@ -8,6 +8,10 @@ import {
   marshalScalar,
   nowRfc3339Nano,
 } from './marshal.js';
+import {
+  decodeEncryptedPayload,
+  encodeEncryptedPayload,
+} from './encryption-avjson.js';
 
 export interface EncryptionContext {
   model: string;
@@ -190,41 +194,28 @@ function toBytes(
   schema: Readonly<AttributeSchema>,
   value: unknown,
 ): Uint8Array {
-  switch (schema.type) {
-    case 'S':
-      if (typeof value !== 'string')
-        throw new DynamormError(
-          'ErrInvalidModel',
-          `Expected string for ${schema.attribute}`,
-        );
-      return new TextEncoder().encode(value);
-    case 'B':
-      if (value instanceof Uint8Array) return value;
-      throw new DynamormError(
-        'ErrInvalidModel',
-        `Expected Uint8Array for ${schema.attribute}`,
-      );
-    default:
-      throw new DynamormError(
-        'ErrInvalidModel',
-        `Encrypted fields must be type S or B: ${schema.attribute}`,
-      );
+  if (schema.type !== 'S' && schema.type !== 'B') {
+    throw new DynamormError(
+      'ErrInvalidModel',
+      `Encrypted fields must be type S or B: ${schema.attribute}`,
+    );
   }
+
+  const av = marshalScalar(schema, value);
+  return encodeEncryptedPayload(av);
 }
 
 function plaintextAttributeValue(
   schema: Readonly<AttributeSchema>,
   bytes: Uint8Array,
 ): AttributeValue {
-  switch (schema.type) {
-    case 'S':
-      return { S: new TextDecoder().decode(bytes) };
-    case 'B':
-      return { B: bytes };
-    default:
-      throw new DynamormError(
-        'ErrInvalidEncryptedEnvelope',
-        `Unsupported decrypted type: ${schema.attribute}`,
-      );
-  }
+  const av = decodeEncryptedPayload(bytes);
+
+  if (schema.type === 'S' && 'S' in av) return av;
+  if (schema.type === 'B' && 'B' in av) return av;
+
+  throw new DynamormError(
+    'ErrInvalidEncryptedEnvelope',
+    `Decrypted value type mismatch: ${schema.attribute}`,
+  );
 }

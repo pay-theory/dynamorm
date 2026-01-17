@@ -20,9 +20,10 @@ import (
 // Marshaler provides high-performance marshaling to DynamoDB AttributeValues
 type Marshaler struct {
 	converter        *pkgTypes.Converter
+	now              func() time.Time
 	cache            sync.Map
-	namingConvention naming.Convention
 	mu               sync.Mutex
+	namingConvention naming.Convention
 }
 
 var timeType = reflect.TypeOf(time.Time{})
@@ -65,6 +66,7 @@ func fieldOffsetForIndexPath(root reflect.Type, indexPath []int) uintptr {
 func New(converter *pkgTypes.Converter) *Marshaler {
 	return &Marshaler{
 		converter: converter,
+		now:       time.Now,
 	}
 }
 
@@ -119,7 +121,11 @@ func (m *Marshaler) MarshalItem(model any, metadata *model.Metadata) (map[string
 	result := make(map[string]types.AttributeValue, sm.minFields)
 
 	ptr := structUnsafePointer(v)
-	nowStr := nowTimestampIfNeeded(sm.fields)
+	nowFn := m.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	nowStr := nowTimestampIfNeeded(sm.fields, nowFn)
 
 	if err := m.marshalStructFields(ptr, sm.fields, result, nowStr); err != nil {
 		return nil, err
@@ -155,10 +161,10 @@ func structUnsafePointer(v reflect.Value) unsafe.Pointer {
 	return unsafe.Pointer(vcopy.UnsafeAddr()) // #nosec G103 -- performance-critical marshaling uses verified field offsets
 }
 
-func nowTimestampIfNeeded(fields []fieldMarshaler) string {
+func nowTimestampIfNeeded(fields []fieldMarshaler, now func() time.Time) string {
 	for _, fm := range fields {
 		if fm.isCreatedAt || fm.isUpdatedAt {
-			return time.Now().Format(time.RFC3339Nano)
+			return now().Format(time.RFC3339Nano)
 		}
 	}
 	return ""
@@ -354,7 +360,7 @@ func (m *Marshaler) buildSliceMarshalFunc(typ reflect.Type, fieldMeta *model.Fie
 		if fieldMeta.IsSet {
 			return func(ptr unsafe.Pointer) (types.AttributeValue, error) {
 				slice := (*[]string)(ptr)
-				if len(*slice) == 0 && fieldMeta.OmitEmpty {
+				if len(*slice) == 0 {
 					return &types.AttributeValueMemberNULL{Value: true}, nil
 				}
 				return &types.AttributeValueMemberSS{Value: *slice}, nil

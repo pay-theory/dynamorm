@@ -10,5 +10,11 @@ if [[ -f "ts/package.json" ]]; then
   npm --prefix ts run test:unit
 fi
 
-echo "unit-tests: PASS"
+if [[ -f "py/pyproject.toml" ]]; then
+  if [[ ! -d "py/.venv" ]]; then
+    bash scripts/verify-python-deps.sh
+  fi
+  uv --directory py run pytest -q tests/unit
+fi
 
+echo "unit-tests: PASS"

@@ -42,6 +42,9 @@ jobs:
       - name: Unit tests
         run: npm --prefix ts run test:unit
 
+      - name: Coverage (unit)
+        run: bash scripts/coverage-ts.sh unit
+
       - name: Start DynamoDB Local (pinned)
         run: make docker-up
 
@@ -57,3 +60,11 @@ jobs:
       - name: Stop DynamoDB Local
         if: always()
         run: make docker-down
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts_coverage
+          path: ts/coverage
+          if-no-files-found: ignore

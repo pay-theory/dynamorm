@@ -14,5 +14,8 @@ command -v npm >/dev/null 2>&1 || {
 # Fail on any known vulnerability (no green-by-severity).
 npm --prefix ts audit --audit-level=low
 
-echo "npm-audit: PASS"
+if [[ -f "contract-tests/runners/ts/package.json" ]]; then
+  npm --prefix contract-tests/runners/ts audit --audit-level=low
+fi
 
+echo "npm-audit: PASS"

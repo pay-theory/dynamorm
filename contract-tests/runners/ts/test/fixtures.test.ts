@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadModelsDir, loadScenariosDir } from "../src/load.js";
+import { decodeCursor, encodeCursor } from "../../../../ts/src/cursor.js";
 
 function contractRoot(): string {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -28,5 +29,7 @@ test("golden cursor decodes to expected JSON", async () => {
 
   const decoded = Buffer.from(cursor, "base64url").toString("utf8");
   assert.equal(decoded, expectedJSON);
-});
 
+  const parsed = decodeCursor(cursor);
+  assert.equal(encodeCursor(parsed), cursor);
+});

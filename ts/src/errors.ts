@@ -4,6 +4,7 @@ export type ErrorCode =
   | 'ErrInvalidModel'
   | 'ErrMissingPrimaryKey'
   | 'ErrInvalidOperator'
+  | 'ErrTableNotFound'
   | 'ErrEncryptedFieldNotQueryable'
   | 'ErrEncryptionNotConfigured'
   | 'ErrInvalidEncryptedEnvelope';

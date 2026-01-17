@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"time"
@@ -368,7 +369,19 @@ func (b *Builder) buildFieldUpdate(op transactOperation) (*types.Update, error) 
 		if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(b.session, op.metadata); err != nil {
 			return nil, err
 		}
-		svc := encryption.NewServiceFromAWSConfig(b.session.Config().KMSKeyARN, b.session.AWSConfig())
+		cfg := b.session.Config()
+		keyARN := ""
+		var rng io.Reader
+		if cfg != nil {
+			keyARN = cfg.KMSKeyARN
+			rng = cfg.EncryptionRand
+		}
+		var svc *encryption.Service
+		if cfg != nil && cfg.KMSClient != nil {
+			svc = encryption.NewServiceWithRand(keyARN, cfg.KMSClient, rng)
+		} else {
+			svc = encryption.NewServiceFromAWSConfigWithRand(keyARN, b.session.AWSConfig(), rng)
+		}
 		ctx := b.ctx
 		if ctx == nil {
 			ctx = context.Background()
@@ -485,7 +498,19 @@ func (b *Builder) buildBuilderUpdate(op transactOperation, index int) (*types.Up
 		if err := encryption.FailClosedIfEncryptedWithoutKMSKeyARN(b.session, op.metadata); err != nil {
 			return nil, err
 		}
-		svc := encryption.NewServiceFromAWSConfig(b.session.Config().KMSKeyARN, b.session.AWSConfig())
+		cfg := b.session.Config()
+		keyARN := ""
+		var rng io.Reader
+		if cfg != nil {
+			keyARN = cfg.KMSKeyARN
+			rng = cfg.EncryptionRand
+		}
+		var svc *encryption.Service
+		if cfg != nil && cfg.KMSClient != nil {
+			svc = encryption.NewServiceWithRand(keyARN, cfg.KMSClient, rng)
+		} else {
+			svc = encryption.NewServiceFromAWSConfigWithRand(keyARN, b.session.AWSConfig(), rng)
+		}
 		ctx := b.ctx
 		if ctx == nil {
 			ctx = context.Background()

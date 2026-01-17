@@ -57,6 +57,17 @@ else
   failures=$((failures + 1))
 fi
 
+# Rubric includes Python checks; require Python setup (pinned).
+if grep -Eq '^[[:space:]]*uses:[[:space:]]*actions/setup-python@' "${wf}"; then
+  grep -Ev '^[[:space:]]*#' "${wf}" | grep -Eq 'python-version:[[:space:]]*"?3[.]14([.]x)?"?' || {
+    echo "ci-rubric: ${wf}: setup-python must pin python-version: 3.14"
+    failures=$((failures + 1))
+  }
+else
+  echo "ci-rubric: ${wf}: missing actions/setup-python step"
+  failures=$((failures + 1))
+fi
+
 # Ensure pinned tooling installs (no @latest; additional pinning is checked by scripts/verify-ci-toolchain.sh).
 if grep -Eq 'go install .*@latest' "${wf}"; then
   echo "ci-rubric: ${wf}: contains @latest; pin versions"
@@ -66,6 +77,14 @@ fi
 # Ensure the workflow uploads the key artifacts we rely on for evidence.
 grep -q 'coverage_lib.out' "${wf}" || {
   echo "ci-rubric: ${wf}: must upload coverage_lib.out"
+  failures=$((failures + 1))
+}
+grep -q 'ts/coverage' "${wf}" || {
+  echo "ci-rubric: ${wf}: must upload ts/coverage"
+  failures=$((failures + 1))
+}
+grep -q 'py/coverage.xml' "${wf}" || {
+  echo "ci-rubric: ${wf}: must upload py/coverage.xml"
   failures=$((failures + 1))
 }
 grep -q 'gosec.sarif' "${wf}" || {

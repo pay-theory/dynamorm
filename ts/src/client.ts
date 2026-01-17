@@ -2,13 +2,11 @@ import {
   type AttributeValue,
   BatchGetItemCommand,
   BatchWriteItemCommand,
-  ConditionalCheckFailedException,
   DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
   TransactWriteItemsCommand,
-  TransactionCanceledException,
   UpdateItemCommand,
   type ConditionCheck,
   type Delete,
@@ -24,8 +22,10 @@ import {
   type BatchWriteResult,
   type RetryOptions,
 } from './batch.js';
+import { mapDynamoError } from './dynamo-error.js';
 import { DynamormError } from './errors.js';
 import type { Model } from './model.js';
+import type { SendOptions } from './send-options.js';
 import {
   isEmpty,
   marshalKey,
@@ -36,6 +36,7 @@ import {
 } from './marshal.js';
 import { QueryBuilder, ScanBuilder } from './query.js';
 import type { TransactAction } from './transaction.js';
+import { UpdateBuilder } from './update-builder.js';
 import {
   decryptItemAttributes,
   encryptAttributeValue,
@@ -47,17 +48,45 @@ import {
 export class DynamormClient {
   private readonly models = new Map<string, Model>();
   private encryption: EncryptionProvider | undefined;
+  private readonly now: () => string;
+  private readonly sendOptions: SendOptions | undefined;
 
   constructor(
     private readonly ddb: DynamoDBClient,
-    opts: { encryption?: EncryptionProvider } = {},
+    opts: {
+      encryption?: EncryptionProvider;
+      now?: () => string;
+      sendOptions?: SendOptions;
+    } = {},
   ) {
     this.encryption = opts.encryption;
+    this.now = opts.now ?? (() => nowRfc3339Nano());
+    this.sendOptions = opts.sendOptions;
   }
 
   withEncryption(provider: EncryptionProvider): this {
     this.encryption = provider;
     return this;
+  }
+
+  withSendOptions(sendOptions?: SendOptions): DynamormClient {
+    const next = new DynamormClient(this.ddb, {
+      now: this.now,
+      ...(this.encryption ? { encryption: this.encryption } : {}),
+      ...(sendOptions ? { sendOptions } : {}),
+    });
+    next.register(...this.models.values());
+    return next;
+  }
+
+  withDynamoDBClient(ddb: DynamoDBClient): DynamormClient {
+    const next = new DynamormClient(ddb, {
+      now: this.now,
+      ...(this.encryption ? { encryption: this.encryption } : {}),
+      ...(this.sendOptions ? { sendOptions: this.sendOptions } : {}),
+    });
+    next.register(...this.models.values());
+    return next;
   }
 
   register(...models: Model[]): this {
@@ -92,7 +121,7 @@ export class DynamormClient {
   ): Promise<void> {
     const model = this.requireModel(modelName);
 
-    const now = nowRfc3339Nano();
+    const now = this.now();
     const putItem = modelHasEncryptedAttributes(model)
       ? await marshalPutItemEncrypted(
           model,
@@ -116,7 +145,7 @@ export class DynamormClient {
     });
 
     try {
-      await this.ddb.send(cmd);
+      await this.ddb.send(cmd, this.sendOptions);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -137,7 +166,7 @@ export class DynamormClient {
     });
 
     try {
-      const resp = await this.ddb.send(cmd);
+      const resp = await this.ddb.send(cmd, this.sendOptions);
       if (!resp.Item)
         throw new DynamormError('ErrItemNotFound', 'Item not found');
       const item = provider
@@ -178,7 +207,7 @@ export class DynamormClient {
       );
     }
 
-    const now = nowRfc3339Nano();
+    const now = this.now();
     const names: Record<string, string> = {
       '#ver': versionAttr,
     };
@@ -267,7 +296,7 @@ export class DynamormClient {
     });
 
     try {
-      await this.ddb.send(cmd);
+      await this.ddb.send(cmd, this.sendOptions);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -282,7 +311,7 @@ export class DynamormClient {
     });
 
     try {
-      await this.ddb.send(cmd);
+      await this.ddb.send(cmd, this.sendOptions);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -318,6 +347,7 @@ export class DynamormClient {
               },
             },
           }),
+          this.sendOptions,
         );
 
         const got = resp.Responses?.[model.tableName] ?? [];
@@ -364,7 +394,7 @@ export class DynamormClient {
     const maxAttempts = opts.maxAttempts ?? 5;
     const baseDelayMs = opts.baseDelayMs ?? 25;
 
-    const now = nowRfc3339Nano();
+    const now = this.now();
     const writeRequests: WriteRequest[] = [];
 
     for (const item of req.puts ?? []) {
@@ -398,6 +428,7 @@ export class DynamormClient {
               [model.tableName]: pending,
             },
           }),
+          this.sendOptions,
         );
 
         const next = resp.UnprocessedItems?.[model.tableName] ?? [];
@@ -473,6 +504,7 @@ export class DynamormClient {
     try {
       await this.ddb.send(
         new TransactWriteItemsCommand({ TransactItems: transactItems }),
+        this.sendOptions,
       );
     } catch (err) {
       throw mapDynamoError(err);
@@ -481,43 +513,25 @@ export class DynamormClient {
 
   query(modelName: string): QueryBuilder {
     const model = this.requireModel(modelName);
-    return new QueryBuilder(this.ddb, model, this.encryption);
+    return new QueryBuilder(this.ddb, model, this.encryption, this.sendOptions);
   }
 
   scan(modelName: string): ScanBuilder {
     const model = this.requireModel(modelName);
-    return new ScanBuilder(this.ddb, model, this.encryption);
-  }
-}
-
-function mapDynamoError(err: unknown): unknown {
-  if (err instanceof DynamormError) return err;
-
-  if (err instanceof ConditionalCheckFailedException) {
-    return new DynamormError('ErrConditionFailed', 'Condition failed', {
-      cause: err,
-    });
+    return new ScanBuilder(this.ddb, model, this.encryption, this.sendOptions);
   }
 
-  if (err instanceof TransactionCanceledException) {
-    return new DynamormError('ErrConditionFailed', 'Transaction canceled', {
-      cause: err,
-    });
+  updateBuilder(
+    modelName: string,
+    key: Record<string, unknown>,
+  ): UpdateBuilder {
+    const model = this.requireModel(modelName);
+    return new UpdateBuilder(
+      this.ddb,
+      model,
+      key,
+      this.encryption,
+      this.sendOptions,
+    );
   }
-
-  if (typeof err === 'object' && err !== null && 'name' in err) {
-    const name = (err as { name?: unknown }).name;
-    if (name === 'ConditionalCheckFailedException') {
-      return new DynamormError('ErrConditionFailed', 'Condition failed', {
-        cause: err,
-      });
-    }
-    if (name === 'TransactionCanceledException') {
-      return new DynamormError('ErrConditionFailed', 'Transaction canceled', {
-        cause: err,
-      });
-    }
-  }
-
-  return err;
 }

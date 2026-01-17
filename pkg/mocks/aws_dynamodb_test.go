@@ -184,6 +184,81 @@ func TestMockDynamoDBClientDataOperations(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
+func TestMockDynamoDBClientAdditionalDataOperations(t *testing.T) {
+	mockClient := new(mocks.MockDynamoDBClient)
+	ctx := context.Background()
+
+	deleteInput := &dynamodb.DeleteItemInput{
+		TableName: aws.String("test-table"),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: "123"},
+		},
+	}
+	mockClient.On("DeleteItem", ctx, deleteInput, mock.Anything).Return(&dynamodb.DeleteItemOutput{}, nil)
+	_, err := mockClient.DeleteItem(ctx, deleteInput)
+	assert.NoError(t, err)
+
+	queryInput := &dynamodb.QueryInput{
+		TableName:                 aws.String("test-table"),
+		KeyConditionExpression:    aws.String("#pk = :pk"),
+		ExpressionAttributeNames:  map[string]string{"#pk": "pk"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":pk": &types.AttributeValueMemberS{Value: "A"}},
+	}
+	mockClient.On("Query", ctx, queryInput, mock.Anything).Return(&dynamodb.QueryOutput{}, nil)
+	_, err = mockClient.Query(ctx, queryInput)
+	assert.NoError(t, err)
+
+	scanInput := &dynamodb.ScanInput{TableName: aws.String("test-table")}
+	mockClient.On("Scan", ctx, scanInput, mock.Anything).Return(&dynamodb.ScanOutput{}, nil)
+	_, err = mockClient.Scan(ctx, scanInput)
+	assert.NoError(t, err)
+
+	updateInput := &dynamodb.UpdateItemInput{
+		TableName: aws.String("test-table"),
+		Key: map[string]types.AttributeValue{
+			"id": &types.AttributeValueMemberS{Value: "123"},
+		},
+		UpdateExpression:          aws.String("SET #n = :v"),
+		ExpressionAttributeNames:  map[string]string{"#n": "name"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":v": &types.AttributeValueMemberS{Value: "x"}},
+	}
+	mockClient.On("UpdateItem", ctx, updateInput, mock.Anything).Return(&dynamodb.UpdateItemOutput{}, nil)
+	_, err = mockClient.UpdateItem(ctx, updateInput)
+	assert.NoError(t, err)
+
+	batchGetInput := &dynamodb.BatchGetItemInput{
+		RequestItems: map[string]types.KeysAndAttributes{
+			"test-table": {
+				Keys: []map[string]types.AttributeValue{
+					{"id": &types.AttributeValueMemberS{Value: "123"}},
+				},
+			},
+		},
+	}
+	mockClient.On("BatchGetItem", ctx, batchGetInput, mock.Anything).Return(&dynamodb.BatchGetItemOutput{}, nil)
+	_, err = mockClient.BatchGetItem(ctx, batchGetInput)
+	assert.NoError(t, err)
+
+	batchWriteInput := &dynamodb.BatchWriteItemInput{
+		RequestItems: map[string][]types.WriteRequest{
+			"test-table": {
+				{
+					PutRequest: &types.PutRequest{
+						Item: map[string]types.AttributeValue{
+							"id": &types.AttributeValueMemberS{Value: "123"},
+						},
+					},
+				},
+			},
+		},
+	}
+	mockClient.On("BatchWriteItem", ctx, batchWriteInput, mock.Anything).Return(&dynamodb.BatchWriteItemOutput{}, nil)
+	_, err = mockClient.BatchWriteItem(ctx, batchWriteInput)
+	assert.NoError(t, err)
+
+	mockClient.AssertExpectations(t)
+}
+
 // TestMockTableExistsWaiter tests the table exists waiter mock
 func TestMockTableExistsWaiter(t *testing.T) {
 	mockWaiter := new(mocks.MockTableExistsWaiter)
