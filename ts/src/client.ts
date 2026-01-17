@@ -25,6 +25,7 @@ import {
 import { mapDynamoError } from './dynamo-error.js';
 import { DynamormError } from './errors.js';
 import type { Model } from './model.js';
+import type { SendOptions } from './send-options.js';
 import {
   isEmpty,
   marshalKey,
@@ -48,18 +49,44 @@ export class DynamormClient {
   private readonly models = new Map<string, Model>();
   private encryption: EncryptionProvider | undefined;
   private readonly now: () => string;
+  private readonly sendOptions: SendOptions | undefined;
 
   constructor(
     private readonly ddb: DynamoDBClient,
-    opts: { encryption?: EncryptionProvider; now?: () => string } = {},
+    opts: {
+      encryption?: EncryptionProvider;
+      now?: () => string;
+      sendOptions?: SendOptions;
+    } = {},
   ) {
     this.encryption = opts.encryption;
     this.now = opts.now ?? (() => nowRfc3339Nano());
+    this.sendOptions = opts.sendOptions;
   }
 
   withEncryption(provider: EncryptionProvider): this {
     this.encryption = provider;
     return this;
+  }
+
+  withSendOptions(sendOptions?: SendOptions): DynamormClient {
+    const next = new DynamormClient(this.ddb, {
+      now: this.now,
+      ...(this.encryption ? { encryption: this.encryption } : {}),
+      ...(sendOptions ? { sendOptions } : {}),
+    });
+    next.register(...this.models.values());
+    return next;
+  }
+
+  withDynamoDBClient(ddb: DynamoDBClient): DynamormClient {
+    const next = new DynamormClient(ddb, {
+      now: this.now,
+      ...(this.encryption ? { encryption: this.encryption } : {}),
+      ...(this.sendOptions ? { sendOptions: this.sendOptions } : {}),
+    });
+    next.register(...this.models.values());
+    return next;
   }
 
   register(...models: Model[]): this {
@@ -118,7 +145,7 @@ export class DynamormClient {
     });
 
     try {
-      await this.ddb.send(cmd);
+      await this.ddb.send(cmd, this.sendOptions);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -139,7 +166,7 @@ export class DynamormClient {
     });
 
     try {
-      const resp = await this.ddb.send(cmd);
+      const resp = await this.ddb.send(cmd, this.sendOptions);
       if (!resp.Item)
         throw new DynamormError('ErrItemNotFound', 'Item not found');
       const item = provider
@@ -269,7 +296,7 @@ export class DynamormClient {
     });
 
     try {
-      await this.ddb.send(cmd);
+      await this.ddb.send(cmd, this.sendOptions);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -284,7 +311,7 @@ export class DynamormClient {
     });
 
     try {
-      await this.ddb.send(cmd);
+      await this.ddb.send(cmd, this.sendOptions);
     } catch (err) {
       throw mapDynamoError(err);
     }
@@ -320,6 +347,7 @@ export class DynamormClient {
               },
             },
           }),
+          this.sendOptions,
         );
 
         const got = resp.Responses?.[model.tableName] ?? [];
@@ -400,6 +428,7 @@ export class DynamormClient {
               [model.tableName]: pending,
             },
           }),
+          this.sendOptions,
         );
 
         const next = resp.UnprocessedItems?.[model.tableName] ?? [];
@@ -475,6 +504,7 @@ export class DynamormClient {
     try {
       await this.ddb.send(
         new TransactWriteItemsCommand({ TransactItems: transactItems }),
+        this.sendOptions,
       );
     } catch (err) {
       throw mapDynamoError(err);
@@ -483,12 +513,12 @@ export class DynamormClient {
 
   query(modelName: string): QueryBuilder {
     const model = this.requireModel(modelName);
-    return new QueryBuilder(this.ddb, model, this.encryption);
+    return new QueryBuilder(this.ddb, model, this.encryption, this.sendOptions);
   }
 
   scan(modelName: string): ScanBuilder {
     const model = this.requireModel(modelName);
-    return new ScanBuilder(this.ddb, model, this.encryption);
+    return new ScanBuilder(this.ddb, model, this.encryption, this.sendOptions);
   }
 
   updateBuilder(
@@ -496,6 +526,12 @@ export class DynamormClient {
     key: Record<string, unknown>,
   ): UpdateBuilder {
     const model = this.requireModel(modelName);
-    return new UpdateBuilder(this.ddb, model, key, this.encryption);
+    return new UpdateBuilder(
+      this.ddb,
+      model,
+      key,
+      this.encryption,
+      this.sendOptions,
+    );
   }
 }

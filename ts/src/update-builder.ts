@@ -19,6 +19,7 @@ import {
   unmarshalItem,
 } from './marshal.js';
 import type { AttributeSchema, Model } from './model.js';
+import type { SendOptions } from './send-options.js';
 
 export type ReturnValuesOption =
   | 'NONE'
@@ -281,6 +282,7 @@ export class UpdateBuilder {
     private readonly model: Model,
     private readonly key: Record<string, unknown>,
     private readonly encryption?: EncryptionProvider,
+    private readonly sendOptions?: SendOptions,
   ) {}
 
   set(field: string, value: unknown): this {
@@ -417,7 +419,7 @@ export class UpdateBuilder {
     });
 
     try {
-      const resp = await this.ddb.send(cmd);
+      const resp = await this.ddb.send(cmd, this.sendOptions);
       if (!resp.Attributes) return undefined;
       const provider = modelHasEncryptedAttributes(this.model)
         ? this.encryption!

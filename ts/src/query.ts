@@ -20,6 +20,7 @@ import {
 } from './encryption.js';
 import { marshalScalar, unmarshalItem } from './marshal.js';
 import type { AttributeSchema, IndexSchema, Model } from './model.js';
+import type { SendOptions } from './send-options.js';
 
 export interface Page<T = Record<string, unknown>> {
   items: T[];
@@ -298,6 +299,7 @@ export class QueryBuilder {
     private readonly ddb: DynamoDBClient,
     private readonly model: Model,
     private readonly encryption?: EncryptionProvider,
+    private readonly sendOptions?: SendOptions,
   ) {
     this.filters = new FilterExpressionBuilder(model);
   }
@@ -503,6 +505,7 @@ export class QueryBuilder {
         ExclusiveStartKey: exclusiveStartKey,
         ScanIndexForward: this.sortDir === 'ASC',
       }),
+      this.sendOptions,
     );
 
     const rawItems = resp.Items ?? [];
@@ -658,6 +661,7 @@ export class ScanBuilder {
     private readonly ddb: DynamoDBClient,
     private readonly model: Model,
     private readonly encryption?: EncryptionProvider,
+    private readonly sendOptions?: SendOptions,
   ) {
     this.filters = new FilterExpressionBuilder(model);
   }
@@ -813,6 +817,7 @@ export class ScanBuilder {
               TotalSegments: totalSegments,
               ExclusiveStartKey: start,
             }),
+            this.sendOptions,
           );
 
           const rawItems = resp.Items ?? [];
@@ -923,6 +928,7 @@ export class ScanBuilder {
         Segment: this.segment,
         TotalSegments: this.totalSegments,
       }),
+      this.sendOptions,
     );
 
     const rawItems = resp.Items ?? [];

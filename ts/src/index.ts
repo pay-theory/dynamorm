@@ -11,3 +11,6 @@ export * from './encryption.js';
 export * from './encryption-kms.js';
 export * from './schema.js';
 export * from './update-builder.js';
+export * from './lambda.js';
+export * from './multiaccount.js';
+export * from './send-options.js';

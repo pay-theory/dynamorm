@@ -35,19 +35,20 @@ from .transaction import (
 )
 
 if TYPE_CHECKING:
-    from .dms import (
-        assert_model_definition_equivalent_to_dms as assert_model_definition_equivalent_to_dms,
+    from .dms import assert_model_definition_equivalent_to_dms, get_dms_model, parse_dms_document
+    from .multiaccount import AccountConfig, MultiAccountSessions
+    from .runtime import (
+        AwsCallMetric,
+        create_lambda_boto3_config,
+        get_lambda_boto3_client,
+        get_lambda_dynamodb_client,
+        get_lambda_kms_client,
+        instrument_boto3_client,
+        is_lambda_environment,
     )
-    from .dms import get_dms_model as get_dms_model
-    from .dms import parse_dms_document as parse_dms_document
-    from .schema import build_create_table_request as build_create_table_request
-    from .schema import create_table as create_table
-    from .schema import delete_table as delete_table
-    from .schema import describe_table as describe_table
-    from .schema import ensure_table as ensure_table
-    from .streams import unmarshal_stream_image as unmarshal_stream_image
-    from .streams import unmarshal_stream_record as unmarshal_stream_record
-    from .table import Table as Table
+    from .schema import build_create_table_request, create_table, delete_table, describe_table, ensure_table
+    from .streams import unmarshal_stream_image, unmarshal_stream_record
+    from .table import Table
 
 
 def _read_repo_version() -> str:
@@ -98,15 +99,33 @@ def __getattr__(name: str) -> Any:
         from .streams import unmarshal_stream_record
 
         return unmarshal_stream_record
+    if name in {
+        "AwsCallMetric",
+        "create_lambda_boto3_config",
+        "get_lambda_boto3_client",
+        "get_lambda_dynamodb_client",
+        "get_lambda_kms_client",
+        "instrument_boto3_client",
+        "is_lambda_environment",
+    }:
+        from . import runtime
+
+        return getattr(runtime, name)
+    if name in {"AccountConfig", "MultiAccountSessions"}:
+        from . import multiaccount
+
+        return getattr(multiaccount, name)
     raise AttributeError(name)
 
 
 __all__ = [
     "AwsError",
+    "AwsCallMetric",
     "assert_model_definition_equivalent_to_dms",
     "BatchRetryExceededError",
     "build_create_table_request",
     "ConditionFailedError",
+    "create_lambda_boto3_config",
     "create_table",
     "delete_table",
     "DynamormPyError",
@@ -114,6 +133,9 @@ __all__ = [
     "EncryptionNotConfiguredError",
     "ensure_table",
     "get_dms_model",
+    "get_lambda_boto3_client",
+    "get_lambda_dynamodb_client",
+    "get_lambda_kms_client",
     "IndexDefinition",
     "IndexSpec",
     "ModelDefinition",
@@ -122,6 +144,10 @@ __all__ = [
     "Projection",
     "FilterCondition",
     "FilterGroup",
+    "instrument_boto3_client",
+    "is_lambda_environment",
+    "AccountConfig",
+    "MultiAccountSessions",
     "Page",
     "SortKeyCondition",
     "TransactConditionCheck",
