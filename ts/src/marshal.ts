@@ -188,6 +188,42 @@ export function marshalScalar(
       if (ss.length === 0) return { NULL: true };
       return { SS: ss };
     }
+    case 'NS': {
+      if (!Array.isArray(value)) {
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Expected number[] for ${schema.attribute}`,
+        );
+      }
+      const ns = value.map((v) => {
+        if (typeof v === 'number') return String(v);
+        if (typeof v === 'bigint') return v.toString();
+        if (typeof v === 'string') return v;
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Expected number[] for ${schema.attribute}`,
+        );
+      });
+      if (ns.length === 0) return { NULL: true };
+      return { NS: ns };
+    }
+    case 'BS': {
+      if (!Array.isArray(value)) {
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Expected Uint8Array[] for ${schema.attribute}`,
+        );
+      }
+      const bs = value.map((v) => {
+        if (v instanceof Uint8Array) return v;
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Expected Uint8Array[] for ${schema.attribute}`,
+        );
+      });
+      if (bs.length === 0) return { NULL: true };
+      return { BS: bs };
+    }
     case 'BOOL':
       if (typeof value !== 'boolean')
         throw new DynamormError(
@@ -197,6 +233,28 @@ export function marshalScalar(
       return { BOOL: value };
     case 'NULL':
       return { NULL: true };
+    case 'L': {
+      if (!Array.isArray(value)) {
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Expected array for ${schema.attribute}`,
+        );
+      }
+      return { L: value.map(marshalDocumentValue) };
+    }
+    case 'M': {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new DynamormError(
+          'ErrInvalidModel',
+          `Expected object for ${schema.attribute}`,
+        );
+      }
+      const out: Record<string, AttributeValue> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        out[k] = marshalDocumentValue(v);
+      }
+      return { M: out };
+    }
     default:
       throw new DynamormError(
         'ErrInvalidModel',
@@ -209,15 +267,120 @@ export function unmarshalScalar(
   schema: Readonly<AttributeSchema>,
   av: AttributeValue,
 ): unknown {
-  if ('S' in av && av.S !== undefined) return av.S;
-  if ('N' in av && av.N !== undefined) return Number(av.N);
-  if ('B' in av && av.B !== undefined) return Buffer.from(av.B);
-  if ('SS' in av && av.SS !== undefined) return av.SS.slice();
-  if ('BOOL' in av && av.BOOL !== undefined) return av.BOOL;
-  if ('NULL' in av && av.NULL) return null;
+  switch (schema.type) {
+    case 'S':
+      if ('S' in av && av.S !== undefined) return av.S;
+      break;
+    case 'N':
+      if ('N' in av && av.N !== undefined) return Number(av.N);
+      break;
+    case 'B':
+      if ('B' in av && av.B !== undefined) return Buffer.from(av.B);
+      break;
+    case 'SS':
+      if ('SS' in av && av.SS !== undefined) return av.SS.slice();
+      if ('NULL' in av && av.NULL) return [];
+      break;
+    case 'NS':
+      if ('NS' in av && av.NS !== undefined) return av.NS.map((n) => Number(n));
+      if ('NULL' in av && av.NULL) return [];
+      break;
+    case 'BS':
+      if ('BS' in av && av.BS !== undefined)
+        return av.BS.map((b) => Buffer.from(b));
+      if ('NULL' in av && av.NULL) return [];
+      break;
+    case 'BOOL':
+      if ('BOOL' in av && av.BOOL !== undefined) return av.BOOL;
+      break;
+    case 'NULL':
+      if ('NULL' in av && av.NULL) return null;
+      break;
+    case 'L':
+      if ('L' in av && av.L !== undefined)
+        return av.L.map(unmarshalDocumentValue);
+      break;
+    case 'M':
+      if ('M' in av && av.M !== undefined) {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(av.M)) {
+          if (!v)
+            throw new DynamormError(
+              'ErrInvalidModel',
+              `Invalid map value for ${schema.attribute}`,
+            );
+          out[k] = unmarshalDocumentValue(v);
+        }
+        return out;
+      }
+      break;
+    default:
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `Unsupported type ${schema.type} for ${schema.attribute}`,
+      );
+  }
 
   throw new DynamormError(
     'ErrInvalidModel',
     `Unsupported AttributeValue for ${schema.attribute}`,
   );
+}
+
+export function marshalDocumentValue(value: unknown): AttributeValue {
+  if (value === undefined) {
+    throw new DynamormError(
+      'ErrInvalidModel',
+      'Undefined values are not supported',
+    );
+  }
+  if (value === null) return { NULL: true };
+
+  if (typeof value === 'string') return { S: value };
+  if (typeof value === 'number') return { N: String(value) };
+  if (typeof value === 'bigint') return { N: value.toString() };
+  if (typeof value === 'boolean') return { BOOL: value };
+
+  if (value instanceof Uint8Array) return { B: value };
+
+  if (Array.isArray(value)) return { L: value.map(marshalDocumentValue) };
+
+  if (typeof value === 'object') {
+    const out: Record<string, AttributeValue> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = marshalDocumentValue(v);
+    }
+    return { M: out };
+  }
+
+  throw new DynamormError(
+    'ErrInvalidModel',
+    `Unsupported document value: ${typeof value}`,
+  );
+}
+
+export function unmarshalDocumentValue(av: AttributeValue): unknown {
+  if ('S' in av && av.S !== undefined) return av.S;
+  if ('N' in av && av.N !== undefined) return Number(av.N);
+  if ('B' in av && av.B !== undefined) return Buffer.from(av.B);
+  if ('SS' in av && av.SS !== undefined) return av.SS.slice();
+  if ('NS' in av && av.NS !== undefined) return av.NS.map((n) => Number(n));
+  if ('BS' in av && av.BS !== undefined)
+    return av.BS.map((b) => Buffer.from(b));
+  if ('BOOL' in av && av.BOOL !== undefined) return av.BOOL;
+  if ('NULL' in av && av.NULL) return null;
+
+  if ('L' in av && av.L !== undefined) return av.L.map(unmarshalDocumentValue);
+
+  if ('M' in av && av.M !== undefined) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(av.M)) {
+      if (!v)
+        throw new DynamormError('ErrInvalidModel', `Invalid map value: ${k}`);
+      out[k] = unmarshalDocumentValue(v);
+    }
+    return out;
+  }
+
+  throw new DynamormError('ErrInvalidModel', 'Unsupported AttributeValue');
 }

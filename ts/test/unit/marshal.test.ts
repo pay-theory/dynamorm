@@ -5,10 +5,12 @@ import { defineModel } from '../../src/model.js';
 import {
   isEmpty,
   marshalKey,
+  marshalDocumentValue,
   marshalPutItem,
   marshalScalar,
   nowRfc3339Nano,
   unmarshalItem,
+  unmarshalDocumentValue,
   unmarshalScalar,
 } from '../../src/marshal.js';
 
@@ -43,6 +45,32 @@ assert.deepEqual(marshalScalar({ attribute: 'SS', type: 'SS' }, ['a', 'b']), {
 assert.deepEqual(marshalScalar({ attribute: 'SS', type: 'SS' }, []), {
   NULL: true,
 });
+assert.deepEqual(marshalScalar({ attribute: 'NS', type: 'NS' }, [1, 2]), {
+  NS: ['1', '2'],
+});
+assert.deepEqual(marshalScalar({ attribute: 'NS', type: 'NS' }, []), {
+  NULL: true,
+});
+assert.deepEqual(
+  marshalScalar({ attribute: 'BS', type: 'BS' }, [Buffer.from('a')]),
+  {
+    BS: [Buffer.from('a')],
+  },
+);
+assert.deepEqual(marshalScalar({ attribute: 'BS', type: 'BS' }, []), {
+  NULL: true,
+});
+assert.deepEqual(
+  marshalScalar({ attribute: 'L', type: 'L' }, ['a', 1, true, null]),
+  { L: [{ S: 'a' }, { N: '1' }, { BOOL: true }, { NULL: true }] },
+);
+assert.deepEqual(
+  marshalScalar(
+    { attribute: 'M', type: 'M' },
+    { a: 1, b: 'x', nested: { c: true } },
+  ),
+  { M: { a: { N: '1' }, b: { S: 'x' }, nested: { M: { c: { BOOL: true } } } } },
+);
 assert.deepEqual(marshalScalar({ attribute: 'BOOL', type: 'BOOL' }, true), {
   BOOL: true,
 });
@@ -56,6 +84,18 @@ assert.throws(() => marshalScalar({ attribute: 'B', type: 'B' }, 'x'));
 assert.throws(() =>
   marshalScalar({ attribute: 'SS', type: 'SS' }, ['a', 1] as never),
 );
+assert.throws(() =>
+  marshalScalar({ attribute: 'NS', type: 'NS' }, [true] as never),
+);
+assert.throws(() =>
+  marshalScalar({ attribute: 'BS', type: 'BS' }, ['x'] as never),
+);
+assert.throws(() =>
+  marshalScalar({ attribute: 'L', type: 'L' }, { a: 1 } as never),
+);
+assert.throws(() =>
+  marshalScalar({ attribute: 'M', type: 'M' }, ['x'] as never),
+);
 assert.throws(() => marshalScalar({ attribute: 'X', type: 'X' as never }, 'x'));
 
 assert.equal(unmarshalScalar({ attribute: 'S', type: 'S' }, { S: 'x' }), 'x');
@@ -68,6 +108,37 @@ assert.deepEqual(
   unmarshalScalar({ attribute: 'SS', type: 'SS' }, { SS: ['a'] }),
   ['a'],
 );
+assert.deepEqual(
+  unmarshalScalar({ attribute: 'SS', type: 'SS' }, { NULL: true }),
+  [],
+);
+assert.deepEqual(
+  unmarshalScalar({ attribute: 'NS', type: 'NS' }, { NS: ['1'] }),
+  [1],
+);
+assert.deepEqual(
+  unmarshalScalar({ attribute: 'NS', type: 'NS' }, { NULL: true }),
+  [],
+);
+assert.deepEqual(
+  unmarshalScalar({ attribute: 'BS', type: 'BS' }, { BS: [Buffer.from('a')] }),
+  [Buffer.from('a')],
+);
+assert.deepEqual(
+  unmarshalScalar({ attribute: 'BS', type: 'BS' }, { NULL: true }),
+  [],
+);
+assert.deepEqual(
+  unmarshalScalar(
+    { attribute: 'L', type: 'L' },
+    { L: [{ S: 'x' }, { N: '1' }] },
+  ),
+  ['x', 1],
+);
+assert.deepEqual(
+  unmarshalScalar({ attribute: 'M', type: 'M' }, { M: { a: { N: '1' } } }),
+  { a: 1 },
+);
 assert.equal(
   unmarshalScalar({ attribute: 'BOOL', type: 'BOOL' }, { BOOL: false }),
   false,
@@ -79,6 +150,9 @@ assert.equal(
 assert.throws(() =>
   unmarshalScalar({ attribute: 'S', type: 'S' }, { NS: ['1'] } as never),
 );
+
+assert.throws(() => marshalDocumentValue(undefined as never));
+assert.deepEqual(unmarshalDocumentValue({ NULL: true }), null);
 
 const User = defineModel({
   name: 'User',

@@ -97,8 +97,12 @@ export interface MockDynamoDBClient {
 
 export function createMockDynamoDBClient(): MockDynamoDBClient {
   const calls: SupportedDynamoCommand[] = [];
-  const handlers = new Map<
+  const handlersByCtor = new Map<
     SupportedDynamoCommandCtor,
+    (cmd: SupportedDynamoCommand) => Promise<unknown>
+  >();
+  const handlersByName = new Map<
+    string,
     (cmd: SupportedDynamoCommand) => Promise<unknown>
   >();
 
@@ -107,9 +111,11 @@ export function createMockDynamoDBClient(): MockDynamoDBClient {
       calls.push(command);
 
       const ctor = command.constructor as SupportedDynamoCommandCtor;
-      const handler = handlers.get(ctor);
+      const name = (ctor as { name?: unknown }).name;
+      const handler =
+        handlersByCtor.get(ctor) ??
+        (typeof name === 'string' ? handlersByName.get(name) : undefined);
       if (!handler) {
-        const name = (ctor as { name?: unknown }).name;
         throw new Error(
           `No handler registered for DynamoDB command: ${String(name ?? ctor)}`,
         );
@@ -129,11 +135,19 @@ export function createMockDynamoDBClient(): MockDynamoDBClient {
         | Promise<SupportedDynamoOutputForCtor<C>>
         | SupportedDynamoOutputForCtor<C>,
     ): void {
-      handlers.set(ctor, async (cmd) => await handler(cmd as InstanceType<C>));
+      const wrapped = async (cmd: SupportedDynamoCommand): Promise<unknown> =>
+        await handler(cmd as InstanceType<C>);
+      handlersByCtor.set(ctor, wrapped);
+
+      const name = (ctor as { name?: unknown }).name;
+      if (typeof name === 'string' && name.length > 0) {
+        handlersByName.set(name, wrapped);
+      }
     },
     reset(): void {
       calls.length = 0;
-      handlers.clear();
+      handlersByCtor.clear();
+      handlersByName.clear();
     },
   };
 }

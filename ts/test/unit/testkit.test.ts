@@ -29,6 +29,26 @@ test('createMockDynamoDBClient is strict by default', async () => {
   );
 });
 
+test('createMockDynamoDBClient matches handlers by command name', async () => {
+  const mock = createMockDynamoDBClient();
+
+  const ShadowUpdateItemCommand = class UpdateItemCommand {};
+  mock.when(
+    ShadowUpdateItemCommand as unknown as typeof UpdateItemCommand,
+    async () => ({ $metadata: {} }),
+  );
+
+  await mock.client.send(
+    new UpdateItemCommand({
+      TableName: 't',
+      Key: { PK: { S: 'A' } },
+      UpdateExpression: 'SET #n = :v',
+      ExpressionAttributeNames: { '#n': 'name' },
+      ExpressionAttributeValues: { ':v': { S: 'x' } },
+    }),
+  );
+});
+
 test('client now() injection drives createdAt/updatedAt + update :now', async () => {
   const mock = createMockDynamoDBClient();
 

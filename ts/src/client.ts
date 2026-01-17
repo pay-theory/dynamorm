@@ -2,13 +2,11 @@ import {
   type AttributeValue,
   BatchGetItemCommand,
   BatchWriteItemCommand,
-  ConditionalCheckFailedException,
   DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
   TransactWriteItemsCommand,
-  TransactionCanceledException,
   UpdateItemCommand,
   type ConditionCheck,
   type Delete,
@@ -24,6 +22,7 @@ import {
   type BatchWriteResult,
   type RetryOptions,
 } from './batch.js';
+import { mapDynamoError } from './dynamo-error.js';
 import { DynamormError } from './errors.js';
 import type { Model } from './model.js';
 import {
@@ -36,6 +35,7 @@ import {
 } from './marshal.js';
 import { QueryBuilder, ScanBuilder } from './query.js';
 import type { TransactAction } from './transaction.js';
+import { UpdateBuilder } from './update-builder.js';
 import {
   decryptItemAttributes,
   encryptAttributeValue,
@@ -490,36 +490,12 @@ export class DynamormClient {
     const model = this.requireModel(modelName);
     return new ScanBuilder(this.ddb, model, this.encryption);
   }
-}
 
-function mapDynamoError(err: unknown): unknown {
-  if (err instanceof DynamormError) return err;
-
-  if (err instanceof ConditionalCheckFailedException) {
-    return new DynamormError('ErrConditionFailed', 'Condition failed', {
-      cause: err,
-    });
+  updateBuilder(
+    modelName: string,
+    key: Record<string, unknown>,
+  ): UpdateBuilder {
+    const model = this.requireModel(modelName);
+    return new UpdateBuilder(this.ddb, model, key, this.encryption);
   }
-
-  if (err instanceof TransactionCanceledException) {
-    return new DynamormError('ErrConditionFailed', 'Transaction canceled', {
-      cause: err,
-    });
-  }
-
-  if (typeof err === 'object' && err !== null && 'name' in err) {
-    const name = (err as { name?: unknown }).name;
-    if (name === 'ConditionalCheckFailedException') {
-      return new DynamormError('ErrConditionFailed', 'Condition failed', {
-        cause: err,
-      });
-    }
-    if (name === 'TransactionCanceledException') {
-      return new DynamormError('ErrConditionFailed', 'Transaction canceled', {
-        cause: err,
-      });
-    }
-  }
-
-  return err;
 }
