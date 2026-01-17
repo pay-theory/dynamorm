@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0-rc.4](https://github.com/pay-theory/dynamorm/compare/v1.1.0-rc.3...v1.1.0-rc.4) (2026-01-17)
+
+
+### Features
+
+* **cdk:** add multilang demo stack (VP-5) ([d68bf52](https://github.com/pay-theory/dynamorm/commit/d68bf52d7a42f180a53834dfe97a403a4507058b))
+* **cdk:** exercise enc/tx/batch in demo ([0b05d82](https://github.com/pay-theory/dynamorm/commit/0b05d828669fab2346d5281b8c70c5d8b70ae95b))
+* **conversion:** add json + custom converters (FC-6) ([6142c70](https://github.com/pay-theory/dynamorm/commit/6142c70f9fa9d2ba91283b66206d09a67a96c312))
+* **dms:** implement DMS-first workflow (FC-0) ([38c1b72](https://github.com/pay-theory/dynamorm/commit/38c1b7264943f513686100ad63bee50e1eec3b24))
+* **py:** batch + transactions (PY-4) ([12aca8d](https://github.com/pay-theory/dynamorm/commit/12aca8d712d52dcb0733ce50409eaddef7a17f35))
+* **py:** core CRUD operations (PY-2) ([9065f92](https://github.com/pay-theory/dynamorm/commit/9065f924023c48cd2c77bcab06da7728b0600638))
+* **py:** docs + examples (PY-7) ([b4ddcad](https://github.com/pay-theory/dynamorm/commit/b4ddcadee977192a8be05a94384828277723ccb5))
+* **py:** encrypted semantics (PY-6) ([7fe02dc](https://github.com/pay-theory/dynamorm/commit/7fe02dc0c30bab60b7470481e6015cea57c6f076))
+* **py:** model definition API (PY-1) ([c8e9077](https://github.com/pay-theory/dynamorm/commit/c8e90772904ac8c69e0b121b7a9da2703820fc1a))
+* **py:** query/scan operations (PY-3) ([3023af3](https://github.com/pay-theory/dynamorm/commit/3023af37d0d43b1244ab109c370bb56577fbf6cb))
+* **py:** scaffold dynamorm-py (PY-0) ([46221b8](https://github.com/pay-theory/dynamorm/commit/46221b878f5772d1ce2174f5d785035bb28dd225))
+* **py:** streams + events unmarshalling (PY-5) ([12e8d13](https://github.com/pay-theory/dynamorm/commit/12e8d13091dff7ea50ee6f1747947d3cc2c7768e))
+* **query:** aggregates + optimizer (FC-8) ([e7f79dc](https://github.com/pay-theory/dynamorm/commit/e7f79dc54a1ac54ce33be51c8e1a8126c206d79c))
+* **query:** filters, retries, parallel scan (FC-2) ([e56466e](https://github.com/pay-theory/dynamorm/commit/e56466eb9db266920a677e9930a2669ecc887ef2))
+* **runtime:** lambda + multi-account helpers (FC-4) ([3dee078](https://github.com/pay-theory/dynamorm/commit/3dee078242df9fbcb0fbedc63c4b296d67332e47))
+* **schema:** add TS/Py table helpers (FC-1) ([31365c8](https://github.com/pay-theory/dynamorm/commit/31365c8b41cd9a63ad6408578427ab52bb0ede05))
+* **security:** add validation + protection helpers (FC-5) ([c64b04b](https://github.com/pay-theory/dynamorm/commit/c64b04b8699dfb244eba8c5fbb60b135e4610d9b))
+* **testkit:** add python testkit helpers (FC-7) ([b2b5b0e](https://github.com/pay-theory/dynamorm/commit/b2b5b0eca064974072428b9bb6324cae2e6b8aa9))
+* **testkit:** public mocks + inject now/rand (VP-4) ([105de2e](https://github.com/pay-theory/dynamorm/commit/105de2e729f78629594898eb5be87dc9d3dfc2dc))
+* **ts:** add KMS encryption provider ([c104bc2](https://github.com/pay-theory/dynamorm/commit/c104bc280c6fa3ecc323981360241e49ca3546ec))
+* **update:** add UpdateBuilder parity (FC-3) ([8594a5d](https://github.com/pay-theory/dynamorm/commit/8594a5d0b6af5bf6943fa58393b0b0753690ede4))
+
+
+### Bug Fixes
+
+* **cdk:** track multilang demo entrypoint ([94b715f](https://github.com/pay-theory/dynamorm/commit/94b715f7d8e49884b278b4e179714c525416c1c0))
+* **py:** align encrypted payload encoding ([db0b8ae](https://github.com/pay-theory/dynamorm/commit/db0b8aec304a2b3a72af8f8bce857d2d7b433668))
+* **rubric:** handle prerelease alignment on main ([20cb88d](https://github.com/pay-theory/dynamorm/commit/20cb88db243817c872d915170df6b13e4e36034f))
+
 ## [1.1.0](https://github.com/pay-theory/dynamorm/compare/v1.0.37...v1.1.0) (2026-01-16)
 
 
