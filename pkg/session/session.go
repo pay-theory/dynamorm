@@ -4,6 +4,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 )
 
 // configLoadFunc is a variable to allow mocking config.LoadDefaultConfig in tests
@@ -24,6 +26,9 @@ type Config struct {
 	// KMSKeyARN is required when using dynamorm:"encrypted" fields.
 	// DynamORM does not manage KMS keys; callers must provide a valid key ARN.
 	KMSKeyARN        string
+	KMSClient        KMSClient        `json:"-" yaml:"-"`
+	EncryptionRand   io.Reader        `json:"-" yaml:"-"`
+	Now              func() time.Time `json:"-" yaml:"-"`
 	AWSConfigOptions []func(*config.LoadOptions) error
 	DynamoDBOptions  []func(*dynamodb.Options)
 	MaxRetries       int
@@ -31,6 +36,13 @@ type Config struct {
 	DefaultWCU       int64
 	AutoMigrate      bool
 	EnableMetrics    bool
+}
+
+// KMSClient is the minimal AWS KMS surface DynamORM needs for attribute encryption.
+// Providing this enables deterministic tests without real AWS KMS calls.
+type KMSClient interface {
+	GenerateDataKey(ctx context.Context, params *kms.GenerateDataKeyInput, optFns ...func(*kms.Options)) (*kms.GenerateDataKeyOutput, error)
+	Decrypt(ctx context.Context, params *kms.DecryptInput, optFns ...func(*kms.Options)) (*kms.DecryptOutput, error)
 }
 
 // DefaultConfig returns the default configuration

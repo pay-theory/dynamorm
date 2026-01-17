@@ -14,8 +14,9 @@ Related planning artifacts:
 ## Goals (v0.1)
 
 - Define a **language-agnostic** representation of DynamORM model schemas (keys, indexes, attribute names, lifecycle fields).
+- Define a single **language-neutral schema source-of-truth** (DMS) that all implementations can load/validate against.
 - Define the **runtime semantics** that prevent drift (encoding rules, cursor format, versioning behavior, encryption rules).
-- Enable a shared **contract test suite** that can be run against Go and TypeScript implementations.
+- Enable a shared **contract test suite** that can be run against Go, TypeScript, and Python implementations.
 
 ## Non-goals (v0.1)
 
@@ -35,7 +36,16 @@ Related planning artifacts:
 
 ## DMS file format (proposed)
 
-DMS is a versioned YAML/JSON document. v0.1 is intentionally minimal and focused on what’s required for Go↔TS parity.
+DMS is a versioned, language-neutral document. v0.1 is intentionally minimal and focused on high-drift behavior.
+
+### Canonical format (v0.1)
+
+To make DMS predictable across languages and safe to parse:
+
+- **Canonical authoring format:** **YAML 1.2** restricted to the **JSON-compatible subset** (no anchors/aliases, no merge
+  keys, no custom tags, no timestamps/implicit type magic).
+- **Equivalent interchange format:** **JSON** (same object model after parsing).
+- **Rule:** a DMS file MUST parse to the same JSON object shape in Go/TypeScript/Python.
 
 ### Top-level shape
 
@@ -102,6 +112,12 @@ Every `attributes[]` entry supports:
   - `rfc3339nano` (timestamps)
   - `unix_seconds` (TTL)
   - `int` (version)
+- `json` (bool, default false): store a JSON-compatible value as a DynamoDB `S` JSON blob.
+  - Requires `type: "S"`.
+  - Serialization MUST be deterministic (no insignificant whitespace; object keys sorted recursively).
+  - `null` values MUST be stored as DynamoDB `NULL` (not as the string `"null"`).
+- `binary` (bool, default false): indicates the attribute is treated as a binary blob.
+  - Requires `type: "B"`.
 - `encryption` (object, optional): indicates the attribute is stored as an encrypted envelope (see below).
 - `tags` (object, optional): extension metadata; must not change core semantics without a spec update.
 
@@ -238,5 +254,4 @@ Implementations MUST expose typed errors (or stable error codes) for these cases
 
 - TTL field types: should convenience timestamp types be allowed everywhere (Go `time.Time`, TS `Date`) while always
   storing epoch seconds?
-- `json` / `binary` tags: should these become first-class DMS features, or remain custom-converter territory?
 - Projection behavior: do we standardize projection expressions and “include fields” semantics in v0.2?

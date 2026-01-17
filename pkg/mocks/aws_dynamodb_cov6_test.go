@@ -80,3 +80,221 @@ func TestMockDynamoDBClient_PanicsOnUnexpectedReturnTypes_COV6(t *testing.T) {
 
 	mockClient.AssertExpectations(t)
 }
+
+func TestMockDynamoDBClient_ErrorBranches_COV6(t *testing.T) {
+	ctx := context.Background()
+	expectedErr := errors.New("boom")
+
+	cases := []struct {
+		call func(client *mocks.MockDynamoDBClient) (any, error)
+		name string
+	}{
+		{
+			name: "DescribeTable",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.DescribeTableInput{TableName: aws.String("tbl")}
+				client.On("DescribeTable", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.DescribeTable(ctx, input)
+			},
+		},
+		{
+			name: "DeleteTable",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.DeleteTableInput{TableName: aws.String("tbl")}
+				client.On("DeleteTable", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.DeleteTable(ctx, input)
+			},
+		},
+		{
+			name: "UpdateTimeToLive",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.UpdateTimeToLiveInput{TableName: aws.String("tbl")}
+				client.On("UpdateTimeToLive", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.UpdateTimeToLive(ctx, input)
+			},
+		},
+		{
+			name: "GetItem",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.GetItemInput{TableName: aws.String("tbl")}
+				client.On("GetItem", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.GetItem(ctx, input)
+			},
+		},
+		{
+			name: "PutItem",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.PutItemInput{TableName: aws.String("tbl")}
+				client.On("PutItem", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.PutItem(ctx, input)
+			},
+		},
+		{
+			name: "DeleteItem",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.DeleteItemInput{TableName: aws.String("tbl")}
+				client.On("DeleteItem", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.DeleteItem(ctx, input)
+			},
+		},
+		{
+			name: "Query",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.QueryInput{TableName: aws.String("tbl")}
+				client.On("Query", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.Query(ctx, input)
+			},
+		},
+		{
+			name: "Scan",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.ScanInput{TableName: aws.String("tbl")}
+				client.On("Scan", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.Scan(ctx, input)
+			},
+		},
+		{
+			name: "BatchGetItem",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.BatchGetItemInput{}
+				client.On("BatchGetItem", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.BatchGetItem(ctx, input)
+			},
+		},
+		{
+			name: "BatchWriteItem",
+			call: func(client *mocks.MockDynamoDBClient) (any, error) {
+				input := &dynamodb.BatchWriteItemInput{}
+				client.On("BatchWriteItem", ctx, input, mock.Anything).Return(nil, expectedErr).Once()
+				return client.BatchWriteItem(ctx, input)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := new(mocks.MockDynamoDBClient)
+			out, err := tc.call(client)
+			assert.ErrorIs(t, err, expectedErr)
+			assert.Nil(t, out)
+			client.AssertExpectations(t)
+		})
+	}
+}
+
+func TestMockDynamoDBClient_PanicBranches_COV6(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		call func(t *testing.T, client *mocks.MockDynamoDBClient)
+		name string
+	}{
+		{
+			name: "CreateTable",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.CreateTableInput{TableName: aws.String("tbl")}
+				client.On("CreateTable", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.CreateTable(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "DescribeTable",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.DescribeTableInput{TableName: aws.String("tbl")}
+				client.On("DescribeTable", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.DescribeTable(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "DeleteTable",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.DeleteTableInput{TableName: aws.String("tbl")}
+				client.On("DeleteTable", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.DeleteTable(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "UpdateTimeToLive",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.UpdateTimeToLiveInput{TableName: aws.String("tbl")}
+				client.On("UpdateTimeToLive", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.UpdateTimeToLive(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "GetItem",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.GetItemInput{TableName: aws.String("tbl")}
+				client.On("GetItem", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.GetItem(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "PutItem",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.PutItemInput{TableName: aws.String("tbl")}
+				client.On("PutItem", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.PutItem(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "DeleteItem",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.DeleteItemInput{TableName: aws.String("tbl")}
+				client.On("DeleteItem", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.DeleteItem(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "Scan",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.ScanInput{TableName: aws.String("tbl")}
+				client.On("Scan", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.Scan(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "UpdateItem",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.UpdateItemInput{TableName: aws.String("tbl")}
+				client.On("UpdateItem", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.UpdateItem(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "BatchGetItem",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.BatchGetItemInput{}
+				client.On("BatchGetItem", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.BatchGetItem(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+		{
+			name: "BatchWriteItem",
+			call: func(t *testing.T, client *mocks.MockDynamoDBClient) {
+				input := &dynamodb.BatchWriteItemInput{}
+				client.On("BatchWriteItem", ctx, input, mock.Anything).Return("bad-type", nil).Once()
+				_, err := client.BatchWriteItem(ctx, input)
+				assert.NoError(t, err)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := new(mocks.MockDynamoDBClient)
+			assert.Panics(t, func() { tc.call(t, client) })
+			client.AssertExpectations(t)
+		})
+	}
+}

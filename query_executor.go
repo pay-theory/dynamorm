@@ -75,12 +75,17 @@ func (qe *queryExecutor) encryptionService() (*encryption.Service, error) {
 		return nil, fmt.Errorf("%w: session is nil", customerrors.ErrEncryptionNotConfigured)
 	}
 
-	keyARN := qe.db.session.Config().KMSKeyARN
+	cfg := qe.db.session.Config()
+	keyARN := cfg.KMSKeyARN
 	if keyARN == "" {
 		return nil, fmt.Errorf("%w: session.Config.KMSKeyARN is empty", customerrors.ErrEncryptionNotConfigured)
 	}
 
-	return encryption.NewServiceFromAWSConfig(keyARN, qe.db.session.AWSConfig()), nil
+	if cfg.KMSClient != nil {
+		return encryption.NewServiceWithRand(keyARN, cfg.KMSClient, cfg.EncryptionRand), nil
+	}
+
+	return encryption.NewServiceFromAWSConfigWithRand(keyARN, qe.db.session.AWSConfig(), cfg.EncryptionRand), nil
 }
 
 func (qe *queryExecutor) failClosedIfEncrypted() error {

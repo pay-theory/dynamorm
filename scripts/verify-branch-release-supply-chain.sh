@@ -111,6 +111,22 @@ if [[ -f "ts/package.json" ]]; then
   done
 fi
 
+if [[ -f "py/pyproject.toml" ]]; then
+  for cfg in "release-please-config.premain.json" "release-please-config.json"; do
+    if [[ ! -f "${cfg}" ]]; then
+      continue
+    fi
+    grep -Eq '"extra-files"\s*:' "${cfg}" || {
+      echo "branch-release: ${cfg}: must define extra-files for multi-language versioning"
+      failures=$((failures + 1))
+    }
+    grep -Eq '"path"\s*:\s*"py/src/dynamorm_py/version\.json"' "${cfg}" || {
+      echo "branch-release: ${cfg}: must bump py/src/dynamorm_py/version.json version"
+      failures=$((failures + 1))
+    }
+  done
+fi
+
 if [[ "${failures}" -ne 0 ]]; then
   echo "branch-release: FAIL (${failures} issue(s))"
   exit 1

@@ -13,6 +13,11 @@ export type ScalarType =
   | 'BS';
 export type KeyType = 'S' | 'N' | 'B';
 
+export interface ValueConverter {
+  toDynamoValue(value: unknown): unknown;
+  fromDynamoValue(value: unknown): unknown;
+}
+
 export interface KeySchema {
   attribute: string;
   type: KeyType;
@@ -24,9 +29,12 @@ export interface AttributeSchema {
   required?: boolean;
   optional?: boolean;
   omit_empty?: boolean;
+  json?: boolean;
+  binary?: boolean;
   format?: string;
   roles?: string[];
   encryption?: unknown;
+  converter?: ValueConverter;
 }
 
 export interface IndexSchema {
@@ -121,6 +129,24 @@ function validateModelSchema(schema: ModelSchema): void {
         'ErrInvalidModel',
         'Attribute attribute name is required',
       );
+    if (attr.json && attr.type !== 'S') {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `json attributes must be type S: ${attr.attribute}`,
+      );
+    }
+    if (attr.binary && attr.type !== 'B') {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `binary attributes must be type B: ${attr.attribute}`,
+      );
+    }
+    if (attr.json && attr.binary) {
+      throw new DynamormError(
+        'ErrInvalidModel',
+        `attribute cannot be both json and binary: ${attr.attribute}`,
+      );
+    }
     if (attributeNames.has(attr.attribute)) {
       throw new DynamormError(
         'ErrInvalidModel',

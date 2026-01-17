@@ -40,15 +40,26 @@ type Service struct {
 }
 
 func NewService(keyARN string, kmsClient kmsAPI) *Service {
-	return &Service{
-		keyARN: keyARN,
-		kms:    kmsClient,
-		rand:   rand.Reader,
-	}
+	return NewServiceWithRand(keyARN, kmsClient, rand.Reader)
 }
 
 func NewServiceFromAWSConfig(keyARN string, cfg aws.Config) *Service {
-	return NewService(keyARN, kms.NewFromConfig(cfg))
+	return NewServiceFromAWSConfigWithRand(keyARN, cfg, rand.Reader)
+}
+
+func NewServiceWithRand(keyARN string, kmsClient kmsAPI, rng io.Reader) *Service {
+	if rng == nil {
+		rng = rand.Reader
+	}
+	return &Service{
+		keyARN: keyARN,
+		kms:    kmsClient,
+		rand:   rng,
+	}
+}
+
+func NewServiceFromAWSConfigWithRand(keyARN string, cfg aws.Config, rng io.Reader) *Service {
+	return NewServiceWithRand(keyARN, kms.NewFromConfig(cfg), rng)
 }
 
 func (s *Service) EncryptAttributeValue(ctx context.Context, attributeName string, av types.AttributeValue) (types.AttributeValue, error) {

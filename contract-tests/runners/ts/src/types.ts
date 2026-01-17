@@ -22,6 +22,8 @@ export interface DmsModel {
     required?: boolean;
     optional?: boolean;
     omit_empty?: boolean;
+    json?: boolean;
+    binary?: boolean;
     format?: string;
     roles?: string[];
   }>;
@@ -63,4 +65,3 @@ export interface Expectation {
   item_field_equals_var?: Record<string, string>;
   item_field_not_equals_var?: Record<string, string>;
 }
-

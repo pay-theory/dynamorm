@@ -91,17 +91,26 @@ func GetGlobalConfig() Config {
 // MarshalerFactory creates marshalers with security controls
 type MarshalerFactory struct {
 	converter *pkgTypes.Converter
+	now       func() time.Time
 	config    Config
 }
 
 // NewMarshalerFactory creates a new factory with the given configuration
 func NewMarshalerFactory(config Config) *MarshalerFactory {
-	return &MarshalerFactory{config: config}
+	return &MarshalerFactory{config: config, now: time.Now}
 }
 
 // WithConverter sets the converter used for creating unsafe marshalers.
 func (f *MarshalerFactory) WithConverter(converter *pkgTypes.Converter) *MarshalerFactory {
 	f.converter = converter
+	return f
+}
+
+func (f *MarshalerFactory) WithNowFunc(now func() time.Time) *MarshalerFactory {
+	if now == nil {
+		now = time.Now
+	}
+	f.now = now
 	return f
 }
 
@@ -114,10 +123,18 @@ func (f *MarshalerFactory) NewMarshaler() (MarshalerInterface, error) {
 func (f *MarshalerFactory) NewMarshalerWithAcknowledgment(ack *SecurityAcknowledgment) (MarshalerInterface, error) {
 	switch f.config.MarshalerType {
 	case SafeMarshalerType, "": // Default to safe
-		if f.converter != nil {
-			return NewSafeMarshalerWithConverter(f.converter), nil
+		now := f.now
+		if now == nil {
+			now = time.Now
 		}
-		return NewSafeMarshaler(), nil
+		if f.converter != nil {
+			m := NewSafeMarshalerWithConverter(f.converter)
+			m.now = now
+			return m, nil
+		}
+		m := NewSafeMarshaler()
+		m.now = now
+		return m, nil
 
 	case UnsafeMarshalerType:
 		return f.createUnsafeMarshaler(ack)
@@ -173,7 +190,11 @@ func (f *MarshalerFactory) createUnsafeMarshaler(ack *SecurityAcknowledgment) (M
 	// Check environment variable override (for CI/testing)
 	if os.Getenv("DYNAMORM_FORCE_SAFE_MARSHALER") == "true" {
 		log.Printf("🔒 SECURITY OVERRIDE: Forcing safe marshaler (DYNAMORM_FORCE_SAFE_MARSHALER=true)")
-		return NewSafeMarshaler(), nil
+		m := NewSafeMarshaler()
+		if f.now != nil {
+			m.now = f.now
+		}
+		return m, nil
 	}
 
 	// Create the unsafe marshaler (from existing code)
@@ -181,7 +202,11 @@ func (f *MarshalerFactory) createUnsafeMarshaler(ack *SecurityAcknowledgment) (M
 	if converter == nil {
 		converter = pkgTypes.NewConverter()
 	}
-	return New(converter), nil // This will use the existing unsafe implementation
+	m := New(converter) // This will use the existing unsafe implementation
+	if f.now != nil {
+		m.now = f.now
+	}
+	return m, nil
 }
 
 // GetSecurityStats returns security-related statistics
