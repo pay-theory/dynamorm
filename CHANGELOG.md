@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1-rc.1](https://github.com/pay-theory/dynamorm/compare/v1.2.1-rc...v1.2.1-rc.1) (2026-01-17)
+
+
+### Bug Fixes
+
+* **release:** package ts/py assets reliably ([9554dc5](https://github.com/pay-theory/dynamorm/commit/9554dc5fe85344669b8a7bcdc7f27a8b5751118a))
+* **release:** repair prerelease asset packaging ([6e96be8](https://github.com/pay-theory/dynamorm/commit/6e96be8307dd56be17a80cff56eaff008d2ea840))
+
 ## [1.2.1-rc](https://github.com/pay-theory/dynamorm/compare/v1.2.0...v1.2.1-rc) (2026-01-17)
 
 

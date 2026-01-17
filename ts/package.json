@@ -1,6 +1,6 @@
 {
   "name": "@pay-theory/dynamorm-ts",
-  "version": "1.2.1-rc",
+  "version": "1.2.1-rc.1",
   "private": true,
   "type": "module",
   "engines": {
