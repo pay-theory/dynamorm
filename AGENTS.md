@@ -11,6 +11,7 @@
 ## Build, Test, and Development Commands
 Go/tooling:
 - Install the Go toolchain declared in `go.mod` (includes a `toolchain` pin).
+- If you have Ubuntu snap `go` installed, ensure it doesn't override the pinned toolchain (otherwise you may see `compile: version "goX.Y.Z" does not match go tool version "goX.Y.W"` during coverage/covdata); fix with `export GOTOOLCHAIN="$(awk '/^toolchain /{print $2}' go.mod | head -n1)"` (the `Makefile` already exports this).
 - `make install-tools` — install `golangci-lint` and `mockgen`
 
 Common workflows:
