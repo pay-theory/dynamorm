@@ -57,3 +57,7 @@ Because both flows update overlapping version/changelog files, direct `premain` 
   - (usually) `.release-please-manifest.json` and `.release-please-manifest.premain.json`
 - Push the promotion branch and open a PR to `main`. Avoid pushing conflict-resolution commits directly to `premain`.
 - After merge, `Release (main)` runs and release-please creates/updates the stable release PR; don’t manually bump stable versions as part of the promotion PR.
+
+**Post-release back-merge (main → premain)**
+- After the stable release PR merges on `main`, back-merge `main` into `premain` to keep `premain`’s `.release-please-manifest.json` aligned (required by `scripts/verify-branch-version-sync.sh`).
+- Keep prerelease version alignment on `premain` (required by `scripts/verify-version-alignment.sh`): TS/Py versions must match `.release-please-manifest.premain.json` on `premain`.
