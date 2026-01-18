@@ -45,15 +45,15 @@ Evidence (refresh whenever behavior changes):
 | CON-1 | PASS | M1 |
 | CON-2 | PASS | M1 |
 | CON-3 | unknown | M3 |
-| COM-1 | unknown | M2 |
-| COM-2 | unknown | M2 |
+| COM-1 | PASS | M2 |
+| COM-2 | PASS | M2 |
 | COM-3 | PASS | M0 |
 | COM-4 | PASS | M1.5 |
-| COM-5 | unknown | M2 |
+| COM-5 | PASS | M2 |
 | COM-6 | BLOCKED | M3 (define logging/ops standard, if applicable) |
-| SEC-1 | unknown | M2 |
-| SEC-2 | unknown | M2 |
-| SEC-3 | unknown | M2 |
+| SEC-1 | PASS | M2 |
+| SEC-2 | PASS | M2 |
+| SEC-3 | PASS | M2 |
 | SEC-4 | unknown | M3 |
 | CMP-1 | PASS | M0 |
 | CMP-2 | PASS | M0 |

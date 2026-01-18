@@ -96,6 +96,37 @@ ensure_go_tool_pinned() {
   local module_at_ver="$2"  # e.g., github.com/...@vX.Y.Z
   local expected_substr="$3" # substring expected in '<tool> --version' output
 
+  local expected_mod_ver="${module_at_ver##*@}"
+
+  tool_matches_pinned_version() {
+    local tool="$1"
+    local expected_ver="$2"
+    local expected_version_substr="$3"
+
+    local tool_path
+    tool_path="$(command -v "${tool}" 2>/dev/null || true)"
+    [[ -n "${tool_path}" ]] || return 1
+
+    # Prefer Go's module metadata for verification (works even if the tool doesn't
+    # embed a human-readable version string).
+    if command -v go >/dev/null 2>&1; then
+      local installed_mod_ver
+      installed_mod_ver="$(go version -m "${tool_path}" 2>/dev/null | awk '$1 == "mod" { print $3; exit }')"
+      if [[ -n "${installed_mod_ver}" && "${installed_mod_ver}" == "${expected_ver}" ]]; then
+        return 0
+      fi
+    fi
+
+    # Fallback: best-effort string check.
+    if [[ -n "${expected_version_substr}" ]]; then
+      if "${tool}" --version 2>/dev/null | grep -Fq "${expected_version_substr}"; then
+        return 0
+      fi
+    fi
+
+    return 1
+  }
+
   if ! command -v go >/dev/null 2>&1; then
     echo "BLOCKED: go toolchain is required to install ${tool_name}" >&2
     return 2
@@ -103,7 +134,7 @@ ensure_go_tool_pinned() {
 
   # If present and matches expected version, keep.
   if command -v "${tool_name}" >/dev/null 2>&1; then
-    if "${tool_name}" --version 2>/dev/null | grep -Fq "${expected_substr}"; then
+    if tool_matches_pinned_version "${tool_name}" "${expected_mod_ver}" "${expected_substr}"; then
       return 0
     fi
   fi
@@ -119,9 +150,10 @@ ensure_go_tool_pinned() {
     return 2
   fi
 
-  if ! "${tool_name}" --version 2>/dev/null | grep -Fq "${expected_substr}"; then
-    echo "FAIL: installed ${tool_name} does not report expected version (${expected_substr})" >&2
+  if ! tool_matches_pinned_version "${tool_name}" "${expected_mod_ver}" "${expected_substr}"; then
+    echo "FAIL: installed ${tool_name} does not match expected pinned version (${expected_mod_ver})" >&2
     "${tool_name}" --version 2>/dev/null || true
+    go version -m "$(command -v "${tool_name}")" 2>/dev/null || true
     return 1
   fi
 
