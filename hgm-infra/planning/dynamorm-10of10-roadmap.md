@@ -1,8 +1,8 @@
-# dynamorm: 10/10 Roadmap (Rubric v0.1)
+# dynamorm: 10/10 Roadmap (Rubric v0.2)
 
 This roadmap maps milestones directly to rubric IDs with measurable acceptance criteria and verification commands.
 
-## Current scorecard (Rubric v0.1)
+## Current scorecard (Rubric v0.2)
 Scoring note: a check is only treated as “passing” if it is both green **and** enforced by a trustworthy verifier
 (pinned tooling, schema-valid configs, and no “green by dilution” shortcuts). Completeness failures invalidate “green by
 drift”.
@@ -18,23 +18,9 @@ drift”.
 | Docs | 10/10 | — |
 
 Evidence (refresh whenever behavior changes):
-- `bash scripts/verify-unit-tests.sh`
-- `bash scripts/verify-integration-tests.sh`
-- `bash scripts/verify-coverage.sh`
-- `bash scripts/verify-formatting.sh`
-- `bash scripts/verify-lint.sh`
-- `bash scripts/verify-public-api-contracts.sh`
-- `bash scripts/verify-go-modules.sh`
-- `bash scripts/verify-ci-toolchain.sh`
-- `golangci-lint config verify -c .golangci-v2.yml`
-- `bash scripts/verify-coverage-threshold.sh`
-- `bash scripts/sec-gosec.sh`
-- `bash scripts/sec-dependency-scans.sh`
-- `go mod verify`
-- `bash scripts/verify-encrypted-tag-implemented.sh`
-- `bash scripts/verify-file-size.sh`
-- `bash scripts/verify-query-singleton.sh`
 - `bash hgm-infra/verifiers/hgm-verify-rubric.sh`
+- `cat hgm-infra/evidence/hgm-rubric-report.json`
+- See `hgm-infra/planning/dynamorm-evidence-plan.md` for per-check refresh commands.
 
 ## Rubric-to-milestone mapping
 | Rubric ID | Status | Milestone |
@@ -42,19 +28,28 @@ Evidence (refresh whenever behavior changes):
 | QUA-1 | PASS | M1.5 |
 | QUA-2 | PASS | M1.5 |
 | QUA-3 | PASS | M1.5 |
+| QUA-4 | PASS | M1.5 |
+| QUA-5 | PASS | M1.5 |
 | CON-1 | PASS | M1 |
 | CON-2 | PASS | M1 |
 | CON-3 | PASS | M3 |
 | COM-1 | PASS | M2 |
 | COM-2 | PASS | M2 |
 | COM-3 | PASS | M0 |
-| COM-4 | PASS | M1.5 |
-| COM-5 | PASS | M2 |
-| COM-6 | PASS | M3 |
+| COM-4 | PASS | M1 |
+| COM-5 | PASS | M1.5 |
+| COM-6 | PASS | M2 |
+| COM-7 | PASS | M2 |
+| COM-8 | PASS | M2 |
 | SEC-1 | PASS | M2 |
 | SEC-2 | PASS | M2 |
 | SEC-3 | PASS | M2 |
 | SEC-4 | PASS | M3 |
+| SEC-5 | PASS | M3 |
+| SEC-6 | PASS | M3 |
+| SEC-7 | PASS | M3 |
+| SEC-8 | PASS | M3 |
+| SEC-9 | PASS | M3 |
 | CMP-1 | PASS | M0 |
 | CMP-2 | PASS | M0 |
 | CMP-3 | PASS | M0 |
@@ -83,10 +78,10 @@ main roadmap readable:
 - Threat model exists and is owned.
 - Controls matrix exists and maps threats → controls.
 - Evidence plan maps rubric IDs → verifiers → artifacts.
-- HGM doc integrity + threat-controls parity checks are green.
+- Doc integrity + threat-controls parity checks are green (repo docs + HGM planning docs).
 
 ### M1 — Make core lint/build loop reproducible
-**Closes:** CON-1, CON-2  
+**Closes:** CON-1, CON-2, COM-4  
 **Goal:** strict lint/format enforcement with pinned tools; no drift.
 
 Tracking document: `hgm-infra/planning/dynamorm-lint-green-roadmap.md`
@@ -95,17 +90,17 @@ Tracking document: `hgm-infra/planning/dynamorm-lint-green-roadmap.md`
 - Formatter clean; lint green with schema-valid config; pinned tool versions; no blanket excludes.
 
 ### M1.5 — Coverage/quality gates
-**Closes:** QUA-1..3, COM-4  
+**Closes:** QUA-1..5, COM-5  
 **Goal:** reach and maintain coverage floor (≥ 90%) without reducing scope; tests green.
 
 Tracking document: `hgm-infra/planning/dynamorm-coverage-roadmap.md`
 
 ### M2 — Security + anti-drift enforcement
-**Closes:** COM-1, COM-2, COM-5, SEC-1..3  
+**Closes:** COM-1, COM-2, COM-6..8, SEC-1..3  
 **Goal:** tooling is pinned and security scans are reproducible.
 
 ### M3 — Domain P0 hardening (high-risk environments)
-**Closes:** SEC-4, CON-3, COM-6  
+**Closes:** SEC-4..9, CON-3  
 **Goal:** ensure domain-critical semantics (e.g., encrypted tag behavior) and public API parity stay enforced.
 
 ### M4 — Maintainability convergence
@@ -114,3 +109,12 @@ Tracking document: `hgm-infra/planning/dynamorm-coverage-roadmap.md`
 
 Notes:
 - MAI-2 requires a repo-local maintainability roadmap under `hgm-infra/planning/` and should be updated after major refactors.
+
+### M5 — Sunset legacy rubric runner (single entrypoint)
+**Closes:** (meta; no rubric IDs)  
+**Goal:** replace the legacy `scripts/verify-rubric.sh` orchestration with the HGM verifier without losing any checks.
+
+**Acceptance criteria**
+- `make rubric` continues to work unchanged.
+- `scripts/verify-rubric.sh` delegates to `bash hgm-infra/verifiers/hgm-verify-rubric.sh`.
+- All legacy rubric checks are still enforced via HGM (no lost gates).

@@ -19,6 +19,12 @@
       "hgm-infra/planning/dynamorm-10of10-rubric.md",
       "hgm-infra/planning/dynamorm-10of10-roadmap.md",
       "hgm-infra/planning/dynamorm-evidence-plan.md",
+      "hgm-infra/planning/dynamorm-lint-green-roadmap.md",
+      "hgm-infra/planning/dynamorm-coverage-roadmap.md",
+      "hgm-infra/planning/dynamorm-logging-ops-standards.md",
+      "hgm-infra/planning/dynamorm-maintainability-roadmap.md",
+      "hgm-infra/planning/dynamorm-workstream-logging-ops-roadmap.md",
+      "hgm-infra/planning/dynamorm-workstream-maintainability-plan-roadmap.md",
       "hgm-infra/planning/dynamorm-supply-chain-allowlist.txt",
       "hgm-infra/planning/dynamorm-ai-drift-recovery.md"
     ],

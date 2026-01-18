@@ -168,7 +168,7 @@ prepare_check_env() {
   [[ -f "${REPO_ROOT}/go.mod" ]] || return 0
 
   case "$id" in
-    CON-2|COM-3)
+    CON-2|COM-4)
       # Lint and config validation depend on golangci-lint.
       ensure_go_tool_pinned \
         "golangci-lint" \
@@ -238,47 +238,61 @@ check_file_exists() {
   fi
 }
 
-check_threat_controls_parity() {
+check_threat_controls_parity_hgm() {
   local threat_model="${PLANNING_DIR}/dynamorm-threat-model.md"
   local controls_matrix="${PLANNING_DIR}/dynamorm-controls-matrix.md"
   local evidence_path="${EVIDENCE_DIR}/DOC-5-parity.log"
 
   if [[ ! -f "${threat_model}" ]] || [[ ! -f "${controls_matrix}" ]]; then
-    printf '%s\n' "Threat model or controls matrix missing" >"${evidence_path}"
-    record_result "DOC-5" "Docs" "BLOCKED" "Threat model or controls matrix missing" "${evidence_path}"
-    return 0
+    printf '%s\n' "Threat model or controls matrix missing (HGM planning)" >"${evidence_path}"
+    echo "threat-parity(hgm): BLOCKED (missing threat model or controls matrix)" >&2
+    return 2
   fi
 
   local threats
   threats="$(grep -oE 'THR-[0-9]+' "${threat_model}" | sort -u || true)"
   if [[ -z "${threats}" ]]; then
-    printf '%s\n' "No THR-* IDs found in threat model" >"${evidence_path}"
-    record_result "DOC-5" "Docs" "FAIL" "No THR-* IDs found in threat model" "${evidence_path}"
-    return 0
+    printf '%s\n' "No THR-* IDs found in HGM threat model" >"${evidence_path}"
+    echo "threat-parity(hgm): FAIL (no THR-* IDs found in threat model)" >&2
+    return 1
   fi
 
-  local missing=""
-  local tid
-  for tid in ${threats}; do
-    if ! grep -q "${tid}" "${controls_matrix}"; then
-      missing="${missing} ${tid}"
-    fi
-  done
+  local mapped
+  mapped="$(grep -oE 'THR-[0-9]+' "${controls_matrix}" | sort -u || true)"
+  if [[ -z "${mapped}" ]]; then
+    printf '%s\n' "No THR-* IDs found in HGM controls matrix" >"${evidence_path}"
+    echo "threat-parity(hgm): FAIL (no THR-* IDs found in controls matrix)" >&2
+    return 1
+  fi
+
+  local missing_list
+  missing_list="$(comm -23 <(printf '%s\n' "${threats}") <(printf '%s\n' "${mapped}") || true)"
+  local unknown_list
+  unknown_list="$(comm -13 <(printf '%s\n' "${threats}") <(printf '%s\n' "${mapped}") || true)"
 
   {
-    echo "Threat IDs found: ${threats}";
-    echo "Missing from controls:${missing:- none}";
+    echo "Threat IDs found (HGM threat model): ${threats}"
+    echo "Threat IDs referenced (HGM controls matrix): ${mapped}"
+    echo "Missing from controls:${missing_list:- none}"
+    echo "Unknown threats referenced in controls:${unknown_list:- none}"
   } >"${evidence_path}"
 
-  if [[ -z "${missing}" ]]; then
-    record_result "DOC-5" "Docs" "PASS" "All threat IDs mapped in controls matrix" "${evidence_path}"
-  else
-    record_result "DOC-5" "Docs" "FAIL" "Unmapped threats:${missing}" "${evidence_path}"
+  if [[ -n "${missing_list}" || -n "${unknown_list}" ]]; then
+    echo "threat-parity(hgm): FAIL" >&2
+    return 1
   fi
+
+  echo "threat-parity(hgm): PASS"
+  return 0
+}
+
+check_threat_controls_parity_full() {
+  check_threat_controls_parity_hgm
+  bash scripts/verify-threat-controls-parity.sh
 }
 
 check_security_config_not_diluted() {
-  # COM-5: security scan config not diluted (minimal deterministic check).
+  # Security config not diluted (minimal deterministic check).
   # This is intentionally strict and opinionated for this repo:
   # - Require `gosec` linter enabled in .golangci-v2.yml
   # - Allow only exclude G104 (handled by errcheck), and no others.
@@ -560,6 +574,11 @@ print("doc-integrity: PASS")
 PY
 }
 
+check_doc_integrity() {
+  check_hgm_doc_integrity
+  bash scripts/verify-doc-integrity.sh
+}
+
 echo "=== Hypergenium Rubric Verifier ==="
 echo "Project: dynamorm"
 echo "Timestamp: ${REPORT_TIMESTAMP}"
@@ -569,33 +588,45 @@ echo ""
 CMD_UNIT="bash scripts/verify-unit-tests.sh"
 CMD_INTEGRATION="bash scripts/verify-integration-tests.sh"
 CMD_COVERAGE="bash scripts/verify-coverage.sh"
+CMD_VALIDATION="bash scripts/verify-validation-parity.sh"
+CMD_FUZZ="bash scripts/fuzz-smoke.sh"
 
 CMD_FMT="bash scripts/verify-formatting.sh"
 CMD_LINT="bash scripts/verify-lint.sh"
-CMD_CONTRACT="bash scripts/verify-public-api-contracts.sh"
+CMD_CONTRACT="bash scripts/verify-public-api-contracts.sh && bash scripts/verify-dms-first-workflow.sh"
 
-CMD_MODULES="bash scripts/verify-go-modules.sh"
+CMD_BUILDS="bash scripts/verify-typescript-deps.sh && bash scripts/verify-python-deps.sh && bash scripts/verify-builds.sh"
 CMD_TOOLCHAIN="bash scripts/verify-ci-toolchain.sh"
+CMD_PLANNING_DOCS="bash scripts/verify-planning-docs.sh"
 CMD_LINT_CONFIG="golangci-lint config verify -c .golangci-v2.yml"
 CMD_COV_THRESHOLD="bash scripts/verify-coverage-threshold.sh"
-CMD_SEC_CONFIG="check_security_config_not_diluted"
-CMD_LOGGING="check_logging_ops_standards"
+CMD_CI_RUBRIC="bash scripts/verify-ci-rubric-enforced.sh"
+CMD_DYNAMODB_PIN="bash scripts/verify-dynamodb-local-pin.sh"
+CMD_BRANCH_RELEASE="bash scripts/verify-branch-release-supply-chain.sh && bash scripts/verify-branch-version-sync.sh"
 
-CMD_SAST="bash scripts/sec-gosec.sh"
+CMD_SAST="check_security_config_not_diluted && bash scripts/sec-gosec.sh"
 CMD_VULN="bash scripts/sec-dependency-scans.sh"
 CMD_SUPPLY="go mod verify"
-CMD_P0="bash scripts/verify-encrypted-tag-implemented.sh"
+CMD_NO_PANICS="bash scripts/verify-no-panics.sh"
+CMD_SAFE_DEFAULTS="bash scripts/verify-safe-defaults.sh"
+CMD_EXPR_HARDEN="bash scripts/verify-expression-hardening.sh"
+CMD_NET_HYGIENE="bash scripts/verify-network-hygiene.sh"
+CMD_ENCRYPTED_TAG="bash scripts/verify-encrypted-tag-implemented.sh"
+CMD_LOGGING_OPS="check_logging_ops_standards"
 
 CMD_FILE_BUDGET="bash scripts/verify-file-size.sh"
-CMD_MAINTAINABILITY="check_maintainability_roadmap"
+CMD_MAINTAINABILITY="bash scripts/verify-maintainability-roadmap.sh"
 CMD_SINGLETON="bash scripts/verify-query-singleton.sh"
 
-CMD_DOC_INTEGRITY="check_hgm_doc_integrity"
+CMD_DOC_INTEGRITY="check_doc_integrity"
+CMD_DOC_PARITY="check_threat_controls_parity_full"
 
 # === Quality (QUA) ===
 run_check "QUA-1" "Quality" "$CMD_UNIT"
 run_check "QUA-2" "Quality" "$CMD_INTEGRATION"
 run_check "QUA-3" "Quality" "$CMD_COVERAGE"
+run_check "QUA-4" "Quality" "$CMD_VALIDATION"
+run_check "QUA-5" "Quality" "$CMD_FUZZ"
 
 # === Consistency (CON) ===
 run_check "CON-1" "Consistency" "$CMD_FMT"
@@ -603,18 +634,25 @@ run_check "CON-2" "Consistency" "$CMD_LINT"
 run_check "CON-3" "Consistency" "$CMD_CONTRACT"
 
 # === Completeness (COM) ===
-run_check "COM-1" "Completeness" "$CMD_MODULES"
+run_check "COM-1" "Completeness" "$CMD_BUILDS"
 run_check "COM-2" "Completeness" "$CMD_TOOLCHAIN"
-run_check "COM-3" "Completeness" "$CMD_LINT_CONFIG"
-run_check "COM-4" "Completeness" "$CMD_COV_THRESHOLD"
-run_check "COM-5" "Completeness" "$CMD_SEC_CONFIG"
-run_check "COM-6" "Completeness" "$CMD_LOGGING"
+run_check "COM-3" "Completeness" "$CMD_PLANNING_DOCS"
+run_check "COM-4" "Completeness" "$CMD_LINT_CONFIG"
+run_check "COM-5" "Completeness" "$CMD_COV_THRESHOLD"
+run_check "COM-6" "Completeness" "$CMD_CI_RUBRIC"
+run_check "COM-7" "Completeness" "$CMD_DYNAMODB_PIN"
+run_check "COM-8" "Completeness" "$CMD_BRANCH_RELEASE"
 
 # === Security (SEC) ===
 run_check "SEC-1" "Security" "$CMD_SAST"
 run_check "SEC-2" "Security" "$CMD_VULN"
 run_check "SEC-3" "Security" "$CMD_SUPPLY"
-run_check "SEC-4" "Security" "$CMD_P0"
+run_check "SEC-4" "Security" "$CMD_NO_PANICS"
+run_check "SEC-5" "Security" "$CMD_SAFE_DEFAULTS"
+run_check "SEC-6" "Security" "$CMD_EXPR_HARDEN"
+run_check "SEC-7" "Security" "$CMD_NET_HYGIENE"
+run_check "SEC-8" "Security" "$CMD_ENCRYPTED_TAG"
+run_check "SEC-9" "Security" "$CMD_LOGGING_OPS"
 
 # === Compliance Readiness (CMP) ===
 check_file_exists "CMP-1" "Compliance" "${PLANNING_DIR}/dynamorm-controls-matrix.md"
@@ -631,7 +669,7 @@ check_file_exists "DOC-1" "Docs" "${PLANNING_DIR}/dynamorm-threat-model.md"
 check_file_exists "DOC-2" "Docs" "${PLANNING_DIR}/dynamorm-evidence-plan.md"
 check_file_exists "DOC-3" "Docs" "${PLANNING_DIR}/dynamorm-10of10-rubric.md"
 run_check "DOC-4" "Docs" "$CMD_DOC_INTEGRITY"
-check_threat_controls_parity
+run_check "DOC-5" "Docs" "$CMD_DOC_PARITY"
 
 # === Generate Report ===
 RESULTS_JSON=$(printf "%s," "${RESULTS[@]}")
