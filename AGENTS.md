@@ -39,3 +39,25 @@ Single test example: `go test -v -run TestName ./pkg/query`
 - Branch naming commonly uses `feature/...`, `fix/...`, `chore/...`.
 - Prefer Conventional Commit-style subjects (`feat:`, `fix:`, `docs:`, `test:`) and keep the first line ≤72 chars.
 - PRs: describe intent and scope, link issues, list commands run, add/adjust tests, and update `CHANGELOG.md` + relevant docs when public APIs change (see `CONTRIBUTING.md`).
+
+### Release promotion (premain → main)
+This repo uses two release-please flows:
+- `premain`: prerelease (`rc`) via `.release-please-manifest.premain.json`
+- `main`: stable via `.release-please-manifest.json`
+
+Because both flows update overlapping version/changelog files, direct `premain` → `main` PRs frequently conflict.
+
+**Preferred promotion workflow (conflict-resistant)**
+- Create a temporary branch from `main` (e.g., `promote/premain-to-main-*`) and merge `premain` into it locally.
+- Resolve conflicts by keeping `main`’s values for release-managed files (so RC versions don’t leak into stable):
+  - `CHANGELOG.md`
+  - `ts/package.json`
+  - `ts/package-lock.json`
+  - `py/src/dynamorm_py/version.json`
+  - (usually) `.release-please-manifest.json` and `.release-please-manifest.premain.json`
+- Push the promotion branch and open a PR to `main`. Avoid pushing conflict-resolution commits directly to `premain`.
+- After merge, `Release (main)` runs and release-please creates/updates the stable release PR; don’t manually bump stable versions as part of the promotion PR.
+
+**Post-release back-merge (main → premain)**
+- After the stable release PR merges on `main`, back-merge `main` into `premain` to keep `premain`’s `.release-please-manifest.json` aligned (required by `scripts/verify-branch-version-sync.sh`).
+- Keep prerelease version alignment on `premain` (required by `scripts/verify-version-alignment.sh`): TS/Py versions must match `.release-please-manifest.premain.json` on `premain`.
