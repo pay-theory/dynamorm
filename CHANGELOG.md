@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0-rc.2](https://github.com/pay-theory/dynamorm/compare/v1.2.1-rc.2...v1.3.0-rc.2) (2026-01-18)
+
+
+### Features
+
+* **hgm:** add HGM infra rubric + M0/M1 artifacts ([061d4ca](https://github.com/pay-theory/dynamorm/commit/061d4ca9f19bfdd109520eaf3bbf21631bfa2cfa))
+* **hgm:** bring rubric to legacy parity ([11ebc67](https://github.com/pay-theory/dynamorm/commit/11ebc67dac14a0b0dfb0f5362f50c2d23f5d8a92))
+* **hgm:** implement COM-6 logging/ops standards gate ([fad15ce](https://github.com/pay-theory/dynamorm/commit/fad15ceca34f60bbf3e02bf234e8490bd1d634e3))
+* **hgm:** implement MAI-2 maintainability roadmap gate ([83340a7](https://github.com/pay-theory/dynamorm/commit/83340a71d603425e0db6c721f2c93eddd9d9b0ec))
+* **hgm:** sunset legacy rubric runner via HGM parity ([1fbc828](https://github.com/pay-theory/dynamorm/commit/1fbc82807311eb4e7cc34a230f709ccb80c8861b))
+
+
+### Bug Fixes
+
+* **hgm:** unblock SEC-1 by verifying tool pins via go metadata ([30ed3a7](https://github.com/pay-theory/dynamorm/commit/30ed3a790b5b4cac0fdce90903681ac307f5ae7c))
+
 ## [1.2.1-rc.2](https://github.com/pay-theory/dynamorm/compare/v1.2.1-rc.1...v1.2.1-rc.2) (2026-01-17)
 
 
