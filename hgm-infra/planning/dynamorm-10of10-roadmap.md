@@ -39,16 +39,16 @@ Evidence (refresh whenever behavior changes):
 ## Rubric-to-milestone mapping
 | Rubric ID | Status | Milestone |
 | --- | --- | --- |
-| QUA-1 | unknown | M1.5 |
-| QUA-2 | unknown | M1.5 |
-| QUA-3 | unknown | M1.5 |
+| QUA-1 | PASS | M1.5 |
+| QUA-2 | PASS | M1.5 |
+| QUA-3 | PASS | M1.5 |
 | CON-1 | PASS | M1 |
 | CON-2 | PASS | M1 |
 | CON-3 | unknown | M3 |
 | COM-1 | unknown | M2 |
 | COM-2 | unknown | M2 |
 | COM-3 | PASS | M0 |
-| COM-4 | unknown | M1.5 |
+| COM-4 | PASS | M1.5 |
 | COM-5 | unknown | M2 |
 | COM-6 | BLOCKED | M3 (define logging/ops standard, if applicable) |
 | SEC-1 | unknown | M2 |
