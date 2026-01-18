@@ -16,6 +16,7 @@ Defines where evidence for rubric items is produced and how to regenerate it. Ev
 - Evidence plan: `hgm-infra/planning/dynamorm-evidence-plan.md`
 - Supply-chain allowlist: `hgm-infra/planning/dynamorm-supply-chain-allowlist.txt`
 - Threat model: `hgm-infra/planning/dynamorm-threat-model.md`
+- Logging/ops standards: `hgm-infra/planning/dynamorm-logging-ops-standards.md`
 - AI drift recovery: `hgm-infra/planning/dynamorm-ai-drift-recovery.md`
 - Signature bundle (local certification): `hgm-infra/signatures/hgm-signature-bundle.json`
 
@@ -35,7 +36,7 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 | COM-3 | Lint config validation | `hgm-infra/evidence/COM-3-output.log` | `golangci-lint config verify -c .golangci-v2.yml` |
 | COM-4 | Coverage threshold check | `hgm-infra/evidence/COM-4-output.log` | `bash scripts/verify-coverage-threshold.sh` |
 | COM-5 | Security config validation | `hgm-infra/evidence/COM-5-output.log` | `check_security_config_not_diluted` (via HGM verifier) |
-| COM-6 | Logging standards check | `hgm-infra/evidence/COM-6-output.log` | `TODO: add logging/ops verifier` |
+| COM-6 | Logging standards check | `hgm-infra/evidence/COM-6-output.log` | `check_logging_ops_standards` (via HGM verifier) |
 | SEC-1 | SAST scan output | `hgm-infra/evidence/SEC-1-output.log` | `bash scripts/sec-gosec.sh` |
 | SEC-2 | Vulnerability scan output | `hgm-infra/evidence/SEC-2-output.log` | `bash scripts/sec-dependency-scans.sh` |
 | SEC-3 | Module integrity verification | `hgm-infra/evidence/SEC-3-output.log` | `go mod verify` |

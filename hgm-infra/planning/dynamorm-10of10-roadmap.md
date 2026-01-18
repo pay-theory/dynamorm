@@ -44,17 +44,17 @@ Evidence (refresh whenever behavior changes):
 | QUA-3 | PASS | M1.5 |
 | CON-1 | PASS | M1 |
 | CON-2 | PASS | M1 |
-| CON-3 | unknown | M3 |
+| CON-3 | PASS | M3 |
 | COM-1 | PASS | M2 |
 | COM-2 | PASS | M2 |
 | COM-3 | PASS | M0 |
 | COM-4 | PASS | M1.5 |
 | COM-5 | PASS | M2 |
-| COM-6 | BLOCKED | M3 (define logging/ops standard, if applicable) |
+| COM-6 | PASS | M3 |
 | SEC-1 | PASS | M2 |
 | SEC-2 | PASS | M2 |
 | SEC-3 | PASS | M2 |
-| SEC-4 | unknown | M3 |
+| SEC-4 | PASS | M3 |
 | CMP-1 | PASS | M0 |
 | CMP-2 | PASS | M0 |
 | CMP-3 | PASS | M0 |
@@ -105,7 +105,7 @@ Tracking document: `hgm-infra/planning/dynamorm-coverage-roadmap.md`
 **Goal:** tooling is pinned and security scans are reproducible.
 
 ### M3 — Domain P0 hardening (high-risk environments)
-**Closes:** SEC-4, CON-3  
+**Closes:** SEC-4, CON-3, COM-6  
 **Goal:** ensure domain-critical semantics (e.g., encrypted tag behavior) and public API parity stay enforced.
 
 ### M4 — Maintainability convergence

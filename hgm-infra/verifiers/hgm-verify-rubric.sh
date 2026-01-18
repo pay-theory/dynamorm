@@ -367,6 +367,72 @@ check_security_config_not_diluted() {
   return 0
 }
 
+check_logging_ops_standards() {
+  # COM-6: logging/operational standards enforced (repo-specific; deterministic).
+  #
+  # This repo is primarily a library. We treat "stdout printing" and "process
+  # termination" as high-risk behaviors in library code. We allow limited
+  # operational warnings via log.Printf where returning an error isn't possible.
+
+  local standards="${PLANNING_DIR}/dynamorm-logging-ops-standards.md"
+  if [[ ! -f "${standards}" ]]; then
+    echo "BLOCKED: missing logging/ops standards doc: ${standards}" >&2
+    return 2
+  fi
+
+  local missing=0
+  for heading in \
+    "## Scope" \
+    "## Allowed patterns (library code)" \
+    "## Prohibited patterns (library code)" \
+    "## Examples vs library code"; do
+    if ! grep -Fq "${heading}" "${standards}"; then
+      echo "FAIL: logging/ops standards missing required heading: ${heading}" >&2
+      missing=1
+    fi
+  done
+
+  if [[ "${missing}" -ne 0 ]]; then
+    return 1
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "BLOCKED: git is required to deterministically enumerate in-scope files" >&2
+    return 2
+  fi
+
+  local files
+  files="$(
+    git ls-files '*.go' \
+      | grep -vE '^(examples/|tests/|scripts/|contract-tests/)' \
+      | grep -vE '_test[.]go$' \
+      || true
+  )"
+
+  if [[ -z "${files}" ]]; then
+    echo "FAIL: no in-scope Go files found for logging/ops scan" >&2
+    return 1
+  fi
+
+  # Disallow stdout printing and process-terminating log calls in library code.
+  local hits
+  hits="$(
+    printf '%s\n' "${files}" \
+      | xargs -r grep -nE \
+        '\\bfmt\\.(Print|Printf|Println)\\b|\\bprint(ln)?\\s*\\(|\\blog\\.Print(ln)?\\b|\\blog\\.(Fatal|Fatalln|Fatalf|Panic|Panicln|Panicf)\\b' \
+      || true
+  )"
+
+  if [[ -n "${hits}" ]]; then
+    echo "FAIL: prohibited logging/printing patterns found in in-scope library code:" >&2
+    echo "${hits}" >&2
+    return 1
+  fi
+
+  echo "logging-ops: PASS"
+  return 0
+}
+
 check_hgm_doc_integrity() {
   # DOC-4: doc integrity for hgm-infra only.
   # Checks:
@@ -472,7 +538,7 @@ CMD_TOOLCHAIN="bash scripts/verify-ci-toolchain.sh"
 CMD_LINT_CONFIG="golangci-lint config verify -c .golangci-v2.yml"
 CMD_COV_THRESHOLD="bash scripts/verify-coverage-threshold.sh"
 CMD_SEC_CONFIG="check_security_config_not_diluted"
-CMD_LOGGING="TODO: add logging/operational standards verifier"
+CMD_LOGGING="check_logging_ops_standards"
 
 CMD_SAST="bash scripts/sec-gosec.sh"
 CMD_VULN="bash scripts/sec-dependency-scans.sh"
