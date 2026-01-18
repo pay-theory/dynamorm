@@ -2,6 +2,19 @@
 # Helps AI make correct architectural and implementation choices
 
 decisions:
+  sdk_selection:
+    question: "Which DynamORM SDK should I use?"
+    decision_tree:
+      - condition: "Your service/runtime is Go"
+        choice: "Use the Go SDK (this repo root module)"
+        reason: "First-class Go API with generics, query builder, and Lambda optimizations"
+      - condition: "Your service/runtime is Node.js/TypeScript"
+        choice: "Use the TypeScript SDK (`ts/`)"
+        reason: "First-class Node.js 24 support with strict testkit and cross-language cursor contracts"
+      - condition: "Your service/runtime is Python"
+        choice: "Use the Python SDK (`py/`)"
+        reason: "First-class Python 3.14 support with strict fakes and KMS-backed encryption semantics"
+
   initialization_strategy:
     question: "How should I initialize DynamORM?"
     decision_tree:
