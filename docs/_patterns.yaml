@@ -2,13 +2,36 @@
 # Documents correct and incorrect usage patterns for AI training
 
 patterns:
+  dms_first_workflow:
+    name: "DMS-First Schema Ownership"
+    problem: "Schema drift occurs when each language/service invents its own attribute names and key rules"
+    solution: "Own the schema in a language-neutral DMS document and keep SDK models equivalent by contract"
+    correct_example: |
+      # ✅ CORRECT: schema is defined once (YAML) and validated across SDKs
+      #
+      # examples/cdk-multilang/dms/demo.yml
+      models:
+        DemoItem:
+          keys:
+            partition: { attribute: PK, type: S }
+            sort: { attribute: SK, type: S }
+    anti_patterns:
+      - name: "Per-language schema invention"
+        why: "Breaks parity, forces migrations, and creates hard-to-debug production inconsistencies"
+        incorrect_example: |
+          # ❌ INCORRECT: each service picks different attribute names
+          # Go uses PK/SK, TS uses id/sort, Python uses hash/range
+        consequences:
+          - schema_drift
+          - broken_cross_language_contracts
+
   initialization:
     name: "Lambda-Optimized Initialization"
     problem: "Cold starts are slow when initializing standard AWS sessions in Lambda handlers"
     solution: "Use NewLambdaOptimized() in init() function or global scope"
     correct_example: |
       var db *dynamorm.LambdaDB
-      
+
       func init() {
           var err error
           db, err = dynamorm.NewLambdaOptimized()
@@ -71,7 +94,7 @@ patterns:
           // ❌ INCORRECT: If 'Email' is not a primary key or GSI partition key, this will fail or scan.
           db.Model(&User{}).Where("Email", "=", "test@example.com").First(&user)
         consequences:
-          - `ValidationException` or `ResourceNotFoundException`
+          - "`ValidationException` or `ResourceNotFoundException`"
           - full_table_scans
 
   transactions:
@@ -194,12 +217,12 @@ patterns:
         why: "Silence bugs and leads to unexpected behavior in production"
         incorrect_example: |
           // ❌ INCORRECT: Ignoring error
-          db.Model(user).Create() 
+          db.Model(user).Create()
         consequences:
           - undetected_bugs
           - data_corruption
       - name: "Generic Error Wrapping"
-        why: "Wrapping with `fmt.Errorf("failed: %v", err)` without `%w` loses original error type, making `errors.Is` checks impossible"
+        why: 'Wrapping with `fmt.Errorf("failed: %v", err)` without `%w` loses original error type, making `errors.Is` checks impossible'
         incorrect_example: |
           // ❌ INCORRECT: Loses error type
           if err != nil { return fmt.Errorf("create user failed: %v", err) }

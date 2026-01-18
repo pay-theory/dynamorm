@@ -1,7 +1,7 @@
 # Pay Theory Documentation Guide
 
-**Version:** 1.0  
-**Last Updated:** November 2025  
+**Version:** 1.1  
+**Last Updated:** January 2026  
 **Status:** Official Standard
 
 ## Purpose
@@ -639,6 +639,27 @@ Include diagrams and flow descriptions:
 
 ## Module-Specific Adaptations
 
+### Multi-language SDK Monorepos (Go + TypeScript + Python)
+
+**Emphasize:**
+- One repo, **one version number** across SDKs (GitHub Releases are the source of truth).
+- Each SDK has its own `docs/` directory with the standard file set + YAML triad.
+- Cross-language parity via shared fixtures, contract tests, and a single rubric.
+- Explicit statements about what is **language-specific** vs **shared** behavior.
+- Installation from GitHub release assets (no npm/PyPI publishing unless explicitly documented).
+
+**Recommended structure:**
+```text
+repo/
+├── docs/                    # Repo/module docs index + shared architecture
+├── ts/
+│   ├── docs/                # TypeScript SDK docs (README + triad + guides)
+│   └── README.md            # Short entrypoint linking to ts/docs
+├── py/
+│   ├── docs/                # Python SDK docs (README + triad + guides)
+│   └── README.md            # Short entrypoint linking to py/docs
+```
+
 ### Go Frameworks (Lift, Limited, DynamORM, Streamer)
 
 **Emphasize:**
@@ -1199,4 +1220,3 @@ This guide defines the Pay Theory documentation standard. Key takeaways:
 **Last Updated:** November 2025  
 **Maintained By:** Pay Theory Engineering  
 **Feedback:** Submit issues or PRs to improve this guide
-

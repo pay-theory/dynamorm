@@ -1,6 +1,10 @@
 # Development Guidelines
 
-This guide outlines the coding standards and best practices for developing with DynamORM.
+This guide outlines the coding standards and best practices for developing DynamORM in this multi-language monorepo:
+
+- Go (root module)
+- TypeScript (`ts/`)
+- Python (`py/`)
 
 ## Struct Definition Standards
 
@@ -22,6 +26,30 @@ type Product struct {
     ID string // Missing tags!
 }
 ```
+
+## TypeScript SDK standards (`ts/`)
+
+- Runtime/toolchain: Node.js **24**
+- Must pass:
+  - `npm --prefix ts run typecheck`
+  - `npm --prefix ts run lint`
+  - `npm --prefix ts run test`
+- Prefer explicit attribute names in model definitions (`defineModel`) to stay DMS-friendly and avoid drift.
+- Do not weaken testkit strictness (`@pay-theory/dynamorm-ts/testkit`).
+
+See [TypeScript Development Guidelines](../ts/docs/development-guidelines.md).
+
+## Python SDK standards (`py/`)
+
+- Runtime/toolchain: Python **3.14**
+- Must pass:
+  - `uv --directory py run mypy src` (strict)
+  - `uv --directory py run ruff check`
+  - `uv --directory py run pytest -q`
+- Prefer dataclasses with explicit roles via `dynamorm_field(...)`.
+- Do not weaken strict fakes (`dynamorm_py.mocks`); unit tests must not call real AWS.
+
+See [Python Development Guidelines](../py/docs/development-guidelines.md).
 
 ## Error Handling
 

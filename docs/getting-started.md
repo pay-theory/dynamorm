@@ -1,31 +1,41 @@
 # Getting Started with DynamORM
 
-This guide walks you through installing, configuring, and deploying DynamORM for the first time.
+This guide walks you through installing, configuring, and deploying the **Go** implementation of DynamORM.
+
+For the multi-language monorepo:
+
+- TypeScript: `ts/docs/getting-started.md`
+- Python: `py/docs/getting-started.md`
 
 ## Prerequisites
 
 **Required:**
-- Go 1.21 or higher
+
+- Go 1.25 or higher
 - AWS Credentials configured (or IAM role in Lambda)
 - Basic understanding of DynamoDB (Primary Keys, Tables)
 
 **Recommended:**
+
 - AWS CLI installed for verification
 - Docker (if using DynamoDB Local)
 
 ## Installation
 
 ### Step 1: Add Dependency
+
 ```bash
 # Add DynamORM to your project
 go get github.com/pay-theory/dynamorm
 ```
 
 **What this does:**
+
 - Downloads the library and its dependencies (including AWS SDK v2)
 - Updates your `go.mod` and `go.sum` files
 
 ### Step 2: Define Your Model
+
 Create a struct that represents your DynamoDB item.
 
 ```go
@@ -43,12 +53,14 @@ type User struct {
 ```
 
 **What this does:**
+
 - Defines the data structure
 - Tells DynamORM which fields are Primary Keys (`pk`, `sk`)
 
 ## First Deployment
 
 ### Option A: Lambda Function (Recommended)
+
 Use this for serverless applications to get sub-15ms cold starts.
 
 ```go
@@ -83,6 +95,7 @@ func main() {
 ```
 
 ### Option B: Standard Application / Local Dev
+
 Use this for containers, CLI tools, or local testing.
 
 ```go
@@ -99,7 +112,7 @@ func main() {
     db, err := dynamorm.New(session.Config{
         Region: "us-east-1",
         // Uncomment for local DynamoDB:
-        // Endpoint: "http://localhost:8000", 
+        // Endpoint: "http://localhost:8000",
     })
     if err != nil {
         log.Fatal(err)
@@ -129,6 +142,7 @@ if err != nil {
 ```
 
 ## Next Steps
+
 - Read [Core Patterns](./core-patterns.md) for querying and transactions
 - See [API Reference](./api-reference.md) for the full interface
 - Review [Struct Definition Guide](./struct-definition-guide.md) for advanced modeling
@@ -136,6 +150,7 @@ if err != nil {
 ## Troubleshooting
 
 **Issue: "ResourceNotFoundException"**
+
 - **Cause:** The table "users" (derived from `User` struct) does not exist in AWS.
 - **Solution:** Create the table in DynamoDB or use `db.CreateTable(&User{})` for development.
 

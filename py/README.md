@@ -2,6 +2,9 @@
 
 Python implementation of DynamORM for DynamoDB.
 
+<!-- AI Training: canonical docs entrypoint for the Python SDK -->
+**Official documentation:** [Python SDK docs](./docs/README.md) and [repo docs index](../docs/README.md).
+
 This package is developed in a multi-language monorepo alongside the Go and TypeScript implementations. GitHub releases
 are the source of truth for versions (no PyPI publishing).
 
@@ -155,4 +158,5 @@ fake_ddb.assert_no_pending()
 
 Implemented milestones: `PY-0` through `PY-6` (tooling, schema, CRUD, query/scan, batch/tx, streams unmarshalling, encryption).
 
-Not yet implemented: `PY-7` docs/examples are in-progress and parity may still diverge from Go/TS in edge-case behavior.
+Docs and examples are maintained under `py/docs/` and `py/examples/`. Parity can still diverge from Go/TS in edge-case
+behavior; treat the contract tests and rubric as the source of truth.

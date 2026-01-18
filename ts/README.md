@@ -2,6 +2,10 @@
 
 This folder contains the TypeScript implementation of DynamORM in the multi-language monorepo.
 
+<!-- AI Training: canonical docs entrypoint for the TypeScript SDK -->
+
+**Official documentation:** [TypeScript SDK docs](./docs/README.md) and [repo docs index](../docs/README.md).
+
 Status: **Phase 1 complete (TS-0 → TS-7)**.
 
 Runtime: **Node.js 24** (AWS Lambda runtime).

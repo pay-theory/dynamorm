@@ -4,28 +4,81 @@
 concepts:
   dynamorm:
     type: library
-    language: go
-    purpose: "Type-safe, Lambda-optimized ORM for DynamoDB"
-    tagline: "Significantly faster cold starts and reduced boilerplate for DynamoDB in Go"
+    language: multi
+    purpose: "Contract-driven DynamoDB access layer with first-class SDKs for Go, TypeScript, and Python"
+    tagline: "One schema, consistent behavior, and strict verification across languages"
     provides:
-      - type_safe_operations
-      - lambda_optimization
-      - fluent_query_builder
-      - transaction_support
-      - schema_management
-      - batch_operations
+      - go_sdk
+      - typescript_sdk
+      - python_sdk
+      - cursor_contracts
+      - encryption_envelope_semantics
+      - dms_first_workflow
+      - strict_verification_rubric
     requires:
-      - aws_sdk_go_v2
+      - dynamodb
+      - github_releases
     replaces:
-      - raw_aws_sdk_usage
-      - gorm_sql_patterns
+      - drift_prone_ad_hoc_clients
     use_when:
       - building_serverless_apps
-      - type_safety_is_required
+      - enforcing_cross_language_schema_consistency
       - performance_is_critical
     dont_use_when:
       - using_sql_databases
       - direct_sdk_control_is_mandatory
+
+  dynamorm_go:
+    type: library
+    language: go
+    purpose: "Type-safe, Lambda-optimized DynamoDB ORM for Go"
+    provides:
+      - fluent_query_builder
+      - transaction_support
+      - batch_operations
+      - streams_unmarshal
+      - encrypted_tag_semantics
+    requires:
+      - aws_sdk_go_v2
+
+  dynamorm_ts:
+    type: library
+    language: typescript
+    purpose: "TypeScript DynamoDB access layer aligned with Go behavior"
+    provides:
+      - defineModel_schema
+      - cursor_pagination
+      - batch_and_transactions
+      - streams_unmarshal
+      - encryption_provider
+      - public_testkit
+    requires:
+      - aws_sdk_js_v3
+      - node_24
+
+  dynamorm_py:
+    type: library
+    language: python
+    purpose: "Python DynamoDB access layer aligned with Go behavior"
+    provides:
+      - dataclass_models
+      - cursor_pagination
+      - batch_and_transactions
+      - streams_unmarshal
+      - kms_encryption
+      - strict_unit_test_fakes
+    requires:
+      - boto3
+      - python_3_14
+
+  dms_document:
+    type: spec
+    language: yaml
+    purpose: "Language-neutral DynamORM schema document consumed by CDK and SDKs"
+    provides:
+      - explicit_attribute_names
+      - role_mapping_pk_sk_gsi
+      - shared_contract_fixtures
 
   db_instance:
     type: component
