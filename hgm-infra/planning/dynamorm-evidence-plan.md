@@ -17,6 +17,7 @@ Defines where evidence for rubric items is produced and how to regenerate it. Ev
 - Supply-chain allowlist: `hgm-infra/planning/dynamorm-supply-chain-allowlist.txt`
 - Threat model: `hgm-infra/planning/dynamorm-threat-model.md`
 - Logging/ops standards: `hgm-infra/planning/dynamorm-logging-ops-standards.md`
+- Maintainability roadmap: `hgm-infra/planning/dynamorm-maintainability-roadmap.md`
 - AI drift recovery: `hgm-infra/planning/dynamorm-ai-drift-recovery.md`
 - Signature bundle (local certification): `hgm-infra/signatures/hgm-signature-bundle.json`
 
@@ -45,7 +46,7 @@ Every rubric ID maps to exactly one verifier and one primary evidence location.
 | CMP-2 | Evidence plan exists | `hgm-infra/planning/dynamorm-evidence-plan.md` | File existence check |
 | CMP-3 | Threat model exists | `hgm-infra/planning/dynamorm-threat-model.md` | File existence check |
 | MAI-1 | File budget check | `hgm-infra/evidence/MAI-1-output.log` | `bash scripts/verify-file-size.sh` |
-| MAI-2 | Maintainability roadmap check | `hgm-infra/evidence/MAI-2-output.log` | `TODO: add maintainability roadmap + verifier` |
+| MAI-2 | Maintainability roadmap check | `hgm-infra/evidence/MAI-2-output.log` | `check_maintainability_roadmap` (via HGM verifier) |
 | MAI-3 | Singleton check | `hgm-infra/evidence/MAI-3-output.log` | `bash scripts/verify-query-singleton.sh` |
 | DOC-1 | Threat model present | `hgm-infra/planning/dynamorm-threat-model.md` | File existence check |
 | DOC-2 | Evidence plan present | `hgm-infra/planning/dynamorm-evidence-plan.md` | File existence check |

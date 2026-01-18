@@ -433,6 +433,47 @@ check_logging_ops_standards() {
   return 0
 }
 
+check_maintainability_roadmap() {
+  # MAI-2: maintainability roadmap current (deterministic doc check).
+
+  local roadmap="${PLANNING_DIR}/dynamorm-maintainability-roadmap.md"
+  if [[ ! -f "${roadmap}" ]]; then
+    echo "BLOCKED: missing maintainability roadmap: ${roadmap}" >&2
+    return 2
+  fi
+
+  if grep -Fq "$(printf '{%s' '{')" "${roadmap}"; then
+    echo "FAIL: maintainability roadmap contains unrendered template token markers" >&2
+    return 1
+  fi
+
+  local missing=0
+  for heading in \
+    "## Baseline (start of MAI work)" \
+    "## Hotspots" \
+    "## Workstreams" \
+    "## MAI rubric mapping"; do
+    if ! grep -Fq "${heading}" "${roadmap}"; then
+      echo "FAIL: maintainability roadmap missing required section: ${heading}" >&2
+      missing=1
+    fi
+  done
+
+  for rubric_id in "MAI-1" "MAI-2" "MAI-3"; do
+    if ! grep -Fq "${rubric_id}" "${roadmap}"; then
+      echo "FAIL: maintainability roadmap missing required rubric reference: ${rubric_id}" >&2
+      missing=1
+    fi
+  done
+
+  if [[ "${missing}" -ne 0 ]]; then
+    return 1
+  fi
+
+  echo "maintainability-roadmap: PASS"
+  return 0
+}
+
 check_hgm_doc_integrity() {
   # DOC-4: doc integrity for hgm-infra only.
   # Checks:
@@ -546,7 +587,7 @@ CMD_SUPPLY="go mod verify"
 CMD_P0="bash scripts/verify-encrypted-tag-implemented.sh"
 
 CMD_FILE_BUDGET="bash scripts/verify-file-size.sh"
-CMD_MAINTAINABILITY="TODO: add maintainability roadmap verifier under hgm-infra/planning/"
+CMD_MAINTAINABILITY="check_maintainability_roadmap"
 CMD_SINGLETON="bash scripts/verify-query-singleton.sh"
 
 CMD_DOC_INTEGRITY="check_hgm_doc_integrity"

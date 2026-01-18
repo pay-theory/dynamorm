@@ -41,6 +41,9 @@ This table is the canonical mapping used by the rubric/roadmap/evidence plan.
 | Security | THR-6 | SEC-2 | Dependency vulnerability scan stays green | govulncheck + npm audit + pip-audit (when present) | `bash scripts/sec-dependency-scans.sh` | `hgm-infra/evidence/SEC-2-output.log` |
 | Security | THR-6 | SEC-3 | Module integrity and checksum verification | Go module checksums verified | `go mod verify` | `hgm-infra/evidence/SEC-3-output.log` |
 | Security | THR-5 | SEC-4 | Domain-specific P0 regression tests (fail closed) | `dynamorm:"encrypted"` semantics enforced in library behavior | `bash scripts/verify-encrypted-tag-implemented.sh` | `hgm-infra/evidence/SEC-4-output.log` |
+| Maintainability | THR-6 | MAI-1 | File-size/complexity budgets enforced | File-size budgets prevent unreviewable “god files” | `bash scripts/verify-file-size.sh` | `hgm-infra/evidence/MAI-1-output.log` |
+| Maintainability | THR-6 | MAI-2 | Maintainability roadmap current | Maintainability convergence plan is present and required sections stay current | `bash hgm-infra/verifiers/hgm-verify-rubric.sh # (MAI-2 check is built-in)` | `hgm-infra/evidence/MAI-2-output.log` |
+| Maintainability | THR-6 | MAI-3 | Canonical implementations (no duplicate semantics) | One canonical Query implementation to prevent semantic drift | `bash scripts/verify-query-singleton.sh` | `hgm-infra/evidence/MAI-3-output.log` |
 | Docs | THR-1, THR-2, THR-3, THR-6, THR-7 | DOC-5 | Threat model ↔ controls parity (no unmapped threats) | Threat IDs are stable and mapped to ≥1 control row | `bash hgm-infra/verifiers/hgm-verify-rubric.sh # (DOC-5 parity built-in)` | `hgm-infra/evidence/DOC-5-parity.log` |
 
 > Add rows as needed for additional anti-drift controls (CI rubric enforcement, release automation integrity, maintainability convergence, etc).

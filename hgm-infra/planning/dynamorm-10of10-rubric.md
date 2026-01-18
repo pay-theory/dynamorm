@@ -80,7 +80,7 @@ Enforcement rule (anti-drift):
 | ID | Points | Requirement | How to verify |
 | --- | ---: | --- | --- |
 | MAI-1 | 4 | File-size/complexity budgets enforced | `bash scripts/verify-file-size.sh` |
-| MAI-2 | 3 | Maintainability roadmap current | `TODO: add maintainability roadmap + verifier under hgm-infra/planning/` |
+| MAI-2 | 3 | Maintainability roadmap current | `check_maintainability_roadmap` (implemented in `hgm-infra/verifiers/hgm-verify-rubric.sh`) |
 | MAI-3 | 3 | Canonical implementations (no duplicate semantics) | `bash scripts/verify-query-singleton.sh` |
 
 **10/10 definition:** MAI-1 through MAI-3 pass.

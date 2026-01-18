@@ -58,9 +58,9 @@ Evidence (refresh whenever behavior changes):
 | CMP-1 | PASS | M0 |
 | CMP-2 | PASS | M0 |
 | CMP-3 | PASS | M0 |
-| MAI-1 | unknown | M4 |
-| MAI-2 | BLOCKED | M4 |
-| MAI-3 | unknown | M4 |
+| MAI-1 | PASS | M4 |
+| MAI-2 | PASS | M4 |
+| MAI-3 | PASS | M4 |
 | DOC-1 | PASS | M0 |
 | DOC-2 | PASS | M0 |
 | DOC-3 | PASS | M0 |
@@ -113,4 +113,4 @@ Tracking document: `hgm-infra/planning/dynamorm-coverage-roadmap.md`
 **Goal:** keep code convergent to reduce future security/quality drift.
 
 Notes:
-- MAI-2 is intentionally BLOCKED until a maintainability roadmap is created under `hgm-infra/planning/`.
+- MAI-2 requires a repo-local maintainability roadmap under `hgm-infra/planning/` and should be updated after major refactors.
