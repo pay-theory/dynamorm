@@ -31,9 +31,9 @@
     "example:local": "tsx examples/local.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.971.0",
-    "@aws-sdk/client-kms": "^3.971.0",
-    "@aws-sdk/client-sts": "^3.971.0",
+    "@aws-sdk/client-dynamodb": "^3.995.0",
+    "@aws-sdk/client-kms": "^3.995.0",
+    "@aws-sdk/client-sts": "^3.995.0",
     "yaml": "^2.8.0"
   },
   "devDependencies": {
